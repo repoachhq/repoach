@@ -1,0 +1,8072 @@
+"""Acceptance corpus of SP-RECORDER-REDACTS-BY-CLASS 0.17: one row, one input, one outcome.
+
+Every row runs through the public ``record`` path of
+``scripts/record_forge_fixture.py`` against a fake forge (live) and
+through ``redact_fixture`` of ``scripts/redact_forge_fixtures.py``
+(offline). Each row carries exactly one expected outcome:
+
+- ``Written``: the exact text at the row's position (``body``, ``title``,
+  raw ``stdout``, ``stderr``, ``stdin``, ``args``, ``kwargs`` or the
+  exchange argv), the exact ``title`` when the input has one, named
+  item fields such as ``headRefName``, and no planted marker surviving
+  anywhere in the written fixture (casefolded);
+- ``Refused``: the refusal's reason prefix, nothing written.
+
+Sources: every row of ``tests/unit/test_forge_recording_regression_corpus.py``
+(rounds 5 to 9), every planted survivor, refusal and corruption of
+verifier round 10 (``tmp/verify10/``, ``tmp/REPORT-r10.md``) and new rows
+generated along the 0.17 axes (host class, position, syntactic carrier,
+ordinary code in eight languages). Values are synthetic.
+
+The corpus is frozen: a row is never edited to match an implementation.
+The module is ``xfail(strict=True)`` until 0.17 lands; the implementer
+removes the mark (0.17 AC1).
+"""
+
+from __future__ import annotations
+
+import base64
+import copy
+import importlib.util
+import json
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+from types import ModuleType
+from typing import Any
+
+import pytest
+
+from repoach.forge import recording as rec_mod
+from repoach.forge.github import GitHubForge, comment_from_github
+from repoach.forge.gitlab import GitLabForge, note_to_comment
+from repoach.forge.protocol import Diff, Forge, diff_files
+from repoach.forge.runner import CommandResult
+
+pytestmark = pytest.mark.xfail(
+    strict=True, reason="SP-RECORDER-REDACTS-BY-CLASS 0.17 not implemented"
+)
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def _load_script(name: str) -> ModuleType:
+    """Load a script under ``scripts/`` once, reusing any already-loaded module."""
+    loaded = sys.modules.get(name)
+    if loaded is not None:
+        return loaded
+    spec = importlib.util.spec_from_file_location(name, ROOT / "scripts" / f"{name}.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+REC = _load_script("record_forge_fixture")
+OFF = _load_script("redact_forge_fixtures")
+
+FAKE_LOGIN = "zqxjdoe7"
+FAKE_LOGIN_2 = "zqreviewer"
+FAKE_HOST = "git.zqcorp.io"
+FAKE_HOST_2 = "mirror.zqcorp.net"
+FAKE_NS = "zqgroup"
+FAKE_REPO = "zqmainrepo"
+FAKE_UID = 74928163
+FAKE_PID = 88442211
+FAKE_DENY = "zqdenyval"
+FAKE_DENY_ID = "91827364"
+PLACEHOLDER = rec_mod.PLACEHOLDER_HOST
+
+
+@dataclass(frozen=True)
+class Sample:
+    """One synthetic recording: the change request's answers and the recorder's inputs."""
+
+    forge: str = "github"
+    body: str = "Looks good to me."
+    title: str | None = None
+    login: str = FAKE_LOGIN
+    uid: int = FAKE_UID
+    ns: str = FAKE_NS
+    repo: str = FAKE_REPO
+    remote: str = f"git@github.com:{FAKE_NS}/{FAKE_REPO}.git"
+    url: str | None = None
+    head_ref: str | None = None
+    base_ref: str | None = None
+    argv_extra: tuple[str, ...] = ()
+    api_path: str | None = None
+    call_args: tuple[str, ...] | None = None
+    stderr: str = ""
+    stdin: str | None = None
+    case: str = "sample"
+    extra_item: dict[str, Any] = field(default_factory=dict)
+    extra_items: tuple[dict[str, Any], ...] = ()
+    raw_text_stdout: str | None = None
+    top_args: tuple[Any, ...] = (42,)
+    top_kwargs: dict[str, Any] = field(default_factory=dict)
+    author: str | None = None
+    bot: str = "repoach-bot"
+    deny: tuple[str, ...] = (FAKE_DENY, FAKE_DENY_ID)
+
+
+@dataclass(frozen=True)
+class Written:
+    """The fixture is written: the exact text at the row's position, title and named fields."""
+
+    text: str
+    title: str | None = None
+    fields: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class Refused:
+    """The recorder refuses with this reason prefix and writes nothing."""
+
+    prefix: str
+
+
+@dataclass(frozen=True)
+class Row:
+    """One acceptance row: an id, its source probe, its input and its one outcome."""
+
+    id: str
+    source: str
+    inp: Sample
+    outcome: Written | Refused
+    markers: tuple[str, ...] = ()
+
+
+ROWS: tuple[Row, ...] = (
+    Row(
+        id="reg_mention_known_gh",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="Thanks @zqxjdoe7, merging now."),
+        outcome=Written(text="Thanks @author, merging now."),
+        markers=("zqxjdoe7",),
+    ),
+    Row(
+        id="reg_mention_unknown_colleague_gh",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="Thanks @zqxjdoe7, cc @zqreviewer for review."),
+        outcome=Written(text="Thanks @author, cc @author-2 for review."),
+        markers=("zqxjdoe7", "zqreviewer"),
+    ),
+    Row(
+        id="reg_mention_gitlab_diff_suggestion",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="@zqxjdoe7 suggestion:\n```suggestion:-0+0\nreturn zqmainrepo\n```",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="@author suggestion:\n```suggestion:-0+0\nreturn project\n```"),
+        markers=("zqxjdoe7", "zqmainrepo", "git.zqcorp.io"),
+    ),
+    Row(
+        id="reg_mention_in_title",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(title="Fix bug reported by @zqxjdoe7"),
+        outcome=Written(text="Looks good to me.", title="Fix bug reported by @author"),
+        markers=("zqxjdoe7",),
+    ),
+    Row(
+        id="reg_mention_known_in_double_backticks",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="Use ``@zqxjdoe7 `arg` `` here"),
+        outcome=Written(text="Use ``@author `arg` `` here"),
+        markers=("zqxjdoe7",),
+    ),
+    Row(
+        id="reg_mention_unknown_in_double_backticks",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="Use ``@zqcolleague `arg` `` here"),
+        outcome=Written(text="Use ``@author-2 `arg` `` here"),
+        markers=("zqcolleague",),
+    ),
+    Row(
+        id="reg_mention_unknown_in_tilde_fence",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="~~~text\ncc @zqcolleague\n~~~"),
+        outcome=Written(text="~~~text\ncc @author-2\n~~~"),
+        markers=("zqcolleague",),
+    ),
+    Row(
+        id="reg_mention_short_stem_bot_cla",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            body="Please run @cla check to verify signature.", login="cla[bot]", uid=44556677
+        ),
+        outcome=Written(text="Please run @bot check to verify signature."),
+        markers=("cla[bot]", "@cla", "44556677"),
+    ),
+    Row(
+        id="reg_mention_short_stem_bot_bob",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="Please run @bob retry.", login="bob[bot]", uid=44556688),
+        outcome=Written(text="Please run @bot retry."),
+        markers=("bob[bot]", "@bob", "44556688"),
+    ),
+    Row(
+        id="reg_mention_short_stem_bot_ci_mention_first",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            body="cc @ci please run",
+            extra_items=({"user": {"login": "ci[bot]", "id": 61112222}, "body": "Running."},),
+        ),
+        outcome=Written(text="cc @bot please run"),
+        markers=("ci[bot]", "@ci", "61112222"),
+    ),
+    Row(
+        id="reg_mention_1char_bot_x",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="Run @x check", login="x[bot]", uid=61112233),
+        outcome=Written(text="Run @bot check"),
+        markers=("x[bot]", "@x", "61112233"),
+    ),
+    Row(
+        id="reg_mention_uppercase_bot_cla",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="Triggered @CLA check", login="CLA[BOT]", uid=61112244),
+        outcome=Written(text="Triggered @bot check"),
+        markers=("cla[bot]", "@cla", "61112244"),
+    ),
+    Row(
+        id="reg_gitlab_project_access_token_bot",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Automated merge",
+            login="project_88442211_bot_a1b2c3d4e5f6",
+            uid=61112255,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="Automated merge"),
+        markers=("88442211", "a1b2c3d4e5f6", "61112255"),
+    ),
+    Row(
+        id="reg_mixed_sep_under_dash_login",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="see _zqxjdoe7- here"),
+        outcome=Written(text="see _author- here"),
+        markers=("zqxjdoe7",),
+    ),
+    Row(
+        id="reg_mixed_sep_dash_under_login",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="see -zqxjdoe7_ here"),
+        outcome=Written(text="see -author_ here"),
+        markers=("zqxjdoe7",),
+    ),
+    Row(
+        id="reg_mixed_sep_dot_under_login",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="see .zqxjdoe7_ here"),
+        outcome=Written(text="see .author_ here"),
+        markers=("zqxjdoe7",),
+    ),
+    Row(
+        id="reg_branch_github_feat_login_repo",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(head_ref="feat/zqxjdoe7/zqmainrepo-fix", base_ref="release/zqgroup-2026"),
+        outcome=Written(text="Looks good to me."),
+        markers=("zqxjdoe7", "zqmainrepo", "zqgroup"),
+    ),
+    Row(
+        id="reg_branch_github_login_patch_1",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(head_ref="zqxjdoe7/patch-1"),
+        outcome=Written(text="Looks good to me."),
+        markers=("zqxjdoe7",),
+    ),
+    Row(
+        id="reg_branch_github_renovate_repo",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(head_ref="renovate/zqmainrepo-2.x"),
+        outcome=Written(text="Looks good to me."),
+        markers=("zqmainrepo",),
+    ),
+    Row(
+        id="reg_branch_gitlab_source_branch_ns_login",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            head_ref="zqgroup/zqxjdoe7-wip",
+        ),
+        outcome=Written(text="Looks good to me."),
+        markers=("zqgroup", "zqxjdoe7"),
+    ),
+    Row(
+        id="reg_branch_sp_login_upper",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(head_ref="SP-ZQXJDOE7-FIX"),
+        outcome=Written(text="Looks good to me."),
+        markers=("zqxjdoe7",),
+    ),
+    Row(
+        id="reg_branch_sp_repo_upper",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(head_ref="feat/SP-ZQMAINREPO"),
+        outcome=Written(text="Looks good to me."),
+        markers=("zqmainrepo",),
+    ),
+    Row(
+        id="reg_branch_with_denylist_token",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(head_ref="feat/zqdenyval-cleanup"),
+        outcome=Refused("deny-list entry 1 at exchanges[0].stdout[0].headRefName"),
+    ),
+    Row(
+        id="reg_branch_with_user_id",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(head_ref="fix/user-74928163"),
+        outcome=Written(text="Looks good to me.", fields=(("headRefName", "fix/user-1001"),)),
+    ),
+    Row(
+        id="reg_branch_with_legacy_node_id",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(head_ref="feat/MDQ6VXNlcjc0OTI4MTYz"),
+        outcome=Written(text="Looks good to me.", fields=(("headRefName", "feat/U_1001"),)),
+    ),
+    Row(
+        id="reg_branch_with_new_u_node_id",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(head_ref="feat/U_kgDOBHdQIw"),
+        outcome=Written(text="Looks good to me.", fields=(("headRefName", "feat/U_1001"),)),
+    ),
+    Row(
+        id="reg_node_legacy_in_url_path",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="https://example.com/users/MDQ6VXNlcjc0OTI4MTYz/profile"),
+        outcome=Written(text="https://example.com/users/U_1001/profile"),
+    ),
+    Row(
+        id="reg_node_legacy_alpha_prefix",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="userMDQ6VXNlcjc0OTI4MTYz"),
+        outcome=Refused("residual id 1 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="reg_node_legacy_suffixed",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="MDQ6VXNlcjc0OTI4MTYzsuffix"),
+        outcome=Refused("residual id 1 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="reg_node_legacy_padded_in_url_path",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="https://example.com/users/MDQ6VXNlcjQ4MTUxNjI=/profile", uid=4815162),
+        outcome=Written(text="https://example.com/users/U_1001/profile"),
+    ),
+    Row(
+        id="reg_node_new_u_in_url_path",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="https://example.com/users/U_kgDOBHdQIw/profile"),
+        outcome=Written(text="https://example.com/users/U_1001/profile"),
+    ),
+    Row(
+        id="reg_node_new_u_alpha_prefix",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="abcdefgU_kgDOBHdQIw"),
+        outcome=Refused("residual id 1 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="reg_node_deny_legacy_in_url_path",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="https://example.com/users/MDQ6VXNlcjkxODI3MzY0/profile"),
+        outcome=Refused("deny-list entry 2 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="reg_node_deny_new_u_in_url_path",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="https://example.com/users/U_kgDOBXkspA/profile"),
+        outcome=Refused("deny-list entry 2 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="reg_json_in_string_pure_login_value",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body='{"note": "zqxjdoe7"}'),
+        outcome=Written(text='{"note": "author"}'),
+        markers=("zqxjdoe7",),
+    ),
+    Row(
+        id="reg_json_in_string_pure_login_key",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body='{"zqxjdoe7": 1}'),
+        outcome=Written(text='{"author": 1}'),
+        markers=("zqxjdoe7",),
+    ),
+    Row(
+        id="reg_url_github_compare_fork",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            body="Diff: https://github.com/zqgroup/zqmainrepo/compare/main...zqxjdoe7:zqmainrepo:fix"
+        ),
+        outcome=Written(
+            text="Diff: https://forge.example.com/org/project/compare/main...author:project:fix"
+        ),
+        markers=("zqxjdoe7", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="reg_url_raw_githubusercontent",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            body="File: https://raw.githubusercontent.com/zqgroup/zqmainrepo/main/src/app.py"
+        ),
+        outcome=Written(text="File: https://forge.example.com/org/project"),
+        markers=("zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="reg_url_gist_github_login",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="Gist: https://gist.github.com/zqxjdoe7/0123456789abcdef"),
+        outcome=Written(text="Gist: https://forge.example.com/org/project"),
+        markers=("zqxjdoe7",),
+    ),
+    Row(
+        id="reg_url_github_pages_login_repo",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="Docs: https://zqxjdoe7.github.io/zqmainrepo/guide.html"),
+        outcome=Written(text="Docs: https://forge.example.com/org/project"),
+        markers=("zqxjdoe7", "zqmainrepo"),
+    ),
+    Row(
+        id="reg_url_avatars_githubusercontent_uid",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="Avatar: https://avatars.githubusercontent.com/u/74928163?v=4"),
+        outcome=Written(text="Avatar: https://forge.example.com/org/project"),
+        markers=("74928163",),
+    ),
+    Row(
+        id="reg_url_kept_host_path_with_login",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="https://example.com/users/zqxjdoe7/bio"),
+        outcome=Written(text="https://example.com/users/author/bio"),
+        markers=("zqxjdoe7",),
+    ),
+    Row(
+        id="reg_url_kept_host_subdomain_with_login",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="https://zqxjdoe7.example.com/bio"),
+        outcome=Written(text="https://author.example.com/bio"),
+        markers=("zqxjdoe7",),
+    ),
+    Row(
+        id="reg_url_kept_host_query_with_login",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="https://example.com/p?u=zqxjdoe7"),
+        outcome=Written(text="https://example.com/p?u=author"),
+        markers=("zqxjdoe7",),
+    ),
+    Row(
+        id="reg_url_kept_host_example_denylist_in_path",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="https://example.com/docs/zqdenyval/index.html"),
+        outcome=Refused("deny-list entry 1 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="reg_url_github_query_carrying_denylist",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="https://github.com/zqgroup/zqmainrepo/issues?q=zqdenyval"),
+        outcome=Written(text="https://forge.example.com/org/project/issues"),
+        markers=("zqdenyval", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="reg_url_pypi_query_carrying_denylist",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="See https://pypi.org/project/ruff/?ref=zqdenyval"),
+        outcome=Refused("deny-list entry 1 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="reg_url_docs_github_query_carrying_login",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="See https://docs.github.com/en/actions?user=zqxjdoe7"),
+        outcome=Written(text="See https://docs.github.com/en/actions?user=author"),
+        markers=("zqxjdoe7",),
+    ),
+    Row(
+        id="reg_url_docs_github_url_encoded_login",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="Ref https://docs.github.com/en/actions?q=%7a%71%78%6a%64%6f%65%37"),
+        outcome=Refused("residual login 1 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="reg_html_entity_encoded_denylist",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="Note: &#122;qdenyval here"),
+        outcome=Refused("deny-list entry 1 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="reg_url_self_hosted_trailing_exclamation_and_prose",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Check https://git.zqcorp.io/zqgroup/zqsecondrepo! (see zqsecondrepo docs)",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="Check https://forge.example.com/org/project! (see project docs)"),
+        markers=("git.zqcorp.io", "zqsecondrepo"),
+    ),
+    Row(
+        id="reg_url_self_hosted_trailing_question_and_prose",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Did you mean https://git.zqcorp.io/zqgroup/zqsecondrepo? (see zqsecondrepo)",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="Did you mean https://forge.example.com/org/project? (see project)"),
+        markers=("git.zqcorp.io", "zqsecondrepo"),
+    ),
+    Row(
+        id="reg_url_self_hosted_trailing_semicolon_and_prose",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="See https://git.zqcorp.io/zqgroup/zqsecondrepo; zqsecondrepo owns it.",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="See https://forge.example.com/org/project; project owns it."),
+        markers=("git.zqcorp.io", "zqsecondrepo"),
+    ),
+    Row(
+        id="reg_url_self_hosted_trailing_comma_and_prose",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Updated https://git.zqcorp.io/zqgroup/zqsecondrepo, check zqsecondrepo CI.",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="Updated https://forge.example.com/org/project, check project CI."),
+        markers=("git.zqcorp.io", "zqsecondrepo"),
+    ),
+    Row(
+        id="reg_url_self_hosted_single_quotes_and_prose",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Remote 'https://git.zqcorp.io/zqgroup/zqsecondrepo' (zqsecondrepo)",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="Remote 'https://forge.example.com/org/project' (project)"),
+        markers=("git.zqcorp.io", "zqsecondrepo"),
+    ),
+    Row(
+        id="reg_url_self_hosted_angle_brackets_and_prose",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Link <https://git.zqcorp.io/zqgroup/zqsecondrepo> for zqsecondrepo",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="Link <https://forge.example.com/org/project> for project"),
+        markers=("git.zqcorp.io", "zqsecondrepo"),
+    ),
+    Row(
+        id="reg_url_self_hosted_double_punct_and_prose",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Moved to https://git.zqcorp.io/zqgroup/zqsecondrepo?! Verify zqsecondrepo.",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="Moved to https://forge.example.com/org/project?! Verify project."),
+        markers=("git.zqcorp.io", "zqsecondrepo"),
+    ),
+    Row(
+        id="reg_url_self_hosted_footnote_and_prose",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="[1]: https://git.zqcorp.io/zqgroup/zqsecondrepo\nDetails in zqsecondrepo.",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="[1]: https://forge.example.com/org/project\nDetails in project."),
+        markers=("git.zqcorp.io", "zqsecondrepo"),
+    ),
+    Row(
+        id="reg_url_self_hosted_gfm_table_and_prose",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="|a|https://git.zqcorp.io/zqgroup/zqtabrepo|\nProse: zqtabrepo",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="|a|https://forge.example.com/org/project|\nProse: project"),
+        markers=("git.zqcorp.io", "zqtabrepo"),
+    ),
+    Row(
+        id="reg_url_self_hosted_backtick_and_prose",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="`https://git.zqcorp.io/zqgroup/zqbtrepo` (see zqbtrepo)",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="`https://forge.example.com/org/project` (see project)"),
+        markers=("git.zqcorp.io", "zqbtrepo"),
+    ),
+    Row(
+        id="reg_url_self_hosted_bold_and_prose",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="**https://git.zqcorp.io/zqgroup/zqboldrepo** (see zqboldrepo)",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="**https://forge.example.com/org/project** (see project)"),
+        markers=("git.zqcorp.io", "zqboldrepo"),
+    ),
+    Row(
+        id="reg_url_self_hosted_italic_star_and_prose",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="*https://git.zqcorp.io/zqgroup/zqitalrepo* (see zqitalrepo)",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="*https://forge.example.com/org/project* (see project)"),
+        markers=("git.zqcorp.io", "zqitalrepo"),
+    ),
+    Row(
+        id="reg_url_self_hosted_strikethrough_and_prose",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="~~https://git.zqcorp.io/zqgroup/zqstrikerepo~~ (see zqstrikerepo)",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="~~https://forge.example.com/org/project~~ (see project)"),
+        markers=("git.zqcorp.io", "zqstrikerepo"),
+    ),
+    Row(
+        id="reg_url_self_hosted_italic_under_and_prose",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="_https://git.zqcorp.io/zqgroup/zqunderrepo_ (see zqunderrepo)",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="_https://forge.example.com/org/project_ (see project)"),
+        markers=("git.zqcorp.io", "zqunderrepo"),
+    ),
+    Row(
+        id="reg_url_self_hosted_markdown_link_and_prose",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="See [m](https://git.zqcorp.io/zqgroup/zqlinkrepo) for zqlinkrepo",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="See [m](https://forge.example.com/org/project) for project"),
+        markers=("git.zqcorp.io", "zqlinkrepo"),
+    ),
+    Row(
+        id="reg_url_self_hosted_mixed_case_and_prose",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="See HTTPS://GIT.ZQCORP.IO/zqgroup/zqsecondrepo (zqsecondrepo)",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="See https://forge.example.com/org/project (project)"),
+        markers=("git.zqcorp.io", "zqsecondrepo"),
+    ),
+    Row(
+        id="reg_url_scp_mixed_case_and_prose",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="git clone git@Git.ZQCorp.IO:zqgroup/zqsecondrepo.git (zqsecondrepo)",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="git clone git@forge.example.com:org/project.git (project)"),
+        markers=("git.zqcorp.io", "zqsecondrepo"),
+    ),
+    Row(
+        id="reg_url_scp_same_host_trailing_dot",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="git clone git@git.zqcorp.io.:zqgroup/zqmainrepo.git",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="git clone git@forge.example.com:org/project.git"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="reg_url_scp_third_party_trailing_dot",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="git clone git@zqotherhost.io.:zqotherns/zqotherrepo.git", remote=""),
+        outcome=Written(text="git clone git@forge.example.com:org/project.git"),
+        markers=("zqotherhost.io", "zqotherns", "zqotherrepo"),
+    ),
+    Row(
+        id="reg_url_https_trailing_dot_self_hosted",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="see https://git.zqother.io./zqotherns/zqotherrepo", remote=""),
+        outcome=Written(text="see https://forge.example.com/org/project"),
+        markers=("git.zqother.io", "zqotherns", "zqotherrepo"),
+    ),
+    Row(
+        id="reg_url_ssh_port_and_login_userinfo",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="ssh://zqxjdoe7@git.zqcorp.io:2222/zqgroup/zqmainrepo.git",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="ssh://git@forge.example.com/org/project.git"),
+        markers=("zqxjdoe7", "git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="reg_url_https_credentials_query_fragment",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="https://zqxjdoe7:s3cr3t@git.zqcorp.io/zqgroup/zqmainrepo.git?ref=zqxjdoe7#zqxjdoe7",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="https://forge.example.com/org/project.git"),
+        markers=("zqxjdoe7", "s3cr3t", "git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="reg_url_empty_password_pat_same_host_and_prose",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Clone https://glpat99:@git.zqcorp.io/zqgroup/zqsecondrepo (see zqsecondrepo)",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="Clone https://forge.example.com/org/project (see project)"),
+        markers=("glpat99", "git.zqcorp.io", "zqsecondrepo"),
+    ),
+    Row(
+        id="reg_url_empty_password_pat_second_host_remote_empty",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Clone https://glpat99:@mirror.zqcorp.net/zqgroup/zqsecondrepo (see zqsecondrepo)",
+            remote="",
+        ),
+        outcome=Written(text="Clone https://forge.example.com/org/project (see project)"),
+        markers=("glpat99", "mirror.zqcorp.net", "zqsecondrepo"),
+    ),
+    Row(
+        id="reg_url_symbol_password_excl_and_prose",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Curl https://nkuser:pw!@git.zqcorp.io/zqgroup/zqsecondrepo (see zqsecondrepo)",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="Curl https://forge.example.com/org/project (see project)"),
+        markers=("nkuser", "pw!", "git.zqcorp.io", "zqsecondrepo"),
+    ),
+    Row(
+        id="reg_url_scp_userinfo_on_example_host",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="Run alice@example.com:org/repo.git"),
+        outcome=Written(text="Run git@forge.example.com:org/project.git"),
+        markers=("alice",),
+    ),
+    Row(
+        id="reg_url_ghcr_with_planted_userinfo_secret",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="curl https://zqxjdoe7:s3cr3t@ghcr.io/zqgroup/zqmainrepo"),
+        outcome=Written(text="curl https://forge.example.com/org/project"),
+        markers=("zqxjdoe7", "zqgroup", "zqmainrepo", "s3cr3t"),
+    ),
+    Row(
+        id="reg_url_ghcr_with_unknown_userinfo_credentials",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="curl https://alice:mysecret@ghcr.io/astral-sh/uv"),
+        outcome=Written(text="curl https://forge.example.com/org/project"),
+        markers=("alice", "mysecret"),
+    ),
+    Row(
+        id="reg_url_npmjs_with_userinfo",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="npm config set https://zqxjdoe7:npmtok99@registry.npmjs.org/"),
+        outcome=Written(text="npm config set https://forge.example.com/"),
+        markers=("zqxjdoe7", "npmtok99"),
+    ),
+    Row(
+        id="reg_url_docker_with_userinfo",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="docker login https://nkops:dockpass@docker.io/v2/"),
+        outcome=Written(text="docker login https://forge.example.com/org/"),
+        markers=("nkops", "dockpass"),
+    ),
+    Row(
+        id="reg_url_docs_github_with_userinfo",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="curl https://nkops:ghpass@docs.github.com/en/rest"),
+        outcome=Written(text="curl https://forge.example.com/org/project"),
+        markers=("nkops", "ghpass"),
+    ),
+    Row(
+        id="reg_url_example_org_with_userinfo",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="curl https://nkops:expass@example.org/test"),
+        outcome=Written(text="curl https://forge.example.com/org"),
+        markers=("nkops", "expass"),
+    ),
+    Row(
+        id="reg_url_localhost_with_userinfo",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="curl http://nkadmin:localpw@localhost:5432/db"),
+        outcome=Written(text="curl http://forge.example.com/org"),
+        markers=("nkadmin", "localpw"),
+    ),
+    Row(
+        id="reg_url_double_slash_github",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="https://github.com/zqgroup//zqmainrepo/pull/42"),
+        outcome=Written(text="https://forge.example.com/org/project/pull/42"),
+        markers=("zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="reg_url_double_slash_gitlab_subgroup",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="https://git.zqcorp.io/zqgroup//zqsub//zqmainrepo//-/merge_requests/42",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="https://forge.example.com/org/project/-/merge_requests/42"),
+        markers=("git.zqcorp.io", "zqgroup", "zqsub", "zqmainrepo"),
+    ),
+    Row(
+        id="reg_url_double_slash_repos_api",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="https://github.com/repos//zqotherns/zqotherrepo"),
+        outcome=Written(text="https://forge.example.com/repos/org/project"),
+        markers=("zqotherns", "zqotherrepo"),
+    ),
+    Row(
+        id="reg_url_double_slash_users_api",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="https://github.com/users//zqsomeone9"),
+        outcome=Written(text="https://forge.example.com/users/org"),
+        markers=("zqsomeone9",),
+    ),
+    Row(
+        id="reg_url_double_slash_in_url_key",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="hello",
+            remote="",
+            url="https://git.zqother.io/zqotherns//zqotherrepo",
+        ),
+        outcome=Written(text="hello"),
+        markers=("git.zqother.io", "zqotherns", "zqotherrepo"),
+    ),
+    Row(
+        id="reg_url_glab_api_project_id_without_prefix_in_comment",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Repro: `glab api projects/88442211/merge_requests/42`",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="Repro: `glab api projects/2001/merge_requests/42`"),
+        markers=("88442211",),
+    ),
+    Row(
+        id="reg_url_glab_api_project_id_leading_slash",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Run `glab api /projects/88442211/pipelines`",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="Run `glab api /projects/2001/pipelines`"),
+        markers=("88442211",),
+    ),
+    Row(
+        id="reg_url_glab_api_project_id_query",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Run `glab api projects/88442211?statistics=true`",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="Run `glab api projects/2001?statistics=true`"),
+        markers=("88442211",),
+    ),
+    Row(
+        id="reg_url_glab_api_project_id_in_call_args",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="ok",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            api_path="projects/88442211/merge_requests/42/notes",
+        ),
+        outcome=Written(text='["api", "projects/2001/merge_requests/42/notes"]'),
+        markers=("88442211",),
+    ),
+    Row(
+        id="reg_url_api_v3_project_id_in_comment",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="API: https://git.zqcorp.io/api/v3/projects/88442211/issues",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="API: https://forge.example.com/api/v3/projects/2001/issues"),
+        markers=("88442211", "git.zqcorp.io"),
+    ),
+    Row(
+        id="reg_url_api_v4_project_id_only_in_comment",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="URL https://git.zqcorp.io/api/v4/projects/88442211/jobs/99",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="URL https://forge.example.com/api/v4/projects/2001/jobs/99"),
+        markers=("88442211", "git.zqcorp.io"),
+    ),
+    Row(
+        id="reg_url_api_v4_project_id_with_bare_prose_id",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="URL https://git.zqcorp.io/api/v4/projects/88442211/jobs/99 failed on project 88442211.",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(
+            text="URL https://forge.example.com/api/v4/projects/2001/jobs/99 failed on project 2001."
+        ),
+    ),
+    Row(
+        id="reg_url_api_v4_project_id_in_repo_object_and_comment",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="API call: https://git.zqcorp.io/api/v4/projects/88442211/merge_requests/42",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            extra_item={
+                "repository": {
+                    "id": 88442211,
+                    "name": "zqmainrepo",
+                    "path": "zqmainrepo",
+                    "web_url": "https://git.zqcorp.io/zqgroup/zqmainrepo",
+                }
+            },
+        ),
+        outcome=Written(
+            text="API call: https://forge.example.com/api/v4/projects/2001/merge_requests/42"
+        ),
+        markers=("88442211", "git.zqcorp.io", "zqmainrepo"),
+    ),
+    Row(
+        id="reg_url_api_v4_project_id_in_stdin",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="ok",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            stdin="POST /api/v4/projects/88442211/notes",
+        ),
+        outcome=Written(text="POST /api/v4/projects/2001/notes"),
+        markers=("88442211",),
+    ),
+    Row(
+        id="reg_url_api_v4_project_id_in_stderr",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="ok",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            stderr="403 GET https://git.zqcorp.io/api/v4/projects/88442211/members",
+        ),
+        outcome=Written(text="403 GET https://forge.example.com/api/v4/projects/2001/members"),
+        markers=("88442211", "git.zqcorp.io"),
+    ),
+    Row(
+        id="reg_url_scheme_led_rfc1918_ipv4_and_prose_repo",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            body="Mirror at http://10.42.1.9:8080/zqipns/zqipproj (see zqipproj)", remote=""
+        ),
+        outcome=Written(text="Mirror at http://forge.example.com/org/project (see project)"),
+        markers=("10.42.1.9", "zqipproj"),
+    ),
+    Row(
+        id="reg_url_ftp_private_mirror_and_prose_repo",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Artifacts at ftp://git.zqcorp.io/zqgroup/zqftprepo (see zqftprepo)",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="Artifacts at ftp://forge.example.com/org/project (see project)"),
+        markers=("git.zqcorp.io", "zqftprepo"),
+    ),
+    Row(
+        id="reg_url_ftps_private_mirror_and_prose_repo",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Download ftps://git.zqcorp.io/zqgroup/zqftprepo/dist.tgz (zqftprepo)",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="Download ftps://forge.example.com/org/project (org)"),
+        markers=("git.zqcorp.io", "zqftprepo"),
+    ),
+    Row(
+        id="reg_url_git_plus_https_pip_install",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="pip install git+https://github.com/zqgroup/zqmainrepo.git@main"),
+        outcome=Written(text="pip install git+https://forge.example.com/org/project"),
+        markers=("zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="reg_url_schemeless_host_seen_led_in_same_fixture",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Primary https://git.zqseen.internal/zqgroup/zqfirstrepo",
+            remote="",
+            url="https://git.zqseen.internal/zqgroup/zqmainrepo/-/merge_requests/42",
+            extra_items=(
+                {
+                    "author": {"username": "zqxjdoe7", "id": 74928163},
+                    "body": "Mirror git.zqseen.internal/zqgroup/zqsecondrepo (see zqsecondrepo)",
+                },
+            ),
+        ),
+        outcome=Written(text="Primary https://forge.example.com/org/project"),
+        markers=("git.zqseen.internal", "zqfirstrepo", "zqsecondrepo"),
+    ),
+    Row(
+        id="reg_url_in_call_args",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            argv_extra=("-f", "body=See https://git.zqcorp.io/zqargns/zqargrepo?u=zqxjdoe7")
+        ),
+        outcome=Written(text="Looks good to me."),
+        markers=("git.zqcorp.io", "zqargns", "zqargrepo", "zqxjdoe7"),
+    ),
+    Row(
+        id="reg_url_in_top_kwargs",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            top_kwargs={"note": "https://git.zqcorp.io/zqgroup/zqmainrepo/pull/1 by zqxjdoe7"}
+        ),
+        outcome=Written(text='{"note": "https://forge.example.com/org/project/pull/1 by author"}'),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7"),
+    ),
+    Row(
+        id="reg_email_noreply_github_id_plus_login",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="Co-authored-by: Dev <74928163+zqxjdoe7@users.noreply.github.com>"),
+        outcome=Written(text="Co-authored-by: Dev <author@users.noreply.forge.example.com>"),
+        markers=("74928163", "zqxjdoe7", "github.com"),
+    ),
+    Row(
+        id="reg_email_noreply_github_login_only",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="Co-authored-by: Dev <zqxjdoe7@users.noreply.github.com>"),
+        outcome=Written(text="Co-authored-by: Dev <author@users.noreply.forge.example.com>"),
+        markers=("zqxjdoe7", "github.com"),
+    ),
+    Row(
+        id="reg_email_noreply_gitlab_id_dash_login",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Co-authored-by: Dev <74928163-zqxjdoe7@users.noreply.gitlab.com>",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="Co-authored-by: Dev <author@users.noreply.forge.example.com>"),
+        markers=("74928163", "zqxjdoe7", "gitlab.com"),
+    ),
+    Row(
+        id="reg_email_noreply_self_hosted_users",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Co-authored-by: Dev <74928163+zqxjdoe7@users.noreply.git.zqcorp.io>",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="Co-authored-by: Dev <author@users.noreply.forge.example.com>"),
+        markers=("74928163", "zqxjdoe7", "git.zqcorp.io"),
+    ),
+    Row(
+        id="reg_email_noreply_self_hosted_without_users",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Co-authored-by: Dev <74928163+zqxjdoe7@noreply.git.zqcorp.io>",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="Co-authored-by: Dev <author@users.noreply.forge.example.com>"),
+        markers=("74928163", "zqxjdoe7", "git.zqcorp.io"),
+    ),
+    Row(
+        id="reg_email_noreply_with_denylist_in_local",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="Co-authored-by: X <12345+zqdenyval@users.noreply.github.com>"),
+        outcome=Written(text="Co-authored-by: X <author@users.noreply.forge.example.com>"),
+        markers=("zqdenyval", "github.com"),
+    ),
+    Row(
+        id="reg_email_noreply_uppercase",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="Co-authored-by: Dev <74928163+ZQXJDOE7@USERS.NOREPLY.GITHUB.COM>"),
+        outcome=Written(text="Co-authored-by: Dev <author@users.noreply.forge.example.com>"),
+        markers=("74928163", "zqxjdoe7", "github.com"),
+    ),
+    Row(
+        id="reg_email_system_noreply_self_hosted",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="From: GitLab <noreply@git.zqcorp.io>",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="From: GitLab <noreply@forge.example.com>"),
+        markers=("git.zqcorp.io",),
+    ),
+    Row(
+        id="reg_email_mailto_noreply",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="Email mailto:74928163+zqxjdoe7@users.noreply.github.com"),
+        outcome=Written(text="Email mailto:author@users.noreply.forge.example.com"),
+        markers=("74928163", "zqxjdoe7", "github.com"),
+    ),
+    Row(
+        id="reg_email_mailto_personal_refused",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="Email [me](mailto:jane.real@privatecorp.com)"),
+        outcome=Refused("unknown mailbox at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="reg_email_personal_corporate_domain_refused",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="Signed-off-by: Dev <dev.person@zqcorp.io>"),
+        outcome=Refused("unknown mailbox at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="reg_email_personal_git_trailer_example_tld",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="Signed-off-by: Someone <zqxjdoe7@zqcorp.example>"),
+        outcome=Written(text="Signed-off-by: Someone <author@zqcorp.example>"),
+        markers=("zqxjdoe7",),
+    ),
+    Row(
+        id="reg_email_login_at_example_com",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="mail zqxjdoe7@example.com"),
+        outcome=Written(text="mail author@example.com"),
+        markers=("zqxjdoe7",),
+    ),
+    Row(
+        id="reg_email_first_login_plus_tag_example_com",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="mail first.zqxjdoe7+tag@example.com"),
+        outcome=Written(text="mail first.author+tag@example.com"),
+        markers=("zqxjdoe7",),
+    ),
+    Row(
+        id="reg_email_sp_login_upper_example_com",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="mail SP-ZQXJDOE7@example.com"),
+        outcome=Written(text="mail SP-author@example.com"),
+        markers=("zqxjdoe7",),
+    ),
+    Row(
+        id="reg_email_login_at_sub_example_com_refused",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="Mail zqxjdoe7@sub.example.com"),
+        outcome=Refused("unknown mailbox at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="reg_email_private_with_port_colon_refused",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="contact real.person@private-mail.org:25"),
+        outcome=Refused("unknown mailbox at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="reg_email_private_with_word_colon_refused",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="contact real.person@private-mail.org:hello"),
+        outcome=Refused("unknown mailbox at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="reg_invented_sp_login_literal",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="see SP-ZQXJDOE7 here"),
+        outcome=Written(text="see SP-author here"),
+        markers=("zqxjdoe7",),
+    ),
+    Row(
+        id="reg_invented_sp_fix_login_literal",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="see SP-FIX-ZQXJDOE7 here"),
+        outcome=Written(text="see SP-FIX-author here"),
+        markers=("zqxjdoe7",),
+    ),
+    Row(
+        id="reg_invented_sp_repo_literal",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="see SP-ZQMAINREPO here"),
+        outcome=Written(text="see SP-project here"),
+        markers=("zqmainrepo",),
+    ),
+    Row(
+        id="reg_invented_sp_ns_literal",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="see SP-ZQGROUP here"),
+        outcome=Written(text="see SP-org here"),
+        markers=("zqgroup",),
+    ),
+    Row(
+        id="reg_invented_sp_uid_literal_refused",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="see SP-74928163 here"),
+        outcome=Written(text="see SP-1001 here"),
+    ),
+    Row(
+        id="reg_invented_sp_denylist_literal_refused",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="see SP-ZQDENYVAL here"),
+        outcome=Refused("deny-list entry 1 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="reg_path_linux_home_known_login_refused",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body='File "/home/zqxjdoe7/work/zqmainrepo/app.py", line 9'),
+        outcome=Refused("generic class home_path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="reg_path_macos_users_known_login_refused",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body='File "/Users/zqxjdoe7/dev/zqmainrepo/app.py", line 12'),
+        outcome=Refused("generic class home_path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="reg_path_macos_users_unknown_home_refused",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body='File "/Users/janesmith/src/app.py", line 42'),
+        outcome=Refused("generic class home_path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="reg_path_linux_home_unknown_user_refused",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="Error at /home/alice_local/src/main.py:42"),
+        outcome=Refused("generic class home_path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="reg_path_windows_users_known_login_redacted",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body='File "C:\\Users\\zqxjdoe7\\work\\zqmainrepo\\app.py", line 12'),
+        outcome=Written(text='File "C:\\Users\\author\\work\\project\\app.py", line 12'),
+        markers=("zqxjdoe7", "zqmainrepo"),
+    ),
+    Row(
+        id="reg_path_tilde_repo_denylist_refused",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="Edited ~/work/zqmainrepo/src/zqdenyval.py"),
+        outcome=Refused("deny-list entry 1 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="reg_path_relative_ns_repo_redacted",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="Modified src/zqgroup/zqmainrepo/mod.py"),
+        outcome=Written(text="Modified src/org/project/mod.py"),
+        markers=("zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="reg_ci_log_stderr_denylist_refused",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            stderr="fatal: could not read zqdenyval on git.zqcorp.io",
+        ),
+        outcome=Refused("deny-list entry 1 at exchanges[0].stderr"),
+    ),
+    Row(
+        id="reg_ci_log_stderr_git_push_error_redacted",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            stderr="remote: Permission to zqgroup/zqmainrepo.git denied to zqxjdoe7.\nfatal: unable to access 'https://git.zqcorp.io/zqgroup/zqmainrepo.git/': 403",
+        ),
+        outcome=Written(
+            text="remote: Permission to org/project.git denied to author.\nfatal: unable to access 'https://forge.example.com/org/project.git/': 403"
+        ),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7"),
+    ),
+    Row(
+        id="reg_ci_log_stdin_private_url_and_login_redacted",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            stdin="Merge https://git.zqcorp.io/zqgroup/zqmainrepo/pull/1 by zqxjdoe7",
+        ),
+        outcome=Written(text="Merge https://forge.example.com/org/project/pull/1 by author"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7"),
+    ),
+    Row(
+        id="reg_ci_log_diff_private_url_and_denylist_refused",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            raw_text_stdout="diff --git a/README.md b/README.md\n+# See https://git.zqcorp.io/zqgroup/zqmainrepo (zqdenyval)\n",
+        ),
+        outcome=Refused("deny-list entry 1 at exchanges[0].stdout"),
+    ),
+    Row(
+        id="reg_ci_log_diff_home_path_refused",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            raw_text_stdout="diff --git a/cfg.ini b/cfg.ini\n+root = /home/alice_local/data\n"
+        ),
+        outcome=Refused("generic class home_path at exchanges[0].stdout"),
+    ),
+    Row(
+        id="reg_ci_log_diff_noreply_email_redacted",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            raw_text_stdout="diff --git a/AUTHORS b/AUTHORS\n+Dev <74928163+zqxjdoe7@users.noreply.github.com>\n"
+        ),
+        outcome=Written(
+            text="diff --git a/AUTHORS b/AUTHORS\n+Dev <author@users.noreply.forge.example.com>\n"
+        ),
+        markers=("74928163", "zqxjdoe7", "github.com"),
+    ),
+    Row(
+        id="reg_ci_log_public_ipv4_refused",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="Connected to runner 45.33.32.156:443"),
+        outcome=Refused("public address at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="reg_ci_log_graphql_legacy_node_id_refused",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="GraphQL error: could not resolve MDQ6VXNlcjc0OTI4MTYz"),
+        outcome=Written(text="GraphQL error: could not resolve U_1001"),
+    ),
+    Row(
+        id="reg_ci_log_graphql_new_u_node_id_refused",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="GraphQL error: could not resolve U_kgDOBHdQIw"),
+        outcome=Written(text="GraphQL error: could not resolve U_1001"),
+    ),
+    Row(
+        id="reg_ci_log_deny_numeric_legacy_node_id_refused",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="GraphQL error: MDQ6VXNlcjkxODI3MzY0"),
+        outcome=Refused("deny-list entry 2 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="reg_ci_log_deny_numeric_new_u_node_id_refused",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="GraphQL error: U_kgDOBXkspA"),
+        outcome=Refused("deny-list entry 2 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="reg_case_field_with_login_refused",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(case="pr_zqxjdoe7"),
+        outcome=Refused("residual login 1 at case"),
+    ),
+    Row(
+        id="reg_case_field_with_repo_refused",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(case="pr_zqmainrepo"),
+        outcome=Refused("residual segment 2 at case"),
+    ),
+    Row(
+        id="reg_case_field_with_host_refused",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            case="pr_git.zqcorp.io",
+        ),
+        outcome=Refused("residual host 2 at case"),
+    ),
+    Row(
+        id="reg_case_field_with_denylist_refused",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(case="pr_zqdenyval"),
+        outcome=Refused("deny-list entry 1 at case"),
+    ),
+    Row(
+        id="reg_dropped_key_assignees_login_redacted",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            body="Assigned to zqassignee9 for triage",
+            extra_item={"assignees": [{"login": "zqassignee9", "id": 55443322}]},
+        ),
+        outcome=Written(text="Assigned to author-2 for triage"),
+        markers=("zqassignee9", "55443322"),
+    ),
+    Row(
+        id="reg_dropped_key_mergedby_login_redacted",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            body="Merged by zqmerger8 yesterday",
+            extra_item={"mergedBy": {"login": "zqmerger8", "id": 66554433}},
+        ),
+        outcome=Written(text="Merged by author-2 yesterday"),
+        markers=("zqmerger8", "66554433"),
+    ),
+    Row(
+        id="reg_graphql_resolvedby_and_message_headline",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            body="ok",
+            extra_item={
+                "resolvedBy": {"login": "zqreviewer", "id": 63918499},
+                "messageHeadline": "Fix requested by @zqreviewer",
+            },
+        ),
+        outcome=Written(text="ok"),
+        markers=("zqreviewer", "63918499"),
+    ),
+    Row(
+        id="reg_needle_err_short_dropped_key_login",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(extra_item={"assignees": [{"login": "sam"}]}),
+        outcome=Refused("needle login 2: too short"),
+    ),
+    Row(
+        id="reg_needle_err_placeholder_repo_project",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(ns="mygroup", repo="project", remote="git@github.com:mygroup/project.git"),
+        outcome=Refused("needle segment 2: a class word or placeholder"),
+    ),
+    Row(
+        id="reg_needle_err_short_3char_repo_cli",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(ns="mygroup", repo="cli", remote="git@github.com:mygroup/cli.git"),
+        outcome=Refused("needle segment 2: too short"),
+    ),
+    Row(
+        id="reg_mention_only_mark_with_bare_word_refused",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="cc @mark please mark this ready"),
+        outcome=Refused("residual login 2 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="reg_mention_only_mark_with_hyphen_refused",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="cc @mark please fix the mark-down rendering"),
+        outcome=Refused("residual login 2 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="reg_mention_only_check_with_underscore_refused",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="cc @check please run check_status"),
+        outcome=Refused("residual login 2 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="reg_r10_userinfo_empty_password_x_access_token",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Clone https://x-access-token:@mirror.zqcorp.net/zqgroup/zqbillrepo (see zqbillrepo)",
+            remote="",
+        ),
+        outcome=Written(text="Clone https://forge.example.com/org/project (see project)"),
+        markers=("x-access-token", "mirror.zqcorp.net", "zqbillrepo"),
+    ),
+    Row(
+        id="reg_r10_userinfo_empty_password_gitlab_ci_token",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Clone https://gitlab-ci-token:@mirror.zqcorp.net/zqgroup/zqbillrepo (see zqbillrepo)",
+            remote="",
+        ),
+        outcome=Written(text="Clone https://forge.example.com/org/project (see project)"),
+        markers=("gitlab-ci-token", "mirror.zqcorp.net", "zqbillrepo"),
+    ),
+    Row(
+        id="reg_r10_userinfo_empty_password_oauth2_token",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Clone https://oauth2-token:@mirror.zqcorp.net/zqgroup/zqbillrepo (see zqbillrepo)",
+            remote="",
+        ),
+        outcome=Written(text="Clone https://forge.example.com/org/project (see project)"),
+        markers=("oauth2-token", "mirror.zqcorp.net", "zqbillrepo"),
+    ),
+    Row(
+        id="reg_r10_userinfo_empty_password_deploy_key_1",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Clone https://deploy-key-1:@mirror.zqcorp.net/zqgroup/zqbillrepo (see zqbillrepo)",
+            remote="",
+        ),
+        outcome=Written(text="Clone https://forge.example.com/org/project (see project)"),
+        markers=("deploy-key-1", "mirror.zqcorp.net", "zqbillrepo"),
+    ),
+    Row(
+        id="reg_r10_userinfo_empty_password_first_last_dev",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Clone https://first-last.dev:@mirror.zqcorp.net/zqgroup/zqbillrepo (see zqbillrepo)",
+            remote="",
+        ),
+        outcome=Written(text="Clone https://forge.example.com/org/project (see project)"),
+        markers=("first-last.dev", "mirror.zqcorp.net", "zqbillrepo"),
+    ),
+    Row(
+        id="reg_r10_userinfo_hyphen_user_password_char_tilde",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Fetch https://ci-bot:pw~x@mirror.zqcorp.net/zqgroup/zqbillrepo (see zqbillrepo)",
+            remote="",
+        ),
+        outcome=Written(text="Fetch https://forge.example.com/org/project (see project)"),
+        markers=("ci-bot", "mirror.zqcorp.net", "zqbillrepo"),
+    ),
+    Row(
+        id="reg_r10_userinfo_hyphen_user_password_char_bang",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Fetch https://ci-bot:pw!x@mirror.zqcorp.net/zqgroup/zqbillrepo (see zqbillrepo)",
+            remote="",
+        ),
+        outcome=Written(text="Fetch https://forge.example.com/org/project (see project)"),
+        markers=("ci-bot", "mirror.zqcorp.net", "zqbillrepo"),
+    ),
+    Row(
+        id="reg_r10_userinfo_hyphen_user_password_char_dollar",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Fetch https://ci-bot:pw$x@mirror.zqcorp.net/zqgroup/zqbillrepo (see zqbillrepo)",
+            remote="",
+        ),
+        outcome=Written(text="Fetch https://forge.example.com/org/project (see project)"),
+        markers=("ci-bot", "mirror.zqcorp.net", "zqbillrepo"),
+    ),
+    Row(
+        id="reg_r10_userinfo_hyphen_user_password_char_amp",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Fetch https://ci-bot:pw&x@mirror.zqcorp.net/zqgroup/zqbillrepo (see zqbillrepo)",
+            remote="",
+        ),
+        outcome=Written(text="Fetch https://forge.example.com/org/project (see project)"),
+        markers=("ci-bot", "mirror.zqcorp.net", "zqbillrepo"),
+    ),
+    Row(
+        id="reg_r10_userinfo_hyphen_user_password_char_squote",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Fetch https://ci-bot:pw'x@mirror.zqcorp.net/zqgroup/zqbillrepo (see zqbillrepo)",
+            remote="",
+        ),
+        outcome=Written(text="Fetch https://forge.example.com/org/project (see project)"),
+        markers=("ci-bot", "mirror.zqcorp.net", "zqbillrepo"),
+    ),
+    Row(
+        id="reg_r10_userinfo_hyphen_user_password_char_lparen",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Fetch https://ci-bot:pw(x@mirror.zqcorp.net/zqgroup/zqbillrepo (see zqbillrepo)",
+            remote="",
+        ),
+        outcome=Written(text="Fetch https://forge.example.com/org/project (see project)"),
+        markers=("ci-bot", "mirror.zqcorp.net", "zqbillrepo"),
+    ),
+    Row(
+        id="reg_r10_userinfo_hyphen_user_password_char_rparen",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Fetch https://ci-bot:pw)x@mirror.zqcorp.net/zqgroup/zqbillrepo (see zqbillrepo)",
+            remote="",
+        ),
+        outcome=Written(text="Fetch https://forge.example.com/org/project (see project)"),
+        markers=("ci-bot", "mirror.zqcorp.net", "zqbillrepo"),
+    ),
+    Row(
+        id="reg_r10_userinfo_hyphen_user_password_char_star",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Fetch https://ci-bot:pw*x@mirror.zqcorp.net/zqgroup/zqbillrepo (see zqbillrepo)",
+            remote="",
+        ),
+        outcome=Written(text="Fetch https://forge.example.com/org/project (see project)"),
+        markers=("ci-bot", "mirror.zqcorp.net", "zqbillrepo"),
+    ),
+    Row(
+        id="reg_r10_userinfo_hyphen_user_password_char_comma",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Fetch https://ci-bot:pw,x@mirror.zqcorp.net/zqgroup/zqbillrepo (see zqbillrepo)",
+            remote="",
+        ),
+        outcome=Written(text="Fetch https://forge.example.com/org/project (see project)"),
+        markers=("ci-bot", "mirror.zqcorp.net", "zqbillrepo"),
+    ),
+    Row(
+        id="reg_r10_userinfo_hyphen_user_password_char_semi",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Fetch https://ci-bot:pw;x@mirror.zqcorp.net/zqgroup/zqbillrepo (see zqbillrepo)",
+            remote="",
+        ),
+        outcome=Written(text="Fetch https://forge.example.com/org/project (see project)"),
+        markers=("ci-bot", "mirror.zqcorp.net", "zqbillrepo"),
+    ),
+    Row(
+        id="reg_r10_userinfo_hyphen_user_password_char_eq",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Fetch https://ci-bot:pw=x@mirror.zqcorp.net/zqgroup/zqbillrepo (see zqbillrepo)",
+            remote="",
+        ),
+        outcome=Written(text="Fetch https://forge.example.com/org/project (see project)"),
+        markers=("ci-bot", "mirror.zqcorp.net", "zqbillrepo"),
+    ),
+    Row(
+        id="reg_r10_userinfo_hyphen_user_password_char_colon",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Fetch https://ci-bot:pw:x@mirror.zqcorp.net/zqgroup/zqbillrepo (see zqbillrepo)",
+            remote="",
+        ),
+        outcome=Written(text="Fetch https://forge.example.com/org/project (see project)"),
+        markers=("ci-bot", "mirror.zqcorp.net", "zqbillrepo"),
+    ),
+    Row(
+        id="reg_r10_userinfo_star_password_on_kept_public_host",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="Fetch https://x-access-token:pw*1@docs.python.org/3/library/re.html now"),
+        outcome=Written(text="Fetch https://forge.example.com/org/project now"),
+        markers=("x-access-token", "pw*1"),
+    ),
+    Row(
+        id="reg_r10_userinfo_quote_password_on_kept_public_host",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="Fetch https://x-access-token:pw'1@developer.mozilla.org/en-US/docs/ now"),
+        outcome=Written(text="Fetch https://forge.example.com/org/project/ now"),
+        markers=("x-access-token", "pw'1"),
+    ),
+    Row(
+        id="reg_r10_userinfo_dotted_user_hyphen_password",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Clone https://first.last:my-pass@mirror.zqcorp.net/zqgroup/zqbillrepo (zqbillrepo)",
+            remote="",
+        ),
+        outcome=Written(text="Clone https://forge.example.com/org/project (project)"),
+        markers=("first.last", "my-pass", "mirror.zqcorp.net", "zqbillrepo"),
+    ),
+    Row(
+        id="reg_r10_query_string_with_at_sign_and_prose_host",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="See https://mirror.zqcorp.net?contact=alice@example.com (host mirror.zqcorp.net)",
+            remote="",
+        ),
+        outcome=Written(text="See https://forge.example.com (host forge.example.com)"),
+        markers=("mirror.zqcorp.net",),
+    ),
+    Row(
+        id="reg_r10_adjacent_angle_urls_and_mailbox",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="See <https://mirror.zqcorp.net/zqgroup/zqbillrepo><alice@example.com> now",
+            remote="",
+        ),
+        outcome=Written(text="See <https://forge.example.com/org/project><alice@example.com> now"),
+        markers=("mirror.zqcorp.net", "zqbillrepo"),
+    ),
+    Row(
+        id="reg_r10_diff_scp_added_line_git_user",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            remote="",
+            raw_text_stdout="diff --git a/sub b/sub\n+git@mirror.zqcorp.net:zqgroup/zqbillrepo.git\n",
+        ),
+        outcome=Written(text="diff --git a/sub b/sub\n+git@forge.example.com:org/project.git\n"),
+        markers=("mirror.zqcorp.net", "zqbillrepo"),
+    ),
+    Row(
+        id="reg_r10_diff_scp_removed_line_named_user",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            remote="",
+            raw_text_stdout="diff --git a/sub b/sub\n-alice@mirror.zqcorp.net:zqgroup/zqbillrepo.git\n",
+        ),
+        outcome=Written(text="diff --git a/sub b/sub\n-git@forge.example.com:org/project.git\n"),
+        markers=("alice", "mirror.zqcorp.net", "zqbillrepo"),
+    ),
+    Row(
+        id="reg_r10_diff_scp_added_line_named_user",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            remote="",
+            raw_text_stdout="diff --git a/sub b/sub\n+bob@mirror.zqcorp.net:zqgroup/zqbillrepo.git\n",
+        ),
+        outcome=Written(text="diff --git a/sub b/sub\n+git@forge.example.com:org/project.git\n"),
+        markers=("bob", "mirror.zqcorp.net", "zqbillrepo"),
+    ),
+    Row(
+        id="reg_r10_diff_scp_removed_line_named_user_on_example_host",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(raw_text_stdout="diff --git a/sub b/sub\n-alice@example.com:org/repo.git\n"),
+        outcome=Written(text="diff --git a/sub b/sub\n-git@forge.example.com:org/project.git\n"),
+        markers=("alice",),
+    ),
+    Row(
+        id="reg_r10_scp_plus_in_user_name",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Clone ci+bot@mirror.zqcorp.net:zqgroup/zqbillrepo.git for zqbillrepo",
+            remote="",
+        ),
+        outcome=Written(text="Clone git@forge.example.com:org/project.git for project"),
+        markers=("ci+bot", "mirror.zqcorp.net", "zqbillrepo"),
+    ),
+    Row(
+        id="reg_r10_glab_api_quoted_header_flag",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Repro: `glab api -H 'Accept: application/json' /projects/88442211/issues`",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(
+            text="Repro: `glab api -H 'Accept: application/json' /projects/2001/issues`"
+        ),
+        markers=("88442211",),
+    ),
+    Row(
+        id="reg_r10_glab_api_double_quoted_field_flag",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body='Run `glab api -f "body=hello world" projects/88442211/notes`',
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text='Run `glab api -f "body=hello world" projects/2001/notes`'),
+        markers=("88442211",),
+    ),
+    Row(
+        id="reg_r10_glab_api_raw_field_flag",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Run `glab api --raw-field 'title=Fix bug' projects/88442211/merge_requests`",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(
+            text="Run `glab api --raw-field 'title=Fix bug' projects/2001/merge_requests`"
+        ),
+        markers=("88442211",),
+    ),
+    Row(
+        id="reg_r10_glab_api_header_equals_flag",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Run `glab api --header='PRIVATE-TOKEN: x' projects/88442211/issues`",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="Run `glab api --header='PRIVATE-TOKEN: x' projects/2001/issues`"),
+        markers=("88442211",),
+    ),
+    Row(
+        id="reg_r10_glab_api_method_flag_in_text",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Repro: `glab api -X POST /projects/88442211/notes`",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="Repro: `glab api -X POST /projects/2001/notes`"),
+        markers=("88442211",),
+    ),
+    Row(
+        id="reg_r10_glab_api_unbalanced_quote_falls_back_safely",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Run `glab api -H 'Accept: x projects/88442211/issues`",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="Run `glab api -H 'Accept: x projects/2001/issues`"),
+        markers=("88442211",),
+    ),
+    Row(
+        id="reg_r10_glab_api_full_argv_list",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="ok",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            call_args=("glab", "api", "/projects/88442211/jobs"),
+        ),
+        outcome=Written(text='["glab", "api", "/projects/2001/jobs"]'),
+        markers=("88442211",),
+    ),
+    Row(
+        id="reg_r10_web_projects_numeric_merge_request_path",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="See https://git.zqcorp.io/projects/88442211/merge_requests/42 for context",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(
+            text="See https://forge.example.com/projects/2001/merge_requests/42 for context"
+        ),
+        markers=("88442211",),
+    ),
+    Row(
+        id="reg_r10_protocol_relative_json_string_value",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body='{"cdn": "//mirror.zqcorp.net/zqgroup/zqbillrepo/app.js"}'),
+        outcome=Written(text='{"cdn": "//forge.example.com/org/project/app.js"}'),
+        markers=("mirror.zqcorp.net", "zqbillrepo"),
+    ),
+    Row(
+        id="reg_r10_protocol_relative_script_src",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body='<script src="//mirror.zqcorp.net/zqgroup/zqbillrepo/app.js"></script>'),
+        outcome=Written(text='<script src="//forge.example.com/org/project/app.js"></script>'),
+        markers=("mirror.zqcorp.net", "zqbillrepo"),
+    ),
+    Row(
+        id="reg_r10_protocol_relative_css_url",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="a { background: url(//mirror.zqcorp.net/zqgroup/zqbillrepo/bg.png) }"),
+        outcome=Written(text="a { background: url(//forge.example.com/org/project/bg.png) }"),
+        markers=("mirror.zqcorp.net", "zqbillrepo"),
+    ),
+    Row(
+        id="reg_r10_protocol_relative_markdown_link",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(body="See [x](//mirror.zqcorp.net/zqgroup/zqbillrepo/page) now"),
+        outcome=Written(text="See [x](//forge.example.com/org/project/page) now"),
+        markers=("mirror.zqcorp.net", "zqbillrepo"),
+    ),
+    Row(
+        id="reg_r10_top_args_projects_path_with_api_v4_kwargs",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="ok",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            top_args=("projects/88442211/jobs",),
+            top_kwargs={"ref": "https://git.zqcorp.io/api/v4/projects/88442211/issues"},
+        ),
+        outcome=Written(text='["projects/2001/jobs"]'),
+    ),
+    Row(
+        id="reg_r10_italic_scp_remote_keeps_closing_underscore",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab", body="Use _git@mirror.zqcorp.net:zqgroup/zqbillrepo.git_ now", remote=""
+        ),
+        outcome=Written(text="Use _git@forge.example.com:org/project.git_ now"),
+        markers=("mirror.zqcorp.net", "zqbillrepo"),
+    ),
+    Row(
+        id="reg_r10_prose_double_slash_host_known_from_remote_is_replaced_as_a_token",
+        source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
+        inp=Sample(
+            forge="gitlab",
+            body="Loaded from //git.zqcorp.io/zqgroup/zqmainrepo/v1.js",
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+        ),
+        outcome=Written(text="Loaded from //forge.example.com/org/project/project"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="reg_plain_review_prose_and_task_list",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="LGTM! Tested locally:\n- [x] unit tests pass\n- [x] ruff clean\n\nReady to merge.",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(
+            text="LGTM! Tested locally:\n- [x] unit tests pass\n- [x] ruff clean\n\nReady to merge."
+        ),
+    ),
+    Row(
+        id="reg_gitlab_suggestion_block",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            forge="gitlab",
+            body="Small nit:\n```suggestion:-0+0\ndef parse(raw: str) -> dict[str, int]:\n    return {k: int(v) for k, v in raw.items()}\n```\nLooks solid otherwise.",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@gitlab.com:zqpuborg/zqpubrepo.git",
+            url="https://gitlab.com/zqpuborg/zqpubrepo/-/merge_requests/42",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(
+            text="Small nit:\n```suggestion:-0+0\ndef parse(raw: str) -> dict[str, int]:\n    return {k: int(v) for k, v in raw.items()}\n```\nLooks solid otherwise."
+        ),
+    ),
+    Row(
+        id="reg_mixed_case_docs_github_and_docs_gitlab",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="See https://Docs.GitHub.com/en/actions/using-workflows and HTTPS://DOCS.GITHUB.COM/en/rest/pulls and https://Docs.GitLab.com/ee/api/merge_requests.html",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(
+            text="See https://docs.github.com/en/actions/using-workflows and https://docs.github.com/en/rest/pulls and https://docs.gitlab.com/ee/api/merge_requests.html"
+        ),
+    ),
+    Row(
+        id="reg_public_docs_python_peps_readthedocs_mdn_crates_so_wikipedia",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="Python: https://docs.python.org/3/library/pathlib.html? https://www.python.org/downloads/release/python-3120/ https://peps.python.org/pep-0723/\nRTD: https://readthedocs.org/projects/pytest/ https://pytest.readthedocs.io/en/stable/how-to/fixtures.html\nMDN: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/429\nRust: https://crates.io/crates/tokio https://docs.rs/tokio/latest/tokio/\nSO: https://stackoverflow.com/questions/419163/what-does-if-name-main-do\nWiki: https://en.wikipedia.org/wiki/Quicksort https://en.wikipedia.org/wiki/Python_(programming_language)",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(
+            text="Python: https://docs.python.org/3/library/pathlib.html? https://www.python.org/downloads/release/python-3120/ https://peps.python.org/pep-0723/\nRTD: https://readthedocs.org/projects/pytest/ https://pytest.readthedocs.io/en/stable/how-to/fixtures.html\nMDN: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/429\nRust: https://crates.io/crates/tokio https://docs.rs/tokio/latest/tokio/\nSO: https://stackoverflow.com/questions/419163/what-does-if-name-main-do\nWiki: https://en.wikipedia.org/wiki/Quicksort https://en.wikipedia.org/wiki/Python_(programming_language)"
+        ),
+    ),
+    Row(
+        id="reg_trailing_exclamation_and_question_on_kept_urls",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="Try https://example.com! Also http://localhost! Published https://pypi.org/project/ruff/! Checked https://example.com? And https://docs.python.org/3/library/re.html?",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(
+            text="Try https://example.com! Also http://localhost! Published https://pypi.org/project/ruff/! Checked https://example.com? And https://docs.python.org/3/library/re.html?"
+        ),
+    ),
+    Row(
+        id="reg_gfm_table_and_backticked_urls",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="Check `https://example.com` and `http://localhost` and `https://127.0.0.1:8080/health`.\n|Tool|Link|\n|---|---|\n|Ruff|https://pypi.org/project/ruff/|\n|Docs|https://docs.github.com/en/actions|\n|Py|https://docs.python.org/3/library/re.html|\n",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(
+            text="Check `https://example.com` and `http://localhost` and `https://127.0.0.1:8080/health`.\n|Tool|Link|\n|---|---|\n|Ruff|https://pypi.org/project/ruff/|\n|Docs|https://docs.github.com/en/actions|\n|Py|https://docs.python.org/3/library/re.html|\n"
+        ),
+    ),
+    Row(
+        id="reg_github_url_with_dunder_init_anchor",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="See https://github.com/python/cpython/blob/main/Lib/pathlib.py#__init__ for details.",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(
+            text="See https://forge.example.com/org/project/blob/main/Lib/pathlib.py for details."
+        ),
+    ),
+    Row(
+        id="reg_repo_year_paths_projects_2026_and_2025",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="Updated projects/2026/q1.md and /projects/2025/architecture.md and docs/projects/2026/plan.md (written in 2025).",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(
+            text="Updated projects/2026/q1.md and /projects/2025/architecture.md and docs/projects/2026/plan.md (written in 2025)."
+        ),
+    ),
+    Row(
+        id="reg_gitlab_api_doc_examples_never_refuse_or_corrupt",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="Per GitLab docs: `curl https://gitlab.example.com/api/v4/projects/1/merge_requests`\nMock endpoint: `GET /api/v4/projects/42/issues`\nExample: `curl https://gitlab.example.com/api/v4/projects/1234/issues`",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(
+            text="Per GitLab docs: `curl https://gitlab.example.com/api/v4/projects/1/merge_requests`\nMock endpoint: `GET /api/v4/projects/42/issues`\nExample: `curl https://gitlab.example.com/api/v4/projects/1234/issues`"
+        ),
+    ),
+    Row(
+        id="reg_macos_bundle_paths_and_tld_matching_code_attributes",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="Using Xcode.app/Contents/Developer/usr/bin/clang and MyApp.app/Contents/MacOS/app\n```python\npath = config.dev/env/prod\ncert = ssl.ca/certs/root.pem\nbuf = stream.io/read/write\nlayer = torch.net/layers/conv\nratio = self.ms/1000\ncfg = config.dir/sub/file.toml\nval = obj.total/count/100\nroot = tmp.root/src/app.py\nresult = a.b/c/d\n```",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(
+            text="Using Xcode.app/Contents/Developer/usr/bin/clang and MyApp.app/Contents/MacOS/app\n```python\npath = config.dev/env/prod\ncert = ssl.ca/certs/root.pem\nbuf = stream.io/read/write\nlayer = torch.net/layers/conv\nratio = self.ms/1000\ncfg = config.dir/sub/file.toml\nval = obj.total/count/100\nroot = tmp.root/src/app.py\nresult = a.b/c/d\n```"
+        ),
+    ),
+    Row(
+        id="reg_go_cpp_single_line_comments_without_and_with_space",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="```go\n//config.dev/env/prod\n// config.dev/env/prod\nvar x = 1\n```",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(
+            text="```go\n//config.dev/env/prod\n// config.dev/env/prod\nvar x = 1\n```"
+        ),
+    ),
+    Row(
+        id="reg_yaml_github_actions_workflow_and_shell_snippet",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="```yaml\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        with:\n          python-version: '3.12'\n      - run: pytest -q tests/unit\n```\n```sh\ncurl -sSf https://example.com/health > /dev/null 2>&1\n```",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(
+            text="```yaml\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        with:\n          python-version: '3.12'\n      - run: pytest -q tests/unit\n```\n```sh\ncurl -sSf https://example.com/health > /dev/null 2>&1\n```"
+        ),
+    ),
+    Row(
+        id="reg_js_node_stack_trace",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="TypeError: Cannot read properties of undefined (reading 'map')\n    at renderList (src/components/List.tsx:42:18)\n    at processTicksAndRejections (node:internal/process/task_queues:95:5)",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(
+            text="TypeError: Cannot read properties of undefined (reading 'map')\n    at renderList (src/components/List.tsx:42:18)\n    at processTicksAndRejections (node:internal/process/task_queues:95:5)"
+        ),
+    ),
+    Row(
+        id="reg_decorators_annotations_and_scoped_npm_packages",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="Use @dataclass, @property, @Override, @Deprecated, @pytest.fixture and @lru_cache(maxsize=64).\nImport `@types/node`, `@vue/cli`, `@babel/core`, `@actions/checkout`, `@tanstack/react-query`.\n```ts\nconst url = this.base/api/v1;\nimport H from 'components.tsx/Header/index';\n```",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(
+            text="Use @dataclass, @property, @Override, @Deprecated, @pytest.fixture and @lru_cache(maxsize=64).\nImport `@types/node`, `@vue/cli`, `@babel/core`, `@actions/checkout`, `@tanstack/react-query`.\n```ts\nconst url = this.base/api/v1;\nimport H from 'components.tsx/Header/index';\n```"
+        ),
+    ),
+    Row(
+        id="reg_dependabot_pr_template",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="Bumps ruff from 0.14.0 to 0.15.4.\nDependabot will resolve any conflicts.\n- `@dependabot rebase` will rebase this PR\n- @dependabot recreate will recreate this PR\nAlso updates @types/node and @vue/cli.",
+            login="dependabot[bot]",
+            uid=49699333,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            author="dependabot[bot]",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(
+            text="Bumps ruff from 0.14.0 to 0.15.4.\nauthor will resolve any conflicts.\n- `@author rebase` will rebase this PR\n- @author recreate will recreate this PR\nAlso updates @types/node and @vue/cli."
+        ),
+    ),
+    Row(
+        id="reg_renovate_with_actions_checkout_title_and_docs_github",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="| [@babel/core](https://www.npmjs.com/package/@babel/core) | `7.24.0` -> `7.25.0` |\nRenovate will rebase automatically. See https://docs.github.com/en/actions.\nTrigger @renovate rebase if needed.",
+            title="chore(deps): update @actions/checkout action to v4",
+            login="renovate[bot]",
+            uid=29139614,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            author="renovate[bot]",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(
+            text="| [@babel/core](https://www.npmjs.com/package/@babel/core) | `7.24.0` -> `7.25.0` |\nauthor will rebase automatically. See https://docs.github.com/en/actions.\nTrigger @author rebase if needed.",
+            title="chore(deps): update @actions/checkout action to v4",
+        ),
+    ),
+    Row(
+        id="reg_short_stem_ci_bot_preserves_english_ci_prose",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="CI pipeline passed! Re-run with `@ci retry` or @ci rerun.",
+            login="ci[bot]",
+            uid=52143690,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            author="ci[bot]",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(text="CI pipeline passed! Re-run with `@author retry` or @author rerun."),
+    ),
+    Row(
+        id="reg_github_actions_bot_with_actions_login",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="Triggered by github-actions[bot]; check the actions tab",
+            login="actions",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(text="Triggered by github-actions[bot]; check the author tab"),
+    ),
+    Row(
+        id="reg_github_actions_bot_with_github_login_and_runner",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="by github-actions[bot] on github-actions-runner",
+            login="github",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(text="by github-actions[bot] on author-actions-runner"),
+    ),
+    Row(
+        id="reg_short_third_party_url_a_io",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="See https://a.io/foo",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(text="See https://forge.example.com/org"),
+    ),
+    Row(
+        id="reg_repoach_bot_with_repoach_repo",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="Reviewed by repoach-bot on repoach PR",
+            login="zqxauthor",
+            uid=48151623,
+            ns="repoachhq",
+            repo="repoach",
+            remote="git@github.com:repoachhq/repoach.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(text="Reviewed by repoach-bot on project PR"),
+    ),
+    Row(
+        id="reg_common_word_login_main",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="Merge main into main-fix and update main_branch and domain",
+            login="main",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(text="Merge author into author-fix and update author_branch and domain"),
+    ),
+    Row(
+        id="reg_common_word_login_test",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="Run test and test_foo and test-bar and pytest",
+            login="test",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(text="Run author and author_foo and author-bar and pytest"),
+    ),
+    Row(
+        id="reg_common_word_login_code",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="Check code, code-review, code_style, and vscode",
+            login="code",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(text="Check author, author-review, author_style, and vscode"),
+    ),
+    Row(
+        id="reg_common_word_login_docs",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="Update docs and docs-ci and docs/README.md",
+            login="docs",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(text="Update author and author-ci and author/README.md"),
+    ),
+    Row(
+        id="reg_common_word_login_python",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="Bump python and python-3.12 and python_version and cpython",
+            login="python",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(text="Bump author and author-3.12 and author_version and cpython"),
+    ),
+    Row(
+        id="reg_common_word_login_true",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="Returns true when flag-true is set",
+            login="true",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(text="Returns author when flag-author is set"),
+    ),
+    Row(
+        id="reg_common_word_login_repo_preserves_cli_placeholder",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="Check repo and repo-name and repos/:owner/:repo",
+            login="repo",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(text="Check author and author-name and repos/:owner/:repo"),
+    ),
+    Row(
+        id="reg_class_word_login_author_kept",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="looks good",
+            login="author",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(text="looks good"),
+    ),
+    Row(
+        id="reg_short_third_party_url_x_com",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="See https://x.com/user/status/123",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(text="See https://forge.example.com/org/project"),
+    ),
+    Row(
+        id="reg_mailto_example_com_and_port_like_file_path",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="Contact mailto:someone@example.com; see foo.py:80/bar",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(text="Contact mailto:someone@example.com; see foo.py:80/bar"),
+    ),
+    Row(
+        id="reg_git_log_co_authored_by_noreply_and_actions_github",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="commit deadbeef0000\nAuthor: Dev <12345+someone@users.noreply.github.com>\nCommitter: GitHub <noreply@github.com>\nAuthor: github-actions[bot] <actions@github.com>\nCo-authored-by: Tool <175728472+Copilot@users.noreply.github.com>\nCo-authored-by: Bob <999-bob@users.noreply.gitlab.com>\nCo-authored-by: Claude <noreply@anthropic.com>\n",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(
+            text="commit deadbeef0000\nAuthor: Dev <author@users.noreply.forge.example.com>\nCommitter: GitHub <noreply@forge.example.com>\nAuthor: github-actions[bot] <noreply@forge.example.com>\nCo-authored-by: Tool <author@users.noreply.forge.example.com>\nCo-authored-by: Bob <author@users.noreply.forge.example.com>\nCo-authored-by: Claude <noreply@forge.example.com>\n"
+        ),
+    ),
+    Row(
+        id="reg_docker_go_k8s_pypi_npm_public_reference_hosts",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body='```dockerfile\nFROM docker.io/library/python:3.12-slim\nCOPY --from=ghcr.io/astral-sh/uv:0.4.0 /uv /bin/uv\n```\n```go\nimport (\n\t"golang.org/x/sync/errgroup"\n\t"k8s.io/client-go/kubernetes"\n)\n```\nSee https://pkg.go.dev/golang.org/x/sync/errgroup and https://proxy.golang.org/ and https://registry.npmjs.org/typescript\n',
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(
+            text='```dockerfile\nFROM docker.io/library/python:3.12-slim\nCOPY --from=ghcr.io/astral-sh/uv:0.4.0 /uv /bin/uv\n```\n```go\nimport (\n\t"golang.org/x/sync/errgroup"\n\t"k8s.io/client-go/kubernetes"\n)\n```\nSee https://pkg.go.dev/golang.org/x/sync/errgroup and https://proxy.golang.org/ and https://registry.npmjs.org/typescript\n'
+        ),
+    ),
+    Row(
+        id="reg_self_hosted_gitlab_empty_remote_with_docs_python_and_mdn",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            forge="gitlab",
+            body="See https://docs.python.org/3/library/re.html and https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API.",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="",
+            url="https://git.zqcorp.io/zqpuborg/zqpubrepo/-/merge_requests/1#note_1",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(
+            text="See https://docs.python.org/3/library/re.html and https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API."
+        ),
+    ),
+    Row(
+        id="reg_github_empty_remote_with_docs_python_and_golang_import",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="See https://docs.python.org/3/library/re.html and golang.org/x/sync/errgroup",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(
+            text="See https://docs.python.org/3/library/re.html and golang.org/x/sync/errgroup"
+        ),
+    ),
+    Row(
+        id="reg_github_ssh_alias_with_third_party_links",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="Upgrade python and git; see https://github.com/python/cpython/pull/1, https://docs.python.org/3/library/re.html and golang.org/x/sync/errgroup",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="mygh:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(
+            text="Upgrade python and git; see https://forge.example.com/org/project/pull/1, https://docs.python.org/3/library/re.html and golang.org/x/sync/errgroup"
+        ),
+    ),
+    Row(
+        id="reg_ci_log_wheel_dist_info_tracebacks_and_rfc_examples",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body='File "src/repoach/cli/main.py", line 42, in run\nAdding repoach-0.1.0.dist-info/licenses/LICENSE\nSend test payload to demo@example.com.\nLocal bind 127.0.0.1:8080, private 10.0.0.5, doc 203.0.113.10 and 198.51.100.7.\nTested on v1.2.3.4 and foo==2.3.4.5 and 3.4.5.6.tar.gz.\ncurl -sSf https://example.com/health > /dev/null 2>&1',
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(
+            text='File "src/repoach/cli/main.py", line 42, in run\nAdding repoach-0.1.0.dist-info/licenses/LICENSE\nSend test payload to demo@example.com.\nLocal bind 127.0.0.1:8080, private 10.0.0.5, doc 203.0.113.10 and 198.51.100.7.\nTested on v1.2.3.4 and foo==2.3.4.5 and 3.4.5.6.tar.gz.\ncurl -sSf https://example.com/health > /dev/null 2>&1'
+        ),
+    ),
+    Row(
+        id="reg_non_json_unified_diff_code_and_decorators",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            raw_text_stdout="diff --git a/src/mod.py b/src/mod.py\n--- a/src/mod.py\n+++ b/src/mod.py\n@@ -1,4 +1,5 @@\n @pytest.fixture\n def f(cfg):\n-    return self.ms/1000\n+    return cfg.root/sub/file\n",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(
+            text="diff --git a/src/mod.py b/src/mod.py\n--- a/src/mod.py\n+++ b/src/mod.py\n@@ -1,4 +1,5 @@\n @pytest.fixture\n def f(cfg):\n-    return self.ms/1000\n+    return cfg.root/sub/file\n"
+        ),
+    ),
+    Row(
+        id="reg_r10_code_line_comment_after_code_go_assign",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="```go\nx := 1 //cfg.dev/env/prod\n```",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(text="```go\nx := 1 //cfg.dev/env/prod\n```"),
+    ),
+    Row(
+        id="reg_r10_code_line_comment_after_code_go_brace",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="```go\nif x > 0 { //store.io/cache/hit\n```",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(text="```go\nif x > 0 { //store.io/cache/hit\n```"),
+    ),
+    Row(
+        id="reg_r10_code_line_comment_after_code_go_return",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="```go\nreturn x //metrics.net/count/ok\n```",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(text="```go\nreturn x //metrics.net/count/ok\n```"),
+    ),
+    Row(
+        id="reg_r10_code_line_comment_after_code_js_call",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="```ts\nconst cfg = load() //cfg.dev/env/prod\n```",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(text="```ts\nconst cfg = load() //cfg.dev/env/prod\n```"),
+    ),
+    Row(
+        id="reg_r10_code_line_comment_after_code_js_export",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="```ts\nexport default cfg //app.io/entry/main\n```",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(text="```ts\nexport default cfg //app.io/entry/main\n```"),
+    ),
+    Row(
+        id="reg_r10_code_line_comment_after_code_c_brace",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="```c\nif (ok) { //config.dev/env/prod\n```",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(text="```c\nif (ok) { //config.dev/env/prod\n```"),
+    ),
+    Row(
+        id="reg_r10_code_line_comment_after_code_c_semicolon",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="```c\nint x = 1; //store.net/cache/l1\n```",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(text="```c\nint x = 1; //store.net/cache/l1\n```"),
+    ),
+    Row(
+        id="reg_r10_code_line_comment_after_code_c_line_start",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="```c\n//cfg.dev/env/prod\n```",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(text="```c\n//cfg.dev/env/prod\n```"),
+    ),
+    Row(
+        id="reg_r10_code_line_comment_after_code_c_doc_comment",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="```c\n///api.io/v2/schema\n```",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(text="```c\n///api.io/v2/schema\n```"),
+    ),
+    Row(
+        id="reg_r10_go_multi_function_with_inline_comments",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="```go\npackage main\nfunc load() int {\n\tx := 1 //cfg.dev/env/prod\n\tif x > 0 { //store.io/cache/hit\n\t\treturn x //metrics.net/count/ok\n\t}\n\treturn 0\n}\n```",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(
+            text="```go\npackage main\nfunc load() int {\n\tx := 1 //cfg.dev/env/prod\n\tif x > 0 { //store.io/cache/hit\n\t\treturn x //metrics.net/count/ok\n\t}\n\treturn 0\n}\n```"
+        ),
+    ),
+    Row(
+        id="reg_r10_semicolon_free_ts_block_with_inline_comments",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="```ts\nconst cfg = load() //cfg.dev/env/prod\nconst url = this.base/api/v1\nexport default cfg //app.io/entry/main\n```",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(
+            text="```ts\nconst cfg = load() //cfg.dev/env/prod\nconst url = this.base/api/v1\nexport default cfg //app.io/entry/main\n```"
+        ),
+    ),
+    Row(
+        id="reg_r10_go_diff_with_comments_year_projects_and_docs_python",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            raw_text_stdout="diff --git a/projects/2026/main.go b/projects/2026/main.go\n--- a/projects/2026/main.go\n+++ b/projects/2026/main.go\n@@ -1,3 +1,4 @@\n+//cfg.dev/env/prod\n+// See https://docs.python.org/3/library/re.html\n+x := 1 //store.io/val/2026\n",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(
+            text="diff --git a/projects/2026/main.go b/projects/2026/main.go\n--- a/projects/2026/main.go\n+++ b/projects/2026/main.go\n@@ -1,3 +1,4 @@\n+//cfg.dev/env/prod\n+// See https://docs.python.org/3/library/re.html\n+x := 1 //store.io/val/2026\n"
+        ),
+    ),
+    Row(
+        id="reg_r10_italic_kept_scp_example_remote",
+        source="tests/unit/test_forge_recording_regression_corpus.py ORDINARY",
+        inp=Sample(
+            body="Example: _git@example.com:org/demo.git_ and __git@sub.example.org:team/app.git__.",
+            login="zqxauthor",
+            uid=48151623,
+            ns="zqpuborg",
+            repo="zqpubrepo",
+            remote="git@github.com:zqpuborg/zqpubrepo.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Written(
+            text="Example: _git@example.com:org/demo.git_ and __git@sub.example.org:team/app.git__."
+        ),
+    ),
+    Row(
+        id="r10_p01_ci_fetch_ci_token_pat",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            forge="gitlab",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            raw_text_stdout="$ git fetch https://gitlab-ci-token:glcbt-64_AbCdEf@gitlab.qwzcorp.internal/qwzplatform/qwzpayments.git\nFrom https://gitlab.qwzcorp.internal/qwzplatform/qwzpayments\n",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(
+            text="$ git fetch https://forge.example.com/org/project.git\nFrom https://forge.example.com/org/project\n"
+        ),
+        markers=("gitlab.qwzcorp.internal", "qwzpayments", "glcbt-64_AbCdEf"),
+    ),
+    Row(
+        id="r10_p02_actions_x_access_token_clone",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="git@github.com:kvnteam/kvnportal.git",
+            raw_text_stdout="Run git clone https://x-access-token:ghs_16C7e42F292c6912E7710c838347Ae178B4a@github.com/kvnteam/kvnbilling\nCloning into 'kvnbilling'...\n",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(
+            text="Run git clone https://forge.example.com/org/project\nCloning into 'kvnbilling'...\n"
+        ),
+        markers=("ghs_16C7e42F292c6912E7710c838347Ae178B4a", "x-access-token"),
+    ),
+    Row(
+        id="r10_p03_pip_index_token_private_registry",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            forge="gitlab",
+            body="pip install --index-url https://__token__:pypi-AgEIcHlwaS5vcmc@gitlab.qwzcorp.internal/api/v4/projects/77665544/packages/pypi/simple qwzpayments",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(
+            text="pip install --index-url https://forge.example.com/api/v4/projects/2001/packages/pypi/simple qwzpayments"
+        ),
+        markers=("gitlab.qwzcorp.internal", "pypi-AgEIcHlwaS5vcmc", "77665544"),
+    ),
+    Row(
+        id="r10_p03b_pip_index_token_private_registry_remote_known",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            forge="gitlab",
+            body="pip install --index-url https://__token__:pypi-AgEIcHlwaS5vcmc@gitlab.qwzcorp.internal/api/v4/projects/77665544/packages/pypi/simple qwzpayments",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="https://gitlab.qwzcorp.internal/qwzplatform/qwzpayments.git",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(
+            text="pip install --index-url https://forge.example.com/api/v4/projects/2001/packages/pypi/simple project"
+        ),
+        markers=("gitlab.qwzcorp.internal", "pypi-AgEIcHlwaS5vcmc", "77665544", "qwzpayments"),
+    ),
+    Row(
+        id="r10_p04_npm_registry_token_private_host",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            forge="gitlab",
+            body="npm ERR! 401 Unauthorized - GET https://npm-token:npm_AbC123@gitlab.qwzcorp.internal/api/v4/projects/77665544/packages/npm/qwzpayments",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(
+            text="npm ERR! 401 Unauthorized - GET https://forge.example.com/api/v4/projects/2001/packages/npm/qwzpayments"
+        ),
+        markers=("gitlab.qwzcorp.internal", "npm_AbC123", "77665544"),
+    ),
+    Row(
+        id="r10_p05_docker_login_deploy_token_port",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            forge="gitlab",
+            body="docker login https://deploy-token-7:gldt-XyZ@gitlab.qwzcorp.internal:5050/qwzplatform/qwzpayments",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(text="docker login https://forge.example.com/org/project"),
+        markers=("gitlab.qwzcorp.internal", "gldt-XyZ", "qwzpayments"),
+    ),
+    Row(
+        id="r10_p06_curl_private_token_api_v4_id",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            forge="gitlab",
+            body="curl --header 'PRIVATE-TOKEN: glpat-abc' https://gitlab.qwzcorp.internal/api/v4/projects/77665544/jobs",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(
+            text="curl --header 'PRIVATE-TOKEN: glpat-abc' https://forge.example.com/api/v4/projects/2001/jobs"
+        ),
+        markers=("gitlab.qwzcorp.internal", "77665544"),
+    ),
+    Row(
+        id="r10_p07_ssh_oauth2_user_and_port",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            forge="gitlab",
+            body="git remote add origin ssh://oauth2:glpat-abc@gitlab.qwzcorp.internal:2222/qwzplatform/qwzpayments.git",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(text="git remote add origin ssh://git@forge.example.com/org/project.git"),
+        markers=("gitlab.qwzcorp.internal", "oauth2", "glpat-abc", "qwzpayments"),
+    ),
+    Row(
+        id="r10_p08_diff_marker_before_token_url",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            forge="gitlab",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            raw_text_stdout="+  url = https://gitlab-ci-token:tok@gitlab.qwzcorp.internal/qwzplatform/qwzpayments.git\n",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(text="+  url = https://forge.example.com/org/project.git\n"),
+        markers=("gitlab.qwzcorp.internal", "gitlab-ci-token", "qwzpayments"),
+    ),
+    Row(
+        id="r10_p09_gitmodules_plus_url_scp_alice",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            forge="gitlab",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            raw_text_stdout='diff --git a/.gitmodules b/.gitmodules\n+[submodule "vendor/qwzpayments"]\n+\tpath = vendor/qwzpayments\n+\turl = alice@gitlab.qwzcorp.internal:qwzplatform/qwzpayments.git\n',
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(
+            text='diff --git a/.gitmodules b/.gitmodules\n+[submodule "vendor/project"]\n+\tpath = vendor/project\n+\turl = git@forge.example.com:org/project.git\n'
+        ),
+        markers=("alice@", "gitlab.qwzcorp.internal", "qwzpayments"),
+    ),
+    Row(
+        id="r10_p10_gitmodules_minus_url_scp_user_plus_ci",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            forge="gitlab",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            raw_text_stdout="diff --git a/.gitmodules b/.gitmodules\n-\turl = user+ci@gitlab.qwzcorp.internal:qwzplatform/qwzpayments.git\n+\turl = https://gitlab.qwzcorp.internal/qwzplatform/qwzpayments.git\n",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(
+            text="diff --git a/.gitmodules b/.gitmodules\n-\turl = git@forge.example.com:org/project.git\n+\turl = https://forge.example.com/org/project.git\n"
+        ),
+        markers=("user+ci", "gitlab.qwzcorp.internal", "qwzpayments"),
+    ),
+    Row(
+        id="r10_p11_git_config_insteadof_scp_and_https",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            forge="gitlab",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            raw_text_stdout='diff --git a/.git/config b/.git/config\n+[url "bob@gitlab.qwzcorp.internal:"]\n+\tinsteadOf = https://gitlab.qwzcorp.internal/\n',
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Refused("unknown mailbox at exchanges[0].stdout"),
+        markers=("bob@", "gitlab.qwzcorp.internal"),
+    ),
+    Row(
+        id="r10_p12_git_config_pushurl_user_on_example",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="git@github.com:kvnteam/kvnportal.git",
+            raw_text_stdout="diff --git a/.git/config b/.git/config\n+\tpushurl = carol@example.com:org/repo.git\n",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(
+            text="diff --git a/.git/config b/.git/config\n+\tpushurl = git@forge.example.com:org/project.git\n"
+        ),
+        markers=("carol@",),
+    ),
+    Row(
+        id="r10_p13_gitmodules_context_line_scp",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            forge="gitlab",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            raw_text_stdout="diff --git a/.gitmodules b/.gitmodules\n \turl = dave@gitlab.qwzcorp.internal:qwzplatform/qwzpayments.git\n+\tbranch = main\n",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(
+            text="diff --git a/.gitmodules b/.gitmodules\n \turl = git@forge.example.com:org/project.git\n+\tbranch = main\n"
+        ),
+        markers=("dave@", "gitlab.qwzcorp.internal", "qwzpayments"),
+    ),
+    Row(
+        id="r10_p14_gitmodules_noreply_looking_scp_user",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="git@github.com:kvnteam/kvnportal.git",
+            raw_text_stdout="diff --git a/.gitmodules b/.gitmodules\n+\turl = 12345+kvn_dev9@github.com:kvnteam/kvnbilling.git\n",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(
+            text="diff --git a/.gitmodules b/.gitmodules\n+\turl = git@forge.example.com:org/project.git\n"
+        ),
+        markers=("kvn_dev9",),
+    ),
+    Row(
+        id="r10_p15_glab_api_quoted_header_and_id",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            forge="gitlab",
+            body="Repro: `glab api -H 'Accept: application/json' /projects/77665544/issues`",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="https://gitlab.qwzcorp.internal/qwzplatform/qwzpayments.git",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(
+            text="Repro: `glab api -H 'Accept: application/json' /projects/2001/issues`"
+        ),
+        markers=("77665544",),
+    ),
+    Row(
+        id="r10_p16_glab_api_header_equals_in_code_block",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            forge="gitlab",
+            body="```sh\nglab api --header='PRIVATE-TOKEN: x' projects/77665544/merge_requests\n```",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="https://gitlab.qwzcorp.internal/qwzplatform/qwzpayments.git",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(
+            text="```sh\nglab api --header='PRIVATE-TOKEN: x' projects/2001/merge_requests\n```"
+        ),
+        markers=("77665544",),
+    ),
+    Row(
+        id="r10_p17_glab_api_quoted_body_with_spaces",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            forge="gitlab",
+            body='Run `glab api -X POST -f "body=hello world" projects/77665544/notes`',
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="https://gitlab.qwzcorp.internal/qwzplatform/qwzpayments.git",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(text='Run `glab api -X POST -f "body=hello world" projects/2001/notes`'),
+        markers=("77665544",),
+    ),
+    Row(
+        id="r10_p18_glab_api_unbalanced_quote_and_id",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            forge="gitlab",
+            body="Run `glab api -f 'title=Don't fail projects/77665544/issues`",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="https://gitlab.qwzcorp.internal/qwzplatform/qwzpayments.git",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(text="Run `glab api -f 'title=Don't fail projects/2001/issues`"),
+        markers=("77665544",),
+    ),
+    Row(
+        id="r10_p19_glab_api_argv_header_and_id",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            forge="gitlab",
+            body="ok",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="https://gitlab.qwzcorp.internal/qwzplatform/qwzpayments.git",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            call_args=("api", "-H", "Accept: application/json", "/projects/77665544/issues"),
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(text='["api", "-H", "Accept: application/json", "/projects/2001/issues"]'),
+        markers=("77665544",),
+    ),
+    Row(
+        id="r10_p20_glab_api_two_commands_one_line",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            forge="gitlab",
+            body="`glab api projects/77665544/issues && glab api projects/77665545/notes`",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="https://gitlab.qwzcorp.internal/qwzplatform/qwzpayments.git",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(text="`glab api projects/2001/issues && glab api projects/2002/notes`"),
+        markers=("77665544", "77665545"),
+    ),
+    Row(
+        id="r10_p21_gh_api_authorization_token_header",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="gh api -H 'Authorization: token ghp_AbC' https://api.github.com/repos/kvnteam/kvnbilling/issues",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="git@github.com:kvnteam/kvnportal.git",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(
+            text="gh api -H 'Authorization: token ghp_AbC' https://forge.example.com/repos/org/project/issues"
+        ),
+        markers=("kvnbilling", "api.github.com"),
+    ),
+    Row(
+        id="r10_p21b_gh_api_realistic_ghp_token_refused",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="gh api -H 'Authorization: token ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8' https://api.github.com/repos/kvnteam/kvnbilling/issues",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="git@github.com:kvnteam/kvnportal.git",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Refused("refusing to write a fixture carrying"),
+        markers=("ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8",),
+    ),
+    Row(
+        id="r10_p22_html_script_private_cdn_proto_rel",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body='<script src="//code.kvncloud.io/kvnteam/kvnbilling/dist/app.js"></script>',
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(text='<script src="//forge.example.com/org/project"></script>'),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_p23_css_url_private_cdn_font",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="@font-face { src: url(//code.kvncloud.io/kvnteam/kvnbilling/fonts/a.woff2); }",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(text="@author-2 { src: url(//forge.example.com/org/project); }"),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_p24_js_const_cdn_single_quote_and_comment",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="```js\nconst CDN = '//code.kvncloud.io/kvnteam/kvnbilling/' //cfg.dev/env/prod\n```",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(
+            text="```js\nconst CDN = '//forge.example.com/org/project/' //cfg.dev/env/prod\n```"
+        ),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_p25_json_manifest_proto_rel_private_url",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body='{"name": "app", "cdn": "//code.kvncloud.io/kvnteam/kvnbilling/v2/"}',
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(text='{"name": "app", "cdn": "//forge.example.com/org/project/"}'),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_p26_diff_adding_link_href_proto_rel",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="",
+            raw_text_stdout="diff --git a/index.html b/index.html\n+<link href='//code.kvncloud.io/kvnteam/kvnbilling/a.css' rel='stylesheet'>\n",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(
+            text="diff --git a/index.html b/index.html\n+<link href='//forge.example.com/org/project' rel='stylesheet'>\n"
+        ),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_p27_markdown_link_proto_rel_private",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="Assets: [bundle](//code.kvncloud.io/kvnteam/kvnbilling/bundle.js)",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(text="Assets: [bundle](//forge.example.com/org/project)"),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_p28_yaml_quoted_proto_rel_private",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body='```yaml\ncdn_base: "//code.kvncloud.io/kvnteam/kvnbilling/"\n```',
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(text='```yaml\ncdn_base: "//forge.example.com/org/project/"\n```'),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_p29_italic_private_url_dunder_anchor_prose_repo",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            forge="gitlab",
+            body="See _https://gitlab.qwzcorp.internal/qwzplatform/qwzpayments/blob/main/x.py#__init___ and qwzpayments",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(
+            text="See _https://forge.example.com/org/project/blob/main/x.py_ and project"
+        ),
+        markers=("gitlab.qwzcorp.internal", "qwzpayments"),
+    ),
+    Row(
+        id="r10_p30_private_url_balanced_parens_prose_repo",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            forge="gitlab",
+            body="Doc: [x](https://gitlab.qwzcorp.internal/qwzplatform/qwzpayments/wiki/Release_(2026)) about qwzpayments_(2026)",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(
+            text="Doc: [x](https://forge.example.com/org/project) about project_(2026)"
+        ),
+        markers=("gitlab.qwzcorp.internal", "qwzpayments"),
+    ),
+    Row(
+        id="r10_p31_bold_private_scp_dunder_and_prose",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            forge="gitlab",
+            body="Use __git@gitlab.qwzcorp.internal:qwzplatform/qwzpayments.git__ for qwzpayments",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(text="Use __git@forge.example.com:org/project.git__ for project"),
+        markers=("gitlab.qwzcorp.internal", "qwzpayments"),
+    ),
+    Row(
+        id="r10_p32_mention_inside_parens_and_underscores",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="Thanks (_@kvn_dev9_) for the review",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="git@github.com:kvnteam/kvnportal.git",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(text="Thanks (_@author_) for the review"),
+        markers=("kvn_dev9",),
+    ),
+    Row(
+        id="r10_p33_denylist_value_in_markdown_table",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="|key|value|\n|---|---|\n|secret|kvnsecret42|",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="git@github.com:kvnteam/kvnportal.git",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Refused("deny-list entry 1 at exchanges[0].stdout[0].body"),
+        markers=("kvnsecret42",),
+    ),
+    Row(
+        id="r10_p34_denylist_id_in_api_v4_url_in_stderr",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            forge="gitlab",
+            body="ok",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="git@git.kvnworks.net:kvnteam/kvnportal.git",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            stderr="404 https://git.kvnworks.net/api/v4/projects/84729163/jobs",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(text="404 https://forge.example.com/api/v4/projects/2001/jobs"),
+        markers=("84729163",),
+    ),
+    Row(
+        id="r10_o01_actions_log_checkout_public_urls",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="Run actions/checkout@v4\nSyncing repository: pubteam9/pubrepo9\nFetching https://github.com/pubteam9/pubrepo9\nFrom https://pypi.org/simple/ruff/",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Run actions/checkout@v4\nSyncing repository: org/project\nFetching https://forge.example.com/org/project\nFrom https://pypi.org/simple/ruff/"
+        ),
+    ),
+    Row(
+        id="r10_o02_pip_download_files_pythonhosted",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="Collecting ruff\n  Downloading https://files.pythonhosted.org/packages/ab/cd/ruff-0.15.4-py3-none-manylinux.whl (12.3 MB)\nSuccessfully installed ruff-0.15.4",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Collecting ruff\n  Downloading https://files.pythonhosted.org/packages/ab/cd/ruff-0.15.4-py3-none-manylinux.whl (12.3 MB)\nSuccessfully installed ruff-0.15.4"
+        ),
+    ),
+    Row(
+        id="r10_o03_npm_install_registry_npmjs",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="npm http fetch GET 200 https://registry.npmjs.org/zod/-/zod-3.23.8.tgz 120ms\nadded 1 package",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="npm http fetch GET 200 https://registry.npmjs.org/zod/-/zod-3.23.8.tgz 120ms\nadded 1 package"
+        ),
+    ),
+    Row(
+        id="r10_o04_docker_pull_docker_io_ghcr",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="Pulling from docker.io/library/python:3.12-slim\nPulling from ghcr.io/astral-sh/uv:latest",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Pulling from docker.io/library/python:3.12-slim\nPulling from ghcr.io/astral-sh/uv:latest"
+        ),
+    ),
+    Row(
+        id="r10_o05_go_mod_download_golang_and_github",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="go: downloading golang.org/x/sync v0.7.0\ngo: downloading github.com/stretchr/testify v1.9.0",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="go: downloading golang.org/x/sync v0.7.0\ngo: downloading forge.example.com/stretchr/testify v1.9.0"
+        ),
+    ),
+    Row(
+        id="r10_o06_gitmodules_public_submodule_scp",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            raw_text_stdout='diff --git a/.gitmodules b/.gitmodules\n+[submodule "vendor/cpython"]\n+\tpath = vendor/cpython\n+\turl = git@github.com:python/cpython.git\n',
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text='diff --git a/.gitmodules b/.gitmodules\n+[submodule "vendor/cpython"]\n+\tpath = vendor/cpython\n+\turl = git@forge.example.com:org/project.git\n'
+        ),
+    ),
+    Row(
+        id="r10_o07_gitmodules_https_public_submodule",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            raw_text_stdout="diff --git a/.gitmodules b/.gitmodules\n-\turl = https://github.com/psf/requests.git\n+\turl = https://github.com/psf/requests\n",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="diff --git a/.gitmodules b/.gitmodules\n-\turl = https://forge.example.com/org/project.git\n+\turl = https://forge.example.com/org/project\n"
+        ),
+    ),
+    Row(
+        id="r10_o08_git_config_example_remote_refspec",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            raw_text_stdout='diff --git a/.git/config b/.git/config\n+[remote "origin"]\n+\turl = git@example.com:org/demo.git\n+\tfetch = +refs/heads/*:refs/remotes/origin/*\n',
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text='diff --git a/.git/config b/.git/config\n+[remote "origin"]\n+\turl = git@example.com:org/demo.git\n+\tfetch = +refs/heads/*:refs/remotes/origin/*\n'
+        ),
+    ),
+    Row(
+        id="r10_o09_pr_diff_headers_and_hunks",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            raw_text_stdout="diff --git a/src/a.py b/src/a.py\n--- a/src/a.py\n+++ b/src/a.py\n@@ -1,3 +1,4 @@\n+import os\n-x = 1\n+x = 2 # see docs\n",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="diff --git a/src/a.py b/src/a.py\n--- a/src/a.py\n+++ b/src/a.py\n@@ -1,3 +1,4 @@\n+import os\n-x = 1\n+x = 2 # see docs\n"
+        ),
+    ),
+    Row(
+        id="r10_o10_glab_api_docs_two_digit_mock_id",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="Try `glab api /projects/42/issues` as in the docs",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Try `glab api /projects/42/issues` as in the docs"),
+    ),
+    Row(
+        id="r10_o11_gh_api_owner_repo_placeholders",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="Run `gh api repos/:owner/:repo/pulls -f state=open --jq '.[].number'`",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Run `gh api repos/:owner/:repo/pulls -f state=open --jq '.[].number'`"
+        ),
+    ),
+    Row(
+        id="r10_o12_glab_mr_list_ci_view_graphql",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="Use `glab mr list --state merged` then `glab ci view 1234` and `glab api graphql -f query='{ currentUser { id } }'`",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Use `glab mr list --state merged` then `glab ci view 1234` and `glab api graphql -f query='{ currentUser { id } }'`"
+        ),
+    ),
+    Row(
+        id="r10_o13_glab_api_projects_year_path",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="Docs moved to `glab api projects/2026/q1.md`? no, see projects/2026/q1.md",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Docs moved to `glab api projects/2026/q1.md`? no, see projects/2026/q1.md"
+        ),
+    ),
+    Row(
+        id="r10_o14_react_component_double_slash_comments",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="```tsx\nconst App = () => { //cfg.dev/env/prod\n  const url = base + '/api' //svc.io/v1/items\n  return <div className=\"app\" /> // render.io/root/node\n}\nexport default App //app.io/entry/main\n```",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="```tsx\nconst App = () => { //cfg.dev/env/prod\n  const url = base + '/api' //svc.io/v1/items\n  return <div className=\"app\" /> // render.io/root/node\n}\nexport default App //app.io/entry/main\n```"
+        ),
+    ),
+    Row(
+        id="r10_o15_cdnjs_script_tag_https",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body='<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text='<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>'
+        ),
+    ),
+    Row(
+        id="r10_o16_jsdelivr_script_and_html_comment",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body='```html\n<script src="https://cdn.jsdelivr.net/npm/vue@3"></script> <!-- //cfg.dev/env/prod -->\n```',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text='```html\n<script src="https://cdn.jsdelivr.net/npm/vue@3"></script> <!-- //cfg.dev/env/prod -->\n```'
+        ),
+    ),
+    Row(
+        id="r10_o17_css_url_data_and_local_path",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="```css\n.a { background: url(/static/bg.png); }\n.b { background: url(data:image/png;base64,iVBORw0KGgo=); }\n.c { background: url(//docs.python.org/3/static/py.svg); }\n```",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="```css\n.a { background: url(/static/bg.png); }\n.b { background: url(data:image/png;base64,iVBORw0KGgo=); }\n.c { background: url(//docs.python.org/3/static/py.svg); }\n```"
+        ),
+    ),
+    Row(
+        id="r10_o18_go_embed_and_rust_doc_comments",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="```go\n//go:embed static/*\nvar files embed.FS //fs.io/embed/static\n```\n```rust\n//! Crate docs: see docs.rs/serde\n/// Returns x.\nfn x() -> i32 { 1 } //ret.io/i32/one\n```",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="```go\n//go:embed static/*\nvar files embed.FS //fs.io/embed/static\n```\n```rust\n//! Crate docs: see docs.rs/serde\n/// Returns x.\nfn x() -> i32 { 1 } //ret.io/i32/one\n```"
+        ),
+    ),
+    Row(
+        id="r10_o19_java_override_comments_and_attribute_division",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="```java\n@Override //spring.io/web/ctl\npublic String get() { return svc.base/api/v1; } //svc.io/v1/get\n```",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="```java\n@Override //spring.io/web/ctl\npublic String get() { return svc.base/api/v1; } //svc.io/v1/get\n```"
+        ),
+    ),
+    Row(
+        id="r10_o20_js_integer_division_comment",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="```js\nconst half = total // 2 is not JS\nconst idx = Math.floor(n / 2) //math.io/floor/half\n```",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="```js\nconst half = total // 2 is not JS\nconst idx = Math.floor(n / 2) //math.io/floor/half\n```"
+        ),
+    ),
+    Row(
+        id="r10_o21_markdown_italic_parens_underscores",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="Fixed _the_ bug in `__init__.py` (see _notes_(draft)_ and (parenthetical (nested)) text).",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Fixed _the_ bug in `__init__.py` (see _notes_(draft)_ and (parenthetical (nested)) text)."
+        ),
+    ),
+    Row(
+        id="r10_o22_markdown_table_underscores_kept_urls",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="|name|link|\n|---|---|\n|`re_sub`|https://docs.python.org/3/library/re.html#re.sub|\n|`__slots__`|https://docs.python.org/3/reference/datamodel.html#object.__slots__|",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="|name|link|\n|---|---|\n|`re_sub`|https://docs.python.org/3/library/re.html#re.sub|\n|`__slots__`|https://docs.python.org/3/reference/datamodel.html#object.__slots__|"
+        ),
+    ),
+    Row(
+        id="r10_o23_snake_case_and_dunder_in_prose",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="Renamed get_user_id to fetch_user_id; __repr__ now calls __str__ (and __eq__).",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Renamed get_user_id to fetch_user_id; __repr__ now calls __str__ (and __eq__)."
+        ),
+    ),
+    Row(
+        id="r10_o24_wikipedia_parens_and_mdn_list",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="- [Go](https://en.wikipedia.org/wiki/Go_(programming_language))\n- [map](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/map)",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="- [Go](https://en.wikipedia.org/wiki/Go_(programming_language))\n- [map](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/map)"
+        ),
+    ),
+    Row(
+        id="r10_o25_redacted_github_link_issue_ref_italic",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="See https://github.com/python/cpython/pull/9 (issue #12) and _https://github.com/python/cpython/pull/9#issuecomment-5_.",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="See https://forge.example.com/org/project/pull/9 (issue #12) and _https://forge.example.com/org/project/pull/9#issuecomment-5_."
+        ),
+    ),
+    Row(
+        id="r10_o26_bold_url_trailing_punct_and_pipes",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="**https://docs.python.org/3/**, `https://pypi.org/project/ruff/`| and (https://crates.io/crates/serde)!",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="**https://docs.python.org/3/**, `https://pypi.org/project/ruff/`| and (https://crates.io/crates/serde)!"
+        ),
+    ),
+    Row(
+        id="r10_o27_co_authored_noreply_and_example_signoff",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="Co-authored-by: Dev <1234+dev@users.noreply.github.com>\nSigned-off-by: Ops <ops@example.com>",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Co-authored-by: Dev <author@users.noreply.forge.example.com>\nSigned-off-by: Ops <ops@example.com>"
+        ),
+    ),
+    Row(
+        id="r10_o28_dependabot_body_compare_links_and_mention",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="Bumps [ruff](https://github.com/astral-sh/ruff) from 0.15.3 to 0.15.4.\n- [Release notes](https://github.com/astral-sh/ruff/releases)\n@dependabot rebase",
+            login="dependabot[bot]",
+            uid=49699333,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            author="dependabot[bot]",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Bumps [ruff](https://forge.example.com/org/project) from 0.15.3 to 0.15.4.\n- [Release notes](https://forge.example.com/org/project/releases)\n@author rebase"
+        ),
+    ),
+    Row(
+        id="r10_o29_pytest_failure_paths_and_lines",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body='FAILED tests/unit/test_x.py::test_y - assert 1 == 2\n  File "src/pkg/mod.py", line 42, in run\n1 failed, 120 passed in 3.2s',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text='FAILED tests/unit/test_x.py::test_y - assert 1 == 2\n  File "src/pkg/mod.py", line 42, in run\n1 failed, 120 passed in 3.2s'
+        ),
+    ),
+    Row(
+        id="r10_o30_ruff_mypy_output_paths_line_col",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="src/a.py:12:5: F401 `os` imported but unused\nsrc/b.py:3: error: Incompatible types\nFound 2 errors in 2 files",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="src/a.py:12:5: F401 `os` imported but unused\nsrc/b.py:3: error: Incompatible types\nFound 2 errors in 2 files"
+        ),
+    ),
+    Row(
+        id="r10_o31_gitlab_runner_headers_and_job_url",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            forge="gitlab",
+            body="Running with gitlab-runner 17.0.0\nJob succeeded\nSee https://gitlab.com/pubteam9/pubrepo9/-/jobs/1234567890",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@gitlab.com:pubteam9/pubrepo9.git",
+            url="https://gitlab.com/pubteam9/pubrepo9/-/merge_requests/42",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Running with gitlab-runner 17.0.0\nJob succeeded\nSee https://forge.example.com/org/project/-/jobs/1234567890"
+        ),
+    ),
+    Row(
+        id="r10_o32_renovate_mend_io_and_docs_renovatebot",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="This PR was generated by [Mend Renovate](https://www.mend.io/). See https://docs.renovatebot.com/configuration-options/.",
+            login="renovate[bot]",
+            uid=29139614,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            author="renovate[bot]",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="This PR was generated by [Mend Renovate](https://www.mend.io/). See https://docs.renovatebot.com/configuration-options/."
+        ),
+    ),
+    Row(
+        id="r10_o33_yaml_workflow_uses_and_curl_example",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="```yaml\n- uses: actions/setup-python@v5\n  with:\n    python-version: '3.12'\n- run: curl -sSf https://example.com/health\n```",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="```yaml\n- uses: actions/setup-python@v5\n  with:\n    python-version: '3.12'\n- run: curl -sSf https://example.com/health\n```"
+        ),
+    ),
+    Row(
+        id="r10_o34_dockerfile_from_arg_pip",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="```dockerfile\nFROM python:3.12-slim\nARG PIP_INDEX_URL=https://pypi.org/simple\nRUN pip install --no-cache-dir ruff==0.15.4\n```",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="```dockerfile\nFROM python:3.12-slim\nARG PIP_INDEX_URL=https://pypi.org/simple\nRUN pip install --no-cache-dir ruff==0.15.4\n```"
+        ),
+    ),
+    Row(
+        id="r10_o35_python_floor_division_and_comments",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="```python\nhalf = n // 2  # floor division\nratio = a.b // c.d\nurl = base + '/x'  # see docs.python.org\n```",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="```python\nhalf = n // 2  # floor division\nratio = a.b // c.d\nurl = base + '/x'  # see docs.python.org\n```"
+        ),
+    ),
+    Row(
+        id="r10_o36_prose_glab_api_words_eight_digit_projects_path",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="The glab api is nice; glab apis differ; use glab-api wrapper for projects/12345678 docs",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="The glab api is nice; glab apis differ; use glab-api wrapper for projects/2001 docs"
+        ),
+    ),
+    Row(
+        id="r10_o37_gitlab_docs_and_example_api_v4_single_digit",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="Per https://docs.gitlab.com/ee/api/projects.html use `curl https://gitlab.example.com/api/v4/projects/5/issues`",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Per https://docs.gitlab.com/ee/api/projects.html use `curl https://gitlab.example.com/api/v4/projects/5/issues`"
+        ),
+    ),
+    Row(
+        id="r10_o38_monorepo_year_paths_in_diff_header",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            raw_text_stdout="diff --git a/projects/2026/plan.md b/projects/2026/plan.md\n+# Plan 2026\n+See projects/2025/retro.md\n",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="diff --git a/projects/2026/plan.md b/projects/2026/plan.md\n+# Plan 2026\n+See projects/2025/retro.md\n"
+        ),
+    ),
+    Row(
+        id="r10_o39_windows_paths_and_unc",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="Build at C:\\ci\\projects\\2026\\out and \\\\fileserver\\share\\dist (see .\\projects\\2024)",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Build at C:\\ci\\projects\\2026\\out and \\\\fileserver\\share\\dist (see .\\projects\\2024)"
+        ),
+    ),
+    Row(
+        id="r10_o40_semver_private_ips_and_ports",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="Tested on 127.0.0.1:8000, 10.0.0.12:5432 and v1.2.3.4; see localhost:3000/health",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Tested on 127.0.0.1:8000, 10.0.0.12:5432 and v1.2.3.4; see localhost:3000/health"
+        ),
+    ),
+    Row(
+        id="r10_o41_scoped_packages_and_decorators",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body="Uses @types/node, @babel/core and @pytest.fixture; ping @dataclass",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Uses @types/node, @babel/core and @pytest.fixture; ping @dataclass"),
+    ),
+    Row(
+        id="r10_o42_html_mailto_and_tel_links",
+        source="verify10/r10_fresh_sweep.py",
+        inp=Sample(
+            body='<a href="mailto:support@example.com">mail</a> <a href="tel:+15551234567">call</a>',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text='<a href="mailto:support@example.com">mail</a> <a href="tel:+15551234567">call</a>'
+        ),
+    ),
+    Row(
+        id="r10_a_proto_rel_html_attr_spaces",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body='<script src = "//code.kvncloud.io/kvnteam/kvnbilling/app.js"></script>',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='<script src = "//forge.example.com/org/project/app.js"></script>'),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_a_proto_rel_html_attr_nospace",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body='<script src="//code.kvncloud.io/kvnteam/kvnbilling/app.js"></script>',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='<script src="//forge.example.com/org/project/app.js"></script>'),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_a_proto_rel_js_const_dq",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body='const CDN = "//code.kvncloud.io/kvnteam/kvnbilling/";',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='const CDN = "//forge.example.com/org/project/";'),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_a_proto_rel_js_const_sq",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body="const CDN = '//code.kvncloud.io/kvnteam/kvnbilling/';",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="const CDN = '//forge.example.com/org/project/';"),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_a_proto_rel_js_const_nospace",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body='const CDN="//code.kvncloud.io/kvnteam/kvnbilling/";',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='const CDN="//forge.example.com/org/project/";'),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_a_proto_rel_js_template",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body="const u = `//code.kvncloud.io/kvnteam/kvnbilling/${v}.js`",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="const u = `//forge.example.com/org/project/${v}.js`"),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_a_proto_rel_js_object_dq",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body='const cfg = { cdn: "//code.kvncloud.io/kvnteam/kvnbilling/" }',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='const cfg = { cdn: "//forge.example.com/org/project/" }'),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_a_proto_rel_js_object_sq",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body="const cfg = { cdn: '//code.kvncloud.io/kvnteam/kvnbilling/' }",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="const cfg = { cdn: '//forge.example.com/org/project/' }"),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_a_proto_rel_py_assign_sq",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body="CDN = '//code.kvncloud.io/kvnteam/kvnbilling/static/'",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="CDN = '//forge.example.com/org/project/static/'"),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_a_proto_rel_py_assign_dq",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body='CDN = "//code.kvncloud.io/kvnteam/kvnbilling/static/"',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='CDN = "//forge.example.com/org/project/static/"'),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_a_proto_rel_toml",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body='cdn = "//code.kvncloud.io/kvnteam/kvnbilling/"',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='cdn = "//forge.example.com/org/project/"'),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_a_proto_rel_ini_nospace",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body="cdn=//code.kvncloud.io/kvnteam/kvnbilling/",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="cdn=//forge.example.com/org/project/"),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_a_proto_rel_dotenv_dq",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body='CDN_URL="//code.kvncloud.io/kvnteam/kvnbilling/"',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='CDN_URL="//forge.example.com/org/project/"'),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_a_proto_rel_dotenv_sq",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body="CDN_URL='//code.kvncloud.io/kvnteam/kvnbilling/'",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="CDN_URL='//forge.example.com/org/project/'"),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_a_proto_rel_yaml_dq",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body='cdn: "//code.kvncloud.io/kvnteam/kvnbilling/"',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='cdn: "//forge.example.com/org/project/"'),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_a_proto_rel_yaml_sq",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body="cdn: '//code.kvncloud.io/kvnteam/kvnbilling/'",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="cdn: '//forge.example.com/org/project/'"),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_a_proto_rel_yaml_bare",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body="cdn: //code.kvncloud.io/kvnteam/kvnbilling/",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="cdn: //forge.example.com/org/project/"),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_a_proto_rel_go_string",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body='var cdn = "//code.kvncloud.io/kvnteam/kvnbilling/"',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='var cdn = "//forge.example.com/org/project/"'),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_a_proto_rel_rust_string",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body='let cdn = "//code.kvncloud.io/kvnteam/kvnbilling/";',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='let cdn = "//forge.example.com/org/project/";'),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_a_proto_rel_java_string",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body='String cdn = "//code.kvncloud.io/kvnteam/kvnbilling/";',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='String cdn = "//forge.example.com/org/project/";'),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_a_proto_rel_php",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body="$cdn = '//code.kvncloud.io/kvnteam/kvnbilling/';",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="$cdn = '//forge.example.com/org/project/';"),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_a_proto_rel_ruby",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body="CDN = '//code.kvncloud.io/kvnteam/kvnbilling/'.freeze",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="CDN = '//forge.example.com/org/project/'.freeze"),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_a_proto_rel_css_url_spaces",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body="background: url( //code.kvncloud.io/kvnteam/kvnbilling/bg.png );",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="background: url( //forge.example.com/org/project/bg.png );"),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_a_proto_rel_md_link",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body="[cdn](//code.kvncloud.io/kvnteam/kvnbilling/x.js)",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="[cdn](//forge.example.com/org/project/x.js)"),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_a_proto_rel_diff_js_const",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body="+const CDN = '//code.kvncloud.io/kvnteam/kvnbilling/';",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="+const CDN = '//forge.example.com/org/project/';"),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_a2_proto_rel_with_https_html_attr_spaces",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body='Primary https://code.kvncloud.io/kvnteam/kvnbilling\n<script src = "//code.kvncloud.io/kvnteam/kvnbilling/app.js"></script>',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text='Primary https://forge.example.com/org/project\n<script src = "//forge.example.com/org/project/app.js"></script>'
+        ),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_a2_proto_rel_with_https_js_const_sq",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body="Primary https://code.kvncloud.io/kvnteam/kvnbilling\nconst CDN = '//code.kvncloud.io/kvnteam/kvnbilling/';",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Primary https://forge.example.com/org/project\nconst CDN = '//forge.example.com/org/project/';"
+        ),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_a2_proto_rel_with_https_toml",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body='Primary https://code.kvncloud.io/kvnteam/kvnbilling\ncdn = "//code.kvncloud.io/kvnteam/kvnbilling/"',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text='Primary https://forge.example.com/org/project\ncdn = "//forge.example.com/org/project/"'
+        ),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_a2_proto_rel_with_https_yaml_bare",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body="Primary https://code.kvncloud.io/kvnteam/kvnbilling\ncdn: //code.kvncloud.io/kvnteam/kvnbilling/",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Primary https://forge.example.com/org/project\ncdn: //forge.example.com/org/project/"
+        ),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_a2_proto_rel_with_https_css_url_spaces",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            body="Primary https://code.kvncloud.io/kvnteam/kvnbilling\nbackground: url( //code.kvncloud.io/kvnteam/kvnbilling/bg.png );",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Primary https://forge.example.com/org/project\nbackground: url( //forge.example.com/org/project/bg.png );"
+        ),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_b_git_config_diff_scp_token_insteadof",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            forge="gitlab",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            raw_text_stdout='diff --git a/.git/config b/.git/config\n-\turl = alice@git.mvkother.io:mvkns2/mvksecretrepo.git\n+\turl = https://x-access-token:glpat-xyz@git.mvkother.io/mvkns2/mvksecretrepo.git\n [url "git@git.mvkother.io:"]\n-\tinsteadOf = https://git.mvkother.io/\n',
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(
+            text='diff --git a/.git/config b/.git/config\n-\turl = git@forge.example.com:org/project.git\n+\turl = https://forge.example.com/org/project.git\n [url "git@forge.example.com:"]\n-\tinsteadOf = https://forge.example.com/\n'
+        ),
+        markers=("git.mvkother.io", "mvksecretrepo", "alice@", "glpat-xyz"),
+    ),
+    Row(
+        id="r10_b_git_config_only_insteadof_block",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            forge="gitlab",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            raw_text_stdout='[url "git@git.mvkother.io:"]\n\tinsteadOf = https://git.mvkother.io/\n',
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(
+            text='[url "git@forge.example.com:"]\n\tinsteadOf = https://forge.example.com/\n'
+        ),
+        markers=("git.mvkother.io",),
+    ),
+    Row(
+        id="r10_c_glab_api_apostrophe_unbalanced",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            forge="gitlab",
+            body="Repro: `glab api -f 'title=Don't fail projects/66554433/issues`",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="git@git.kvnworks.net:kvnteam/kvnportal.git",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(text="Repro: `glab api -f 'title=Don't fail projects/2001/issues`"),
+        markers=("66554433", "66554434"),
+    ),
+    Row(
+        id="r10_c_glab_api_apostrophe_closed",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            forge="gitlab",
+            body="Repro: `glab api -f 'title=Don't fail' projects/66554433/issues`",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="git@git.kvnworks.net:kvnteam/kvnportal.git",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(text="Repro: `glab api -f 'title=Don't fail' projects/2001/issues`"),
+        markers=("66554433", "66554434"),
+    ),
+    Row(
+        id="r10_c_glab_api_apostrophe_double_quoted",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            forge="gitlab",
+            body='Repro: `glab api -f "title=Don\'t fail" projects/66554433/issues`',
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="git@git.kvnworks.net:kvnteam/kvnportal.git",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(text='Repro: `glab api -f "title=Don\'t fail" projects/2001/issues`'),
+        markers=("66554433", "66554434"),
+    ),
+    Row(
+        id="r10_c_glab_api_double_apostrophe",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            forge="gitlab",
+            body="Repro: `glab api -f 'body=it''s' projects/66554433/notes`",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="git@git.kvnworks.net:kvnteam/kvnportal.git",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(text="Repro: `glab api -f 'body=it''s' projects/2001/notes`"),
+        markers=("66554433", "66554434"),
+    ),
+    Row(
+        id="r10_c_glab_api_second_id_in_field_value",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            forge="gitlab",
+            body="Repro: `glab api projects/66554433/issues -f 'body=see projects/66554434/notes'`",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="git@git.kvnworks.net:kvnteam/kvnportal.git",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(
+            text="Repro: `glab api projects/2001/issues -f 'body=see projects/2002/notes'`"
+        ),
+        markers=("66554433", "66554434"),
+    ),
+    Row(
+        id="r10_d_glab_api_url_encoded_recorded_ns_sibling_repo",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            forge="gitlab",
+            body="Run `glab api projects/kvnteam%2Fkvnbilling/issues`",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="git@git.kvnworks.net:kvnteam/kvnportal.git",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(text="Run `glab api projects/org%2Fproject/issues`"),
+        markers=("kvnteam",),
+    ),
+    Row(
+        id="r10_d_glab_api_url_encoded_third_party_and_url",
+        source="verify10/r10_followup.py",
+        inp=Sample(
+            forge="gitlab",
+            body="Run `glab api projects/otherns%2Fotherrepo/issues` and https://git.kvnworks.net/otherns/otherrepo",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="git@git.kvnworks.net:kvnteam/kvnportal.git",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(
+            text="Run `glab api projects/org%2Fproject/issues` and https://forge.example.com/org/project"
+        ),
+        markers=("git.kvnworks.net",),
+    ),
+    Row(
+        id="r10_rg_prose_space_proto_rel_unknown_host",
+        source="verify10/r10_regress_probe.py",
+        inp=Sample(
+            body="Loaded from //code.kvncloud.io/kvnteam/kvnbilling/v1.js",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Loaded from //forge.example.com/org/project/v1.js"),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_rg_line_start_proto_rel_unknown_host",
+        source="verify10/r10_item1_rules.py",
+        inp=Sample(
+            body="//code.kvncloud.io/kvnteam/kvnbilling/v1.js",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="//forge.example.com/org/project/v1.js"),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_rg_md_reference_proto_rel_unknown_host",
+        source="verify10/r10_item1_rules.py",
+        inp=Sample(
+            body="[cdn]: //code.kvncloud.io/kvnteam/kvnbilling/app.js",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="[cdn]: //forge.example.com/org/project/app.js"),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_rg_ci_insteadof_scp_github",
+        source="verify10/r10_regress_probe.py",
+        inp=Sample(
+            body='git config --global url."git@github.com:".insteadOf "https://github.com/"',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text='git config --global url."git@forge.example.com:".insteadOf "https://forge.example.com/"'
+        ),
+        markers=("github.com",),
+    ),
+    Row(
+        id="r10_rg_ci_insteadof_ci_job_token_var",
+        source="verify10/r10_regress_probe.py",
+        inp=Sample(
+            body='git config --global url."https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.com/".insteadOf "https://gitlab.com/"',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text='git config --global url."https://forge.example.com/".insteadOf "https://forge.example.com/"'
+        ),
+        markers=("gitlab.com", "CI_JOB_TOKEN"),
+    ),
+    Row(
+        id="r10_rg_ci_clone_github_token_var",
+        source="verify10/r10_regress_probe.py",
+        inp=Sample(
+            body="git clone https://x-access-token:${GITHUB_TOKEN}@github.com/pubteam9/pubrepo9.git",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="git clone https://forge.example.com/org/project.git"),
+        markers=("github.com", "GITHUB_TOKEN", "pubteam9"),
+    ),
+    Row(
+        id="r10_rg_ci_clone_gitlab_token_bare_var",
+        source="verify10/r10_regress_probe.py",
+        inp=Sample(
+            body="git clone https://oauth2:$GITLAB_TOKEN@gitlab.com/pubteam9/pubrepo9.git",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="git clone https://forge.example.com/org/project.git"),
+        markers=("gitlab.com", "GITLAB_TOKEN", "pubteam9"),
+    ),
+    Row(
+        id="r10_rg_go_code_comment_two_label",
+        source="verify10/r10_regress_probe.py",
+        inp=Sample(
+            body="x := 1 //cfg.dev/env/prod",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="x := 1 //cfg.dev/env/prod"),
+    ),
+    Row(
+        id="r10_ci_insteadof_ssh_scheme",
+        source="verify10/r10_ci_insteadof.py",
+        inp=Sample(
+            body='git config --global url."ssh://git@github.com/".insteadOf "https://github.com/"',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text='git config --global url."ssh://git@forge.example.com/".insteadOf "https://forge.example.com/"'
+        ),
+        markers=("github.com",),
+    ),
+    Row(
+        id="r10_ci_insteadof_github_token_var",
+        source="verify10/r10_ci_insteadof.py",
+        inp=Sample(
+            body='git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text='git config --global url."https://forge.example.com/".insteadOf "https://forge.example.com/"'
+        ),
+        markers=("github.com", "GITHUB_TOKEN"),
+    ),
+    Row(
+        id="r10_ci_insteadof_config_block",
+        source="verify10/r10_ci_insteadof.py",
+        inp=Sample(
+            body='[url "git@github.com:"]\n\tinsteadOf = https://github.com/',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text='[url "git@forge.example.com:"]\n\tinsteadOf = https://forge.example.com/'
+        ),
+        markers=("github.com",),
+    ),
+    Row(
+        id="r10_ci_goprivate_insteadof",
+        source="verify10/r10_ci_insteadof.py",
+        inp=Sample(
+            body='GOPRIVATE=github.com/pubteam9/* git config --global url."git@github.com:".insteadOf https://github.com/',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text='GOPRIVATE=forge.example.com/org/* git config --global url."git@forge.example.com:".insteadOf https://forge.example.com/'
+        ),
+        markers=("github.com", "pubteam9"),
+    ),
+    Row(
+        id="r10_ci_prose_scp_style_remotes",
+        source="verify10/r10_ci_insteadof.py",
+        inp=Sample(
+            body="See git@github.com: style remotes vs https",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="See git@forge.example.com: style remotes vs https"),
+        markers=("github.com",),
+    ),
+    Row(
+        id="r10_i1_d1_range_live_prose_repo_after_url",
+        source="verify10/r10_item1_rules.py",
+        inp=Sample(
+            forge="gitlab",
+            body="Open https://git.mvkother.io/mvkns2/mvksecretrepo and mvksecretrepo",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(text="Open https://forge.example.com/org/project and project"),
+        markers=("git.mvkother.io", "mvksecretrepo"),
+    ),
+    Row(
+        id="r10_i1_d4_unbalanced_two_ids",
+        source="verify10/r10_item1_rules.py",
+        inp=Sample(
+            forge="gitlab",
+            body="Repro: `glab api projects/66554433/issues projects/66554434/notes -f 'x`",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="git@git.kvnworks.net:kvnteam/kvnportal.git",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(text="Repro: `glab api projects/2001/issues projects/2002/notes -f 'x`"),
+        markers=("66554433", "66554434"),
+    ),
+    Row(
+        id="r10_i1_d4_argv_second_id_in_field",
+        source="verify10/r10_item1_rules.py",
+        inp=Sample(
+            forge="gitlab",
+            body="ok",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="git@git.kvnworks.net:kvnteam/kvnportal.git",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            call_args=("api", "projects/66554433/issues", "-f", "body=see projects/66554433/notes"),
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(
+            text='["api", "projects/2001/issues", "-f", "body=see projects/2001/notes"]'
+        ),
+        markers=("66554433",),
+    ),
+    Row(
+        id="r10_i1_item3_proto_rel_host_from_remote",
+        source="verify10/r10_item1_rules.py",
+        inp=Sample(
+            forge="gitlab",
+            body="Loaded from //git.kvnworks.net/kvnteam/kvnportal/v1.js",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="git@git.kvnworks.net:kvnteam/kvnportal.git",
+            url="https://git.kvnworks.net/kvnteam/kvnportal/-/merge_requests/42#note_100",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(text="Loaded from //forge.example.com/org/project/v1.js"),
+        markers=("git.kvnworks.net", "kvnportal"),
+    ),
+    Row(
+        id="r10_i1_item3_proto_rel_host_seen_https",
+        source="verify10/r10_item1_rules.py",
+        inp=Sample(
+            body="Primary https://code.kvncloud.io/kvnteam/kvnbilling\nLoaded from //code.kvncloud.io/kvnteam/kvnbilling/v1.js",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="git@github.com:kvnteam/kvnportal.git",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(
+            text="Primary https://forge.example.com/org/project\nLoaded from //forge.example.com/org/project/v1.js"
+        ),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_i1_item3_proto_rel_host_seen_scp",
+        source="verify10/r10_item1_rules.py",
+        inp=Sample(
+            body="Mirror git@code.kvncloud.io:kvnteam/kvnbilling.git\nLoaded from //code.kvncloud.io/kvnteam/kvnbilling/v1.js",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="git@github.com:kvnteam/kvnportal.git",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(
+            text="Mirror git@forge.example.com:org/project.git\nLoaded from //forge.example.com/org/project/v1.js"
+        ),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_i1_item3_proto_rel_host_only_proto",
+        source="verify10/r10_item1_rules.py",
+        inp=Sample(
+            body="Loaded from //code.kvncloud.io/kvnteam/kvnbilling/v1.js",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="git@github.com:kvnteam/kvnportal.git",
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(text="Loaded from //forge.example.com/org/project/v1.js"),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_i1_item3_proto_rel_host_seen_in_other_call",
+        source="verify10/r10_item1_rules.py",
+        inp=Sample(
+            body="Loaded from //code.kvncloud.io/kvnteam/kvnbilling/v1.js",
+            login="kvn_dev9",
+            uid=73194826,
+            ns="kvnteam",
+            repo="kvnportal",
+            remote="git@github.com:kvnteam/kvnportal.git",
+            extra_items=(
+                {
+                    "user": {"login": "kvn_dev9", "id": 73194826},
+                    "body": "See https://code.kvncloud.io/kvnteam/kvnbilling",
+                },
+            ),
+            deny=("kvnsecret42", "84729163"),
+        ),
+        outcome=Written(text="Loaded from //forge.example.com/org/project/v1.js"),
+        markers=("code.kvncloud.io", "kvnbilling"),
+    ),
+    Row(
+        id="r10_i1_d3_cdnjs_proto_rel_kept",
+        source="verify10/r10_item1_rules.py",
+        inp=Sample(
+            body='<script src="//cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js">',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text='<script src="//cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js">'
+        ),
+    ),
+    Row(
+        id="g_forge_https_prose",
+        source="spec017-new",
+        inp=Sample(
+            body="See https://github.com/zqgroup/zqmainrepo/pull/7 for details.",
+            login="pubdev99",
+            uid=51928374,
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="See https://forge.example.com/org/project/pull/7 for details."),
+        markers=("github.com", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="g_forge_https_userinfo",
+        source="spec017-new",
+        inp=Sample(
+            body="Clone https://alice:s3cr3t@github.com/zqgroup/zqmainrepo.git now",
+            login="pubdev99",
+            uid=51928374,
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Clone https://forge.example.com/org/project.git now"),
+        markers=("github.com", "zqgroup", "zqmainrepo", "alice", "s3cr3t"),
+    ),
+    Row(
+        id="g_forge_https_var_userinfo",
+        source="spec017-new",
+        inp=Sample(
+            body="git clone https://x-access-token:${GITHUB_TOKEN}@github.com/zqgroup/zqmainrepo.git",
+            login="pubdev99",
+            uid=51928374,
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="git clone https://forge.example.com/org/project.git"),
+        markers=("github.com", "zqgroup", "zqmainrepo", "alice", "s3cr3t", "GITHUB_TOKEN"),
+    ),
+    Row(
+        id="g_forge_scp_named_user",
+        source="spec017-new",
+        inp=Sample(
+            body="git remote add m alice@github.com:zqgroup/zqmainrepo.git",
+            login="pubdev99",
+            uid=51928374,
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="git remote add m git@forge.example.com:org/project.git"),
+        markers=("github.com", "zqgroup", "zqmainrepo", "alice", "s3cr3t"),
+    ),
+    Row(
+        id="g_forge_scp_git_user",
+        source="spec017-new",
+        inp=Sample(
+            body="git remote add m git@github.com:zqgroup/zqmainrepo.git",
+            login="pubdev99",
+            uid=51928374,
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="git remote add m git@forge.example.com:org/project.git"),
+        markers=("github.com", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="g_forge_proto_rel_attr_spaces",
+        source="spec017-new",
+        inp=Sample(
+            body='<script src = "//github.com/zqgroup/zqmainrepo/app.js"></script>',
+            login="pubdev99",
+            uid=51928374,
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='<script src = "//forge.example.com/org/project/app.js"></script>'),
+        markers=("github.com", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="g_forge_proto_rel_yaml_sq",
+        source="spec017-new",
+        inp=Sample(
+            body="cdn: '//github.com/zqgroup/zqmainrepo/'",
+            login="pubdev99",
+            uid=51928374,
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="cdn: '//forge.example.com/org/project/'"),
+        markers=("github.com", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="g_forge_markdown_link",
+        source="spec017-new",
+        inp=Sample(
+            body="Docs: [here](https://github.com/zqgroup/zqmainrepo/wiki/Home) ok",
+            login="pubdev99",
+            uid=51928374,
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Docs: [here](https://forge.example.com/org/project) ok"),
+        markers=("github.com", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="g_forge_angle_brackets",
+        source="spec017-new",
+        inp=Sample(
+            body="Link: <https://github.com/zqgroup/zqmainrepo/issues/3>",
+            login="pubdev99",
+            uid=51928374,
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Link: <https://forge.example.com/org/project/issues/3>"),
+        markers=("github.com", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="g_forge_json_in_text",
+        source="spec017-new",
+        inp=Sample(
+            body='{"url": "https://github.com/zqgroup/zqmainrepo", "n": 1}',
+            login="pubdev99",
+            uid=51928374,
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='{"url": "https://forge.example.com/org/project", "n": 1}'),
+        markers=("github.com", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="g_forge_ci_log_line",
+        source="spec017-new",
+        inp=Sample(
+            body="Cloning into 'zqmainrepo'...\nFrom https://github.com/zqgroup/zqmainrepo\n * branch main -> FETCH_HEAD",
+            login="pubdev99",
+            uid=51928374,
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Cloning into 'project'...\nFrom https://forge.example.com/org/project\n * branch main -> FETCH_HEAD"
+        ),
+        markers=("github.com", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="g_private_known_https_prose",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="See https://git.zqcorp.io/zqgroup/zqmainrepo/pull/7 for details.",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="See https://forge.example.com/org/project/pull/7 for details."),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="g_private_known_https_userinfo",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="Clone https://alice:s3cr3t@git.zqcorp.io/zqgroup/zqmainrepo.git now",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Clone https://forge.example.com/org/project.git now"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "alice", "s3cr3t"),
+    ),
+    Row(
+        id="g_private_known_https_var_userinfo",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="git clone https://x-access-token:${GITHUB_TOKEN}@git.zqcorp.io/zqgroup/zqmainrepo.git",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="git clone https://forge.example.com/org/project.git"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "alice", "s3cr3t", "GITHUB_TOKEN"),
+    ),
+    Row(
+        id="g_private_known_scp_named_user",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="git remote add m alice@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="git remote add m git@forge.example.com:org/project.git"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "alice", "s3cr3t"),
+    ),
+    Row(
+        id="g_private_known_scp_git_user",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="git remote add m git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="git remote add m git@forge.example.com:org/project.git"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="g_private_known_proto_rel_attr_spaces",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body='<script src = "//git.zqcorp.io/zqgroup/zqmainrepo/app.js"></script>',
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='<script src = "//forge.example.com/org/project/app.js"></script>'),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="g_private_known_proto_rel_yaml_sq",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="cdn: '//git.zqcorp.io/zqgroup/zqmainrepo/'",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="cdn: '//forge.example.com/org/project/'"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="g_private_known_markdown_link",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="Docs: [here](https://git.zqcorp.io/zqgroup/zqmainrepo/wiki/Home) ok",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Docs: [here](https://forge.example.com/org/project) ok"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="g_private_known_angle_brackets",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="Link: <https://git.zqcorp.io/zqgroup/zqmainrepo/issues/3>",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Link: <https://forge.example.com/org/project/issues/3>"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="g_private_known_json_in_text",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body='{"url": "https://git.zqcorp.io/zqgroup/zqmainrepo", "n": 1}',
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='{"url": "https://forge.example.com/org/project", "n": 1}'),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="g_private_known_ci_log_line",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="Cloning into 'zqmainrepo'...\nFrom https://git.zqcorp.io/zqgroup/zqmainrepo\n * branch main -> FETCH_HEAD",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Cloning into 'project'...\nFrom https://forge.example.com/org/project\n * branch main -> FETCH_HEAD"
+        ),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="g_private_unknown_https_prose",
+        source="spec017-new",
+        inp=Sample(
+            body="See https://mirror.zqcorp.net/zqotherns/zqotherrepo/pull/7 for details.",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="See https://forge.example.com/org/project/pull/7 for details."),
+        markers=("mirror.zqcorp.net", "zqotherns", "zqotherrepo"),
+    ),
+    Row(
+        id="g_private_unknown_https_userinfo",
+        source="spec017-new",
+        inp=Sample(
+            body="Clone https://alice:s3cr3t@mirror.zqcorp.net/zqotherns/zqotherrepo.git now",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Clone https://forge.example.com/org/project.git now"),
+        markers=("mirror.zqcorp.net", "zqotherns", "zqotherrepo", "alice", "s3cr3t"),
+    ),
+    Row(
+        id="g_private_unknown_https_var_userinfo",
+        source="spec017-new",
+        inp=Sample(
+            body="git clone https://x-access-token:${GITHUB_TOKEN}@mirror.zqcorp.net/zqotherns/zqotherrepo.git",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="git clone https://forge.example.com/org/project.git"),
+        markers=(
+            "mirror.zqcorp.net",
+            "zqotherns",
+            "zqotherrepo",
+            "alice",
+            "s3cr3t",
+            "GITHUB_TOKEN",
+        ),
+    ),
+    Row(
+        id="g_private_unknown_scp_named_user",
+        source="spec017-new",
+        inp=Sample(
+            body="git remote add m alice@mirror.zqcorp.net:zqotherns/zqotherrepo.git",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="git remote add m git@forge.example.com:org/project.git"),
+        markers=("mirror.zqcorp.net", "zqotherns", "zqotherrepo", "alice", "s3cr3t"),
+    ),
+    Row(
+        id="g_private_unknown_scp_git_user",
+        source="spec017-new",
+        inp=Sample(
+            body="git remote add m git@mirror.zqcorp.net:zqotherns/zqotherrepo.git",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="git remote add m git@forge.example.com:org/project.git"),
+        markers=("mirror.zqcorp.net", "zqotherns", "zqotherrepo"),
+    ),
+    Row(
+        id="g_private_unknown_proto_rel_attr_spaces",
+        source="spec017-new",
+        inp=Sample(
+            body='<script src = "//mirror.zqcorp.net/zqotherns/zqotherrepo/app.js"></script>',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='<script src = "//forge.example.com/org/project/app.js"></script>'),
+        markers=("mirror.zqcorp.net", "zqotherns", "zqotherrepo"),
+    ),
+    Row(
+        id="g_private_unknown_proto_rel_yaml_sq",
+        source="spec017-new",
+        inp=Sample(
+            body="cdn: '//mirror.zqcorp.net/zqotherns/zqotherrepo/'",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="cdn: '//forge.example.com/org/project/'"),
+        markers=("mirror.zqcorp.net", "zqotherns", "zqotherrepo"),
+    ),
+    Row(
+        id="g_private_unknown_markdown_link",
+        source="spec017-new",
+        inp=Sample(
+            body="Docs: [here](https://mirror.zqcorp.net/zqotherns/zqotherrepo/wiki/Home) ok",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Docs: [here](https://forge.example.com/org/project) ok"),
+        markers=("mirror.zqcorp.net", "zqotherns", "zqotherrepo"),
+    ),
+    Row(
+        id="g_private_unknown_angle_brackets",
+        source="spec017-new",
+        inp=Sample(
+            body="Link: <https://mirror.zqcorp.net/zqotherns/zqotherrepo/issues/3>",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Link: <https://forge.example.com/org/project/issues/3>"),
+        markers=("mirror.zqcorp.net", "zqotherns", "zqotherrepo"),
+    ),
+    Row(
+        id="g_private_unknown_json_in_text",
+        source="spec017-new",
+        inp=Sample(
+            body='{"url": "https://mirror.zqcorp.net/zqotherns/zqotherrepo", "n": 1}',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='{"url": "https://forge.example.com/org/project", "n": 1}'),
+        markers=("mirror.zqcorp.net", "zqotherns", "zqotherrepo"),
+    ),
+    Row(
+        id="g_private_unknown_ci_log_line",
+        source="spec017-new",
+        inp=Sample(
+            body="Cloning into 'zqotherrepo'...\nFrom https://mirror.zqcorp.net/zqotherns/zqotherrepo\n * branch main -> FETCH_HEAD",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Cloning into 'project'...\nFrom https://forge.example.com/org/project\n * branch main -> FETCH_HEAD"
+        ),
+        markers=("mirror.zqcorp.net", "zqotherns", "zqotherrepo"),
+    ),
+    Row(
+        id="g_public_allowlisted_https_prose",
+        source="spec017-new",
+        inp=Sample(
+            body="See https://docs.python.org/3/library/pull/7 for details.",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="See https://docs.python.org/3/library/pull/7 for details."),
+    ),
+    Row(
+        id="g_public_allowlisted_https_userinfo",
+        source="spec017-new",
+        inp=Sample(
+            body="Clone https://alice:s3cr3t@docs.python.org/3/library.git now",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Clone https://forge.example.com/org/project.git now"),
+        markers=("alice", "s3cr3t"),
+    ),
+    Row(
+        id="g_public_allowlisted_https_var_userinfo",
+        source="spec017-new",
+        inp=Sample(
+            body="git clone https://x-access-token:${GITHUB_TOKEN}@docs.python.org/3/library.git",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="git clone https://forge.example.com/org/project.git"),
+        markers=("alice", "s3cr3t", "GITHUB_TOKEN"),
+    ),
+    Row(
+        id="g_public_allowlisted_proto_rel_attr_spaces",
+        source="spec017-new",
+        inp=Sample(
+            body='<script src = "//docs.python.org/3/library/app.js"></script>',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='<script src = "//docs.python.org/3/library/app.js"></script>'),
+    ),
+    Row(
+        id="g_public_allowlisted_proto_rel_yaml_sq",
+        source="spec017-new",
+        inp=Sample(
+            body="cdn: '//docs.python.org/3/library/'",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="cdn: '//docs.python.org/3/library/'"),
+    ),
+    Row(
+        id="g_public_allowlisted_markdown_link",
+        source="spec017-new",
+        inp=Sample(
+            body="Docs: [here](https://docs.python.org/3/library/wiki/Home) ok",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Docs: [here](https://docs.python.org/3/library/wiki/Home) ok"),
+    ),
+    Row(
+        id="g_public_allowlisted_angle_brackets",
+        source="spec017-new",
+        inp=Sample(
+            body="Link: <https://docs.python.org/3/library/issues/3>",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Link: <https://docs.python.org/3/library/issues/3>"),
+    ),
+    Row(
+        id="g_public_allowlisted_json_in_text",
+        source="spec017-new",
+        inp=Sample(
+            body='{"url": "https://docs.python.org/3/library", "n": 1}',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='{"url": "https://docs.python.org/3/library", "n": 1}'),
+    ),
+    Row(
+        id="g_public_allowlisted_ci_log_line",
+        source="spec017-new",
+        inp=Sample(
+            body="Cloning into 'library'...\nFrom https://docs.python.org/3/library\n * branch main -> FETCH_HEAD",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Cloning into 'library'...\nFrom https://docs.python.org/3/library\n * branch main -> FETCH_HEAD"
+        ),
+    ),
+    Row(
+        id="g_public_unlisted_https_prose",
+        source="spec017-new",
+        inp=Sample(
+            body="See https://docs.vendor-unlisted.org/zqthirdns/zqthirdrepo/pull/7 for details.",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="See https://forge.example.com/org/project/pull/7 for details."),
+        markers=("docs.vendor-unlisted.org", "zqthirdns", "zqthirdrepo"),
+    ),
+    Row(
+        id="g_public_unlisted_https_userinfo",
+        source="spec017-new",
+        inp=Sample(
+            body="Clone https://alice:s3cr3t@docs.vendor-unlisted.org/zqthirdns/zqthirdrepo.git now",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Clone https://forge.example.com/org/project.git now"),
+        markers=("docs.vendor-unlisted.org", "zqthirdns", "zqthirdrepo", "alice", "s3cr3t"),
+    ),
+    Row(
+        id="g_public_unlisted_https_var_userinfo",
+        source="spec017-new",
+        inp=Sample(
+            body="git clone https://x-access-token:${GITHUB_TOKEN}@docs.vendor-unlisted.org/zqthirdns/zqthirdrepo.git",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="git clone https://forge.example.com/org/project.git"),
+        markers=(
+            "docs.vendor-unlisted.org",
+            "zqthirdns",
+            "zqthirdrepo",
+            "alice",
+            "s3cr3t",
+            "GITHUB_TOKEN",
+        ),
+    ),
+    Row(
+        id="g_public_unlisted_scp_named_user",
+        source="spec017-new",
+        inp=Sample(
+            body="git remote add m alice@docs.vendor-unlisted.org:zqthirdns/zqthirdrepo.git",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="git remote add m git@forge.example.com:org/project.git"),
+        markers=("docs.vendor-unlisted.org", "zqthirdns", "zqthirdrepo", "alice", "s3cr3t"),
+    ),
+    Row(
+        id="g_public_unlisted_scp_git_user",
+        source="spec017-new",
+        inp=Sample(
+            body="git remote add m git@docs.vendor-unlisted.org:zqthirdns/zqthirdrepo.git",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="git remote add m git@forge.example.com:org/project.git"),
+        markers=("docs.vendor-unlisted.org", "zqthirdns", "zqthirdrepo"),
+    ),
+    Row(
+        id="g_public_unlisted_proto_rel_attr_spaces",
+        source="spec017-new",
+        inp=Sample(
+            body='<script src = "//docs.vendor-unlisted.org/zqthirdns/zqthirdrepo/app.js"></script>',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='<script src = "//forge.example.com/org/project/app.js"></script>'),
+        markers=("docs.vendor-unlisted.org", "zqthirdns", "zqthirdrepo"),
+    ),
+    Row(
+        id="g_public_unlisted_proto_rel_yaml_sq",
+        source="spec017-new",
+        inp=Sample(
+            body="cdn: '//docs.vendor-unlisted.org/zqthirdns/zqthirdrepo/'",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="cdn: '//forge.example.com/org/project/'"),
+        markers=("docs.vendor-unlisted.org", "zqthirdns", "zqthirdrepo"),
+    ),
+    Row(
+        id="g_public_unlisted_markdown_link",
+        source="spec017-new",
+        inp=Sample(
+            body="Docs: [here](https://docs.vendor-unlisted.org/zqthirdns/zqthirdrepo/wiki/Home) ok",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Docs: [here](https://forge.example.com/org/project) ok"),
+        markers=("docs.vendor-unlisted.org", "zqthirdns", "zqthirdrepo"),
+    ),
+    Row(
+        id="g_public_unlisted_angle_brackets",
+        source="spec017-new",
+        inp=Sample(
+            body="Link: <https://docs.vendor-unlisted.org/zqthirdns/zqthirdrepo/issues/3>",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Link: <https://forge.example.com/org/project/issues/3>"),
+        markers=("docs.vendor-unlisted.org", "zqthirdns", "zqthirdrepo"),
+    ),
+    Row(
+        id="g_public_unlisted_json_in_text",
+        source="spec017-new",
+        inp=Sample(
+            body='{"url": "https://docs.vendor-unlisted.org/zqthirdns/zqthirdrepo", "n": 1}',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='{"url": "https://forge.example.com/org/project", "n": 1}'),
+        markers=("docs.vendor-unlisted.org", "zqthirdns", "zqthirdrepo"),
+    ),
+    Row(
+        id="g_public_unlisted_ci_log_line",
+        source="spec017-new",
+        inp=Sample(
+            body="Cloning into 'zqthirdrepo'...\nFrom https://docs.vendor-unlisted.org/zqthirdns/zqthirdrepo\n * branch main -> FETCH_HEAD",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Cloning into 'project'...\nFrom https://forge.example.com/org/project\n * branch main -> FETCH_HEAD"
+        ),
+        markers=("docs.vendor-unlisted.org", "zqthirdns", "zqthirdrepo"),
+    ),
+    Row(
+        id="g_rfc2606_https_prose",
+        source="spec017-new",
+        inp=Sample(
+            body="See https://gitlab.example.com/demo/sample/pull/7 for details.",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="See https://gitlab.example.com/demo/sample/pull/7 for details."),
+    ),
+    Row(
+        id="g_rfc2606_https_userinfo",
+        source="spec017-new",
+        inp=Sample(
+            body="Clone https://alice:s3cr3t@gitlab.example.com/demo/sample.git now",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Clone https://forge.example.com/org/project.git now"),
+        markers=("alice", "s3cr3t"),
+    ),
+    Row(
+        id="g_rfc2606_https_var_userinfo",
+        source="spec017-new",
+        inp=Sample(
+            body="git clone https://x-access-token:${GITHUB_TOKEN}@gitlab.example.com/demo/sample.git",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="git clone https://forge.example.com/org/project.git"),
+        markers=("alice", "s3cr3t", "GITHUB_TOKEN"),
+    ),
+    Row(
+        id="g_rfc2606_scp_named_user",
+        source="spec017-new",
+        inp=Sample(
+            body="git remote add m alice@gitlab.example.com:demo/sample.git",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="git remote add m git@forge.example.com:org/project.git"),
+        markers=("alice", "s3cr3t"),
+    ),
+    Row(
+        id="g_rfc2606_scp_git_user",
+        source="spec017-new",
+        inp=Sample(
+            body="git remote add m git@gitlab.example.com:demo/sample.git",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="git remote add m git@gitlab.example.com:demo/sample.git"),
+    ),
+    Row(
+        id="g_rfc2606_proto_rel_attr_spaces",
+        source="spec017-new",
+        inp=Sample(
+            body='<script src = "//gitlab.example.com/demo/sample/app.js"></script>',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='<script src = "//gitlab.example.com/demo/sample/app.js"></script>'),
+    ),
+    Row(
+        id="g_rfc2606_proto_rel_yaml_sq",
+        source="spec017-new",
+        inp=Sample(
+            body="cdn: '//gitlab.example.com/demo/sample/'",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="cdn: '//gitlab.example.com/demo/sample/'"),
+    ),
+    Row(
+        id="g_rfc2606_markdown_link",
+        source="spec017-new",
+        inp=Sample(
+            body="Docs: [here](https://gitlab.example.com/demo/sample/wiki/Home) ok",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Docs: [here](https://gitlab.example.com/demo/sample/wiki/Home) ok"),
+    ),
+    Row(
+        id="g_rfc2606_angle_brackets",
+        source="spec017-new",
+        inp=Sample(
+            body="Link: <https://gitlab.example.com/demo/sample/issues/3>",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Link: <https://gitlab.example.com/demo/sample/issues/3>"),
+    ),
+    Row(
+        id="g_rfc2606_json_in_text",
+        source="spec017-new",
+        inp=Sample(
+            body='{"url": "https://gitlab.example.com/demo/sample", "n": 1}',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='{"url": "https://gitlab.example.com/demo/sample", "n": 1}'),
+    ),
+    Row(
+        id="g_rfc2606_ci_log_line",
+        source="spec017-new",
+        inp=Sample(
+            body="Cloning into 'sample'...\nFrom https://gitlab.example.com/demo/sample\n * branch main -> FETCH_HEAD",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Cloning into 'sample'...\nFrom https://gitlab.example.com/demo/sample\n * branch main -> FETCH_HEAD"
+        ),
+    ),
+    Row(
+        id="g_ipv4_private_led_https_prose",
+        source="spec017-new",
+        inp=Sample(
+            body="See https://10.20.30.40/zqipns/zqiprepo/pull/7 for details.",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="See https://forge.example.com/org/project/pull/7 for details."),
+        markers=("10.20.30.40", "zqipns", "zqiprepo"),
+    ),
+    Row(
+        id="g_ipv4_private_led_https_userinfo",
+        source="spec017-new",
+        inp=Sample(
+            body="Clone https://alice:s3cr3t@10.20.30.40/zqipns/zqiprepo.git now",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Clone https://forge.example.com/org/project.git now"),
+        markers=("10.20.30.40", "zqipns", "zqiprepo", "alice", "s3cr3t"),
+    ),
+    Row(
+        id="g_ipv4_private_led_https_var_userinfo",
+        source="spec017-new",
+        inp=Sample(
+            body="git clone https://x-access-token:${GITHUB_TOKEN}@10.20.30.40/zqipns/zqiprepo.git",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="git clone https://forge.example.com/org/project.git"),
+        markers=("10.20.30.40", "zqipns", "zqiprepo", "alice", "s3cr3t", "GITHUB_TOKEN"),
+    ),
+    Row(
+        id="g_ipv4_private_led_scp_named_user",
+        source="spec017-new",
+        inp=Sample(
+            body="git remote add m alice@10.20.30.40:zqipns/zqiprepo.git",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="git remote add m git@forge.example.com:org/project.git"),
+        markers=("10.20.30.40", "zqipns", "zqiprepo", "alice", "s3cr3t"),
+    ),
+    Row(
+        id="g_ipv4_private_led_scp_git_user",
+        source="spec017-new",
+        inp=Sample(
+            body="git remote add m git@10.20.30.40:zqipns/zqiprepo.git",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="git remote add m git@forge.example.com:org/project.git"),
+        markers=("10.20.30.40", "zqipns", "zqiprepo"),
+    ),
+    Row(
+        id="g_ipv4_private_led_proto_rel_attr_spaces",
+        source="spec017-new",
+        inp=Sample(
+            body='<script src = "//10.20.30.40/zqipns/zqiprepo/app.js"></script>',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='<script src = "//forge.example.com/org/project/app.js"></script>'),
+        markers=("10.20.30.40", "zqipns", "zqiprepo"),
+    ),
+    Row(
+        id="g_ipv4_private_led_proto_rel_yaml_sq",
+        source="spec017-new",
+        inp=Sample(
+            body="cdn: '//10.20.30.40/zqipns/zqiprepo/'",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="cdn: '//forge.example.com/org/project/'"),
+        markers=("10.20.30.40", "zqipns", "zqiprepo"),
+    ),
+    Row(
+        id="g_ipv4_private_led_markdown_link",
+        source="spec017-new",
+        inp=Sample(
+            body="Docs: [here](https://10.20.30.40/zqipns/zqiprepo/wiki/Home) ok",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Docs: [here](https://forge.example.com/org/project) ok"),
+        markers=("10.20.30.40", "zqipns", "zqiprepo"),
+    ),
+    Row(
+        id="g_ipv4_private_led_angle_brackets",
+        source="spec017-new",
+        inp=Sample(
+            body="Link: <https://10.20.30.40/zqipns/zqiprepo/issues/3>",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Link: <https://forge.example.com/org/project/issues/3>"),
+        markers=("10.20.30.40", "zqipns", "zqiprepo"),
+    ),
+    Row(
+        id="g_ipv4_private_led_json_in_text",
+        source="spec017-new",
+        inp=Sample(
+            body='{"url": "https://10.20.30.40/zqipns/zqiprepo", "n": 1}',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='{"url": "https://forge.example.com/org/project", "n": 1}'),
+        markers=("10.20.30.40", "zqipns", "zqiprepo"),
+    ),
+    Row(
+        id="g_ipv4_private_led_ci_log_line",
+        source="spec017-new",
+        inp=Sample(
+            body="Cloning into 'zqiprepo'...\nFrom https://10.20.30.40/zqipns/zqiprepo\n * branch main -> FETCH_HEAD",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Cloning into 'project'...\nFrom https://forge.example.com/org/project\n * branch main -> FETCH_HEAD"
+        ),
+        markers=("10.20.30.40", "zqipns", "zqiprepo"),
+    ),
+    Row(
+        id="g_ipv4_public_led_https_prose",
+        source="spec017-new",
+        inp=Sample(
+            body="See https://11.22.33.44/zqipns/zqiprepo/pull/7 for details.",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="See https://forge.example.com/org/project/pull/7 for details."),
+        markers=("11.22.33.44", "zqipns", "zqiprepo"),
+    ),
+    Row(
+        id="g_ipv4_public_led_https_userinfo",
+        source="spec017-new",
+        inp=Sample(
+            body="Clone https://alice:s3cr3t@11.22.33.44/zqipns/zqiprepo.git now",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Clone https://forge.example.com/org/project.git now"),
+        markers=("11.22.33.44", "zqipns", "zqiprepo", "alice", "s3cr3t"),
+    ),
+    Row(
+        id="g_ipv4_public_led_https_var_userinfo",
+        source="spec017-new",
+        inp=Sample(
+            body="git clone https://x-access-token:${GITHUB_TOKEN}@11.22.33.44/zqipns/zqiprepo.git",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="git clone https://forge.example.com/org/project.git"),
+        markers=("11.22.33.44", "zqipns", "zqiprepo", "alice", "s3cr3t", "GITHUB_TOKEN"),
+    ),
+    Row(
+        id="g_ipv4_public_led_scp_named_user",
+        source="spec017-new",
+        inp=Sample(
+            body="git remote add m alice@11.22.33.44:zqipns/zqiprepo.git",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="git remote add m git@forge.example.com:org/project.git"),
+        markers=("11.22.33.44", "zqipns", "zqiprepo", "alice", "s3cr3t"),
+    ),
+    Row(
+        id="g_ipv4_public_led_scp_git_user",
+        source="spec017-new",
+        inp=Sample(
+            body="git remote add m git@11.22.33.44:zqipns/zqiprepo.git",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="git remote add m git@forge.example.com:org/project.git"),
+        markers=("11.22.33.44", "zqipns", "zqiprepo"),
+    ),
+    Row(
+        id="g_ipv4_public_led_proto_rel_attr_spaces",
+        source="spec017-new",
+        inp=Sample(
+            body='<script src = "//11.22.33.44/zqipns/zqiprepo/app.js"></script>',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='<script src = "//forge.example.com/org/project/app.js"></script>'),
+        markers=("11.22.33.44", "zqipns", "zqiprepo"),
+    ),
+    Row(
+        id="g_ipv4_public_led_proto_rel_yaml_sq",
+        source="spec017-new",
+        inp=Sample(
+            body="cdn: '//11.22.33.44/zqipns/zqiprepo/'",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="cdn: '//forge.example.com/org/project/'"),
+        markers=("11.22.33.44", "zqipns", "zqiprepo"),
+    ),
+    Row(
+        id="g_ipv4_public_led_markdown_link",
+        source="spec017-new",
+        inp=Sample(
+            body="Docs: [here](https://11.22.33.44/zqipns/zqiprepo/wiki/Home) ok",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Docs: [here](https://forge.example.com/org/project) ok"),
+        markers=("11.22.33.44", "zqipns", "zqiprepo"),
+    ),
+    Row(
+        id="g_ipv4_public_led_angle_brackets",
+        source="spec017-new",
+        inp=Sample(
+            body="Link: <https://11.22.33.44/zqipns/zqiprepo/issues/3>",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Link: <https://forge.example.com/org/project/issues/3>"),
+        markers=("11.22.33.44", "zqipns", "zqiprepo"),
+    ),
+    Row(
+        id="g_ipv4_public_led_json_in_text",
+        source="spec017-new",
+        inp=Sample(
+            body='{"url": "https://11.22.33.44/zqipns/zqiprepo", "n": 1}',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='{"url": "https://forge.example.com/org/project", "n": 1}'),
+        markers=("11.22.33.44", "zqipns", "zqiprepo"),
+    ),
+    Row(
+        id="g_ipv4_public_led_ci_log_line",
+        source="spec017-new",
+        inp=Sample(
+            body="Cloning into 'zqiprepo'...\nFrom https://11.22.33.44/zqipns/zqiprepo\n * branch main -> FETCH_HEAD",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Cloning into 'project'...\nFrom https://forge.example.com/org/project\n * branch main -> FETCH_HEAD"
+        ),
+        markers=("11.22.33.44", "zqipns", "zqiprepo"),
+    ),
+    Row(
+        id="g_ipv4_public_bare_prose_refused",
+        source="spec017-new",
+        inp=Sample(
+            body="ssh: connect to host 11.22.33.44 port 22: Connection refused",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Refused("public address at exchanges[0].stdout[0].body"),
+        markers=("11.22.33.44",),
+    ),
+    Row(
+        id="g_ipv4_private_bare_prose_written",
+        source="spec017-new",
+        inp=Sample(
+            body="ssh: connect to host 10.20.30.40 port 22: Connection refused",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="ssh: connect to host 10.20.30.40 port 22: Connection refused"),
+    ),
+    Row(
+        id="g_ipv4_rfc5737_bare_prose_written",
+        source="spec017-new",
+        inp=Sample(
+            body="curl http://203.0.113.9:8080/health",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="curl http://203.0.113.9:8080/health"),
+    ),
+    Row(
+        id="pos_title_private_url",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="see title",
+            title="Mirror of https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/9",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="see title",
+            title="Mirror of https://forge.example.com/org/project/-/merge_requests/9",
+        ),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="pos_title_private_scp_and_login",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="see title",
+            title="zqxjdoe7: use git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="see title", title="author: use git@forge.example.com:org/project.git"
+        ),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7"),
+    ),
+    Row(
+        id="pos_second_comment_private_url",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="first",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            extra_items=(
+                {
+                    "author": {"username": "zqreviewer", "id": 55667788},
+                    "body": "second: https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/9",
+                },
+            ),
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="first"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqreviewer", "55667788"),
+    ),
+    Row(
+        id="pos_diff_plus_private_url",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            raw_text_stdout="diff --git a/README.md b/README.md\n+See https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/9\n",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="diff --git a/README.md b/README.md\n+See https://forge.example.com/org/project/-/merge_requests/9\n"
+        ),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="pos_diff_minus_private_scp",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            raw_text_stdout="diff --git a/.gitmodules b/.gitmodules\n-\turl = git@git.zqcorp.io:zqgroup/zqmainrepo.git\n",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="diff --git a/.gitmodules b/.gitmodules\n-\turl = git@forge.example.com:org/project.git\n"
+        ),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="pos_diff_context_private_url",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            raw_text_stdout="diff --git a/doc.md b/doc.md\n See https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/9\n+new line\n",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="diff --git a/doc.md b/doc.md\n See https://forge.example.com/org/project/-/merge_requests/9\n+new line\n"
+        ),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="pos_diff_plus_login_token",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            raw_text_stdout="diff --git a/OWNERS b/OWNERS\n+reviewer: zqxjdoe7\n",
+            author="zqxjdoe7",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="diff --git a/OWNERS b/OWNERS\n+reviewer: author\n"),
+        markers=("zqxjdoe7",),
+    ),
+    Row(
+        id="pos_raw_stdout_log_private_url",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            raw_text_stdout="Running with gitlab-runner 17.0.0\nFetching changes from https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/9\n",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Running with gitlab-runner 17.0.0\nFetching changes from https://forge.example.com/org/project/-/merge_requests/9\n"
+        ),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="pos_stderr_private_url",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="ok",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            stderr="error: https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/9 not found",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="error: https://forge.example.com/org/project/-/merge_requests/9 not found"
+        ),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="pos_stderr_private_scp",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="ok",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            stderr="fatal: could not read from git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="fatal: could not read from git@forge.example.com:org/project.git"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="pos_stderr_login",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="ok",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            stderr="warning: zqxjdoe7 has no access",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="warning: author has no access"),
+        markers=("zqxjdoe7",),
+    ),
+    Row(
+        id="pos_stdin_private_url",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="ok",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            stdin='{"body": "see https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/9"}',
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text='{"body": "see https://forge.example.com/org/project/-/merge_requests/9"}'
+        ),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="pos_stdin_login_and_scp",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="ok",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            stdin="cc zqxjdoe7: git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="cc author: git@forge.example.com:org/project.git"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo", "zqxjdoe7"),
+    ),
+    Row(
+        id="pos_top_args_private_url",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="ok",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            top_args=(42, "https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/9"),
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='[42, "https://forge.example.com/org/project/-/merge_requests/9"]'),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="pos_top_args_login",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="ok",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            top_args=(42, "zqxjdoe7"),
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='[42, "author"]'),
+        markers=("zqxjdoe7",),
+    ),
+    Row(
+        id="pos_top_kwargs_private_scp",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="ok",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            top_kwargs={"remote": "git@git.zqcorp.io:zqgroup/zqmainrepo.git"},
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='{"remote": "git@forge.example.com:org/project.git"}'),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="pos_top_kwargs_login",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="ok",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            top_kwargs={"assignee": "zqxjdoe7"},
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='{"assignee": "author"}'),
+        markers=("zqxjdoe7",),
+    ),
+    Row(
+        id="pos_call_args_private_url",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="ok",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            call_args=(
+                "api",
+                "projects/:id/merge_requests/42/notes",
+                "-f",
+                "body=see https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/9",
+            ),
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text='["api", "projects/:id/merge_requests/42/notes", "-f", "body=see https://forge.example.com/org/project/-/merge_requests/9"]'
+        ),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="pos_call_args_login_segment",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="ok",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            call_args=("api", "projects/:id/members/all?query=zqxjdoe7"),
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='["api", "projects/:id/members/all?query=author"]'),
+        markers=("zqxjdoe7",),
+    ),
+    Row(
+        id="pos_api_path_encoded_project",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="ok",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            api_path="projects/zqgroup%2Fzqmainrepo/merge_requests/42/notes",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='["api", "projects/org%2Fproject/merge_requests/42/notes"]'),
+        markers=("zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="pos_body_login_in_many_forms",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="@zqxjdoe7 zqxjdoe7/x x-zqxjdoe7 ZQXJDOE7 git@git.zqcorp.io:zqxjdoe7/r",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="@author author/x x-author author git@forge.example.com:org/project"),
+        markers=("zqxjdoe7", "git.zqcorp.io"),
+    ),
+    Row(
+        id="api_glab_argv_plain_id",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="ok",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            call_args=("api", "projects/88442211/merge_requests/42/notes"),
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='["api", "projects/2001/merge_requests/42/notes"]'),
+        markers=("88442211",),
+    ),
+    Row(
+        id="api_glab_argv_value_flag_then_id",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="ok",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            call_args=("api", "-X", "GET", "-f", "per_page=100", "/projects/88442211/issues"),
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='["api", "-X", "GET", "-f", "per_page=100", "/projects/2001/issues"]'),
+        markers=("88442211",),
+    ),
+    Row(
+        id="api_glab_argv_two_ids",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="ok",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            call_args=("api", "projects/88442211/issues", "-f", "body=see projects/88442212/notes"),
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text='["api", "projects/2001/issues", "-f", "body=see projects/2002/notes"]'
+        ),
+        markers=("88442211", "88442212"),
+    ),
+    Row(
+        id="api_gh_argv_owner_repo_templates",
+        source="spec017-new",
+        inp=Sample(
+            body="ok",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            call_args=("api", "repos/:owner/:repo/issues/42/comments", "--paginate"),
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='["api", "repos/:owner/:repo/issues/42/comments", "--paginate"]'),
+    ),
+    Row(
+        id="api_gh_argv_real_namespace",
+        source="spec017-new",
+        inp=Sample(
+            body="ok",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            call_args=("api", "repos/pubteam9/pubrepo9/issues/42/comments"),
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='["api", "repos/org/project/issues/42/comments"]'),
+        markers=("pubteam9", "pubrepo9"),
+    ),
+    Row(
+        id="api_text_glab_api_five_digit_id",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="Run `glab api projects/12345/issues`",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Run `glab api projects/2001/issues`"),
+        markers=("12345",),
+    ),
+    Row(
+        id="api_text_glab_api_four_digit_doc_id_kept",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="Docs: `glab api projects/1234/issues` (example id)",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Docs: `glab api projects/1234/issues` (example id)"),
+    ),
+    Row(
+        id="api_text_api_v4_four_digit_on_example_host_kept",
+        source="spec017-new",
+        inp=Sample(
+            body="curl https://gitlab.example.com/api/v4/projects/1234/merge_requests",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="curl https://gitlab.example.com/api/v4/projects/1234/merge_requests"),
+    ),
+    Row(
+        id="api_text_api_v4_eight_digit_on_private_host",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="curl https://git.zqcorp.io/api/v4/projects/88442211/merge_requests",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="curl https://forge.example.com/api/v4/projects/2001/merge_requests"),
+        markers=("git.zqcorp.io", "88442211"),
+    ),
+    Row(
+        id="api_text_web_projects_numeric_path",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="See https://git.zqcorp.io/projects/88442211/merge_requests/42",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="See https://forge.example.com/projects/2001/merge_requests/42"),
+        markers=("git.zqcorp.io", "88442211"),
+    ),
+    Row(
+        id="api_text_year_path_and_created_at",
+        source="spec017-new",
+        inp=Sample(
+            body="Moved projects/2026/q1.md and /projects/2025/architecture.md",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Moved projects/2026/q1.md and /projects/2025/architecture.md"),
+    ),
+    Row(
+        id="api_text_projects_word_no_digits",
+        source="spec017-new",
+        inp=Sample(
+            body="The projects/ folder holds projects/alpha and projects/beta-2",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="The projects/ folder holds projects/alpha and projects/beta-2"),
+    ),
+    Row(
+        id="api_text_gh_api_graphql_with_login_var",
+        source="spec017-new",
+        inp=Sample(
+            body="gh api graphql -f query='{ user(login: \"zqxjdoe7\") { id } }'",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="gh api graphql -f query='{ user(login: \"author\") { id } }'"),
+        markers=("zqxjdoe7",),
+    ),
+    Row(
+        id="val_json_private_url",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body='{"remote": "https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/9", "retries": 3}',
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text='{"remote": "https://forge.example.com/org/project/-/merge_requests/9", "retries": 3}'
+        ),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="val_json_public_url",
+        source="spec017-new",
+        inp=Sample(
+            body='{"remote": "https://pypi.org/project/ruff/", "retries": 3}',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='{"remote": "https://pypi.org/project/ruff/", "retries": 3}'),
+    ),
+    Row(
+        id="val_json_scp_private",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body='{"remote": "git@git.zqcorp.io:zqgroup/zqmainrepo.git", "retries": 3}',
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='{"remote": "git@forge.example.com:org/project.git", "retries": 3}'),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="val_yaml_private_url",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="remote: https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/9\nretries: 3",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="remote: https://forge.example.com/org/project/-/merge_requests/9\nretries: 3"
+        ),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="val_yaml_public_url",
+        source="spec017-new",
+        inp=Sample(
+            body="remote: https://pypi.org/project/ruff/\nretries: 3",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="remote: https://pypi.org/project/ruff/\nretries: 3"),
+    ),
+    Row(
+        id="val_yaml_scp_private",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="remote: git@git.zqcorp.io:zqgroup/zqmainrepo.git\nretries: 3",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="remote: git@forge.example.com:org/project.git\nretries: 3"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="val_toml_private_url",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body='remote = "https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/9"\nretries = 3',
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text='remote = "https://forge.example.com/org/project/-/merge_requests/9"\nretries = 3'
+        ),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="val_toml_public_url",
+        source="spec017-new",
+        inp=Sample(
+            body='remote = "https://pypi.org/project/ruff/"\nretries = 3',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='remote = "https://pypi.org/project/ruff/"\nretries = 3'),
+    ),
+    Row(
+        id="val_toml_scp_private",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body='remote = "git@git.zqcorp.io:zqgroup/zqmainrepo.git"\nretries = 3',
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text='remote = "git@forge.example.com:org/project.git"\nretries = 3'),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="val_ini_private_url",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="[origin]\nremote=https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/9\nretries=3",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="[origin]\nremote=https://forge.example.com/org/project/-/merge_requests/9\nretries=3"
+        ),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="val_ini_public_url",
+        source="spec017-new",
+        inp=Sample(
+            body="[origin]\nremote=https://pypi.org/project/ruff/\nretries=3",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="[origin]\nremote=https://pypi.org/project/ruff/\nretries=3"),
+    ),
+    Row(
+        id="val_ini_scp_private",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="[origin]\nremote=git@git.zqcorp.io:zqgroup/zqmainrepo.git\nretries=3",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="[origin]\nremote=git@forge.example.com:org/project.git\nretries=3"),
+        markers=("git.zqcorp.io", "zqgroup", "zqmainrepo"),
+    ),
+    Row(
+        id="code_go_comments_and_dotted_identifiers",
+        source="spec017-new",
+        inp=Sample(
+            body='```go\npackage main //pkg.io/main/entry\nimport "net/http" //std.net/http/client\nfunc main() { x := cfg.Load() //cfg.dev/env/prod\n\tsrv := http.Server{Addr: ":8080"} //srv.io/listen/addr\n}\n```',
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text='```go\npackage main //pkg.io/main/entry\nimport "net/http" //std.net/http/client\nfunc main() { x := cfg.Load() //cfg.dev/env/prod\n\tsrv := http.Server{Addr: ":8080"} //srv.io/listen/addr\n}\n```'
+        ),
+    ),
+    Row(
+        id="code_js_comments_and_dotted_identifiers",
+        source="spec017-new",
+        inp=Sample(
+            body="```js\nconst cfg = load() //cfg.dev/env/prod\nconst api = axios.create({ baseURL: base + '/v1' }) //api.io/client/v1\nmodule.exports = { cfg, api } //mod.io/export/all\n```",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="```js\nconst cfg = load() //cfg.dev/env/prod\nconst api = axios.create({ baseURL: base + '/v1' }) //api.io/client/v1\nmodule.exports = { cfg, api } //mod.io/export/all\n```"
+        ),
+    ),
+    Row(
+        id="code_ts_comments_and_dotted_identifiers",
+        source="spec017-new",
+        inp=Sample(
+            body="```ts\nexport const store = createStore<State>() //store.io/cache/hit\nconst n: number = total // 2 is not a comment start in TS\ntype Cfg = typeof config.dev //types.dev/cfg/ro\n```",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="```ts\nexport const store = createStore<State>() //store.io/cache/hit\nconst n: number = total // 2 is not a comment start in TS\ntype Cfg = typeof config.dev //types.dev/cfg/ro\n```"
+        ),
+    ),
+    Row(
+        id="code_c_comments_and_dotted_identifiers",
+        source="spec017-new",
+        inp=Sample(
+            body="```c\n#include <stdio.h> //io.std/printf/fmt\nint main(void) { //main.c/entry/point\n    if (ok) { //config.dev/env/prod\n        return 0; }\n}\n```",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="```c\n#include <stdio.h> //io.std/printf/fmt\nint main(void) { //main.c/entry/point\n    if (ok) { //config.dev/env/prod\n        return 0; }\n}\n```"
+        ),
+    ),
+    Row(
+        id="code_cpp_comments_and_dotted_identifiers",
+        source="spec017-new",
+        inp=Sample(
+            body="```cpp\n#include <torch/torch.h> //torch.net/layers/conv\nauto m = torch::nn::Linear(2, 2); //nn.io/linear/init\nstd::cout << m->weight.sizes(); //log.io/weight/dims\n```",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="```cpp\n#include <torch/torch.h> //torch.net/layers/conv\nauto m = torch::nn::Linear(2, 2); //nn.io/linear/init\nstd::cout << m->weight.sizes(); //log.io/weight/dims\n```"
+        ),
+    ),
+    Row(
+        id="code_rust_comments_and_dotted_identifiers",
+        source="spec017-new",
+        inp=Sample(
+            body="```rust\n//! Crate docs: see docs.rs/serde\nuse std::io; //std.io/read/write\nfn run() -> io::Result<()> { Ok(()) } //ret.io/result/ok\n```",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="```rust\n//! Crate docs: see docs.rs/serde\nuse std::io; //std.io/read/write\nfn run() -> io::Result<()> { Ok(()) } //ret.io/result/ok\n```"
+        ),
+    ),
+    Row(
+        id="code_java_comments_and_dotted_identifiers",
+        source="spec017-new",
+        inp=Sample(
+            body="```java\npackage com.example.app; //pkg.io/reverse/dns\nimport org.apache.commons.io.FileUtils;\n@Override //spring.io/web/ctl\npublic String get() { return svc.base/api/v1; } //svc.io/v1/get\n```",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="```java\npackage com.example.app; //pkg.io/reverse/dns\nimport org.apache.commons.io.FileUtils;\n@Override //spring.io/web/ctl\npublic String get() { return svc.base/api/v1; } //svc.io/v1/get\n```"
+        ),
+    ),
+    Row(
+        id="code_python_comments_and_dotted_identifiers",
+        source="spec017-new",
+        inp=Sample(
+            body="```python\nimport os.path  # os.path.join\nhalf = n // 2  # floor division\nratio = a.b // c.d\nnp.array(self.config.dev)  # see torch.net docs\n```",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="```python\nimport os.path  # os.path.join\nhalf = n // 2  # floor division\nratio = a.b // c.d\nnp.array(self.config.dev)  # see torch.net docs\n```"
+        ),
+    ),
+    Row(
+        id="code_macos_bundle_and_ssl_stream_torch",
+        source="spec017-new",
+        inp=Sample(
+            body="Open Xcode.app/Contents/Developer; load ssl.ca/certs/root.pem; use stream.io/read/write and torch.net/layers/conv",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Open Xcode.app/Contents/Developer; load ssl.ca/certs/root.pem; use stream.io/read/write and torch.net/layers/conv"
+        ),
+    ),
+    Row(
+        id="code_three_label_filenames_extension_tlds",
+        source="spec017-new",
+        inp=Sample(
+            body="Edit config.h.in, CHANGELOG.v1.md, settings.local.py and deploy.prod.sh then run",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Edit config.h.in, CHANGELOG.v1.md, settings.local.py and deploy.prod.sh then run"
+        ),
+    ),
+    Row(
+        id="code_reverse_dns_package_names",
+        source="spec017-new",
+        inp=Sample(
+            body="applicationId com.example.app; groupId org.apache.commons.io; io.github.zqlib.core",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="applicationId com.example.app; groupId org.apache.commons.io; io.github.zqlib.core"
+        ),
+    ),
+    Row(
+        id="code_python_dotted_modules_and_files",
+        source="spec017-new",
+        inp=Sample(
+            body="Moved tests.unit.test_x to tests/unit/test_x.py; README.md and file.py unchanged; os.path and np.array ok",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Moved tests.unit.test_x to tests/unit/test_x.py; README.md and file.py unchanged; os.path and np.array ok"
+        ),
+    ),
+    Row(
+        id="code_three_label_private_host_schemeless_prose",
+        source="spec017-new",
+        inp=Sample(
+            body="Mirror at mirror.zqcorp.net/zqotherns/zqotherrepo is stale",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Mirror at forge.example.com/org/project is stale"),
+        markers=("mirror.zqcorp.net", "zqotherns", "zqotherrepo"),
+    ),
+    Row(
+        id="code_three_label_private_host_schemeless_no_path",
+        source="spec017-new",
+        inp=Sample(
+            body="Host mirror.zqcorp.net is down",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Host forge.example.com is down"),
+        markers=("mirror.zqcorp.net",),
+    ),
+    Row(
+        id="code_two_label_apex_host_schemeless_prose_residual",
+        source="spec017-new",
+        inp=Sample(
+            body="Mirror at zqcorp.io/zqotherns/zqotherrepo is stale",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Mirror at zqcorp.io/zqotherns/zqotherrepo is stale"),
+    ),
+    Row(
+        id="code_two_label_apex_host_scheme_led",
+        source="spec017-new",
+        inp=Sample(
+            body="Mirror at https://zqcorp.io/zqotherns/zqotherrepo is stale",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Mirror at https://forge.example.com/org/project is stale"),
+        markers=("zqcorp.io", "zqotherns", "zqotherrepo"),
+    ),
+    Row(
+        id="name_user_object_name_dropped_and_prose_word",
+        source="spec017-new",
+        inp=Sample(
+            body="Thanks Zqkowalska and marta for the review",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            extra_item={"user": {"login": "zqxjdoe7", "id": 51928374, "name": "Marta Zqkowalska"}},
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Thanks author and author for the review"),
+        markers=("zqxjdoe7", "Zqkowalska"),
+    ),
+    Row(
+        id="name_multiword_name_in_title",
+        source="spec017-new",
+        inp=Sample(
+            body="ok",
+            title="Marta Zqkowalska: fix parser",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            extra_item={"user": {"login": "zqxjdoe7", "id": 51928374, "name": "Marta Zqkowalska"}},
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="ok", title="author author: fix parser"),
+        markers=("zqxjdoe7", "Zqkowalska"),
+    ),
+    Row(
+        id="email_dropped_key_local_part_in_prose",
+        source="spec017-new",
+        inp=Sample(
+            body="Contact zqmartak on the channel",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            extra_item={
+                "user": {"login": "zqxjdoe7", "id": 51928374, "email": "zqmartak@zqmail.io"}
+            },
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Contact author on the channel"),
+        markers=("zqxjdoe7", "zqmartak", "zqmail.io"),
+    ),
+    Row(
+        id="email_dropped_key_mailbox_in_prose_refused",
+        source="spec017-new",
+        inp=Sample(
+            body="Mail zqmartak@zqmail.io please",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            extra_item={
+                "user": {"login": "zqxjdoe7", "id": 51928374, "email": "zqmartak@zqmail.io"}
+            },
+            deny=("kvnsecret42",),
+        ),
+        outcome=Refused("unknown mailbox at exchanges[0].stdout[0].body"),
+        markers=("zqxjdoe7", "zqmartak", "zqmail.io"),
+    ),
+    Row(
+        id="email_personal_on_private_known_host_refused",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="Mail alice@git.zqcorp.io please",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Refused("unknown mailbox at exchanges[0].stdout[0].body"),
+        markers=("git.zqcorp.io",),
+    ),
+    Row(
+        id="email_example_com_literal_written",
+        source="spec017-new",
+        inp=Sample(
+            body="Mail support@example.com or ops@example.org please",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Mail support@example.com or ops@example.org please"),
+    ),
+    Row(
+        id="email_sub_example_com_refused_like_the_gate",
+        source="spec017-new",
+        inp=Sample(
+            body="Mail alice@sub.example.com please",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Refused("unknown mailbox at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="deny_in_title",
+        source="spec017-new",
+        inp=Sample(
+            body="ok",
+            title="Rotate zqdenyval now",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("zqdenyval",),
+        ),
+        outcome=Refused("deny-list entry 1 at exchanges[0].stdout[0].title"),
+        markers=("zqdenyval",),
+    ),
+    Row(
+        id="deny_in_stderr",
+        source="spec017-new",
+        inp=Sample(
+            body="ok",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            stderr="warning: zqdenyval expired",
+            deny=("zqdenyval",),
+        ),
+        outcome=Refused("deny-list entry 1 at exchanges[0].stderr"),
+        markers=("zqdenyval",),
+    ),
+    Row(
+        id="deny_in_stdin",
+        source="spec017-new",
+        inp=Sample(
+            body="ok",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            stdin="note zqdenyval",
+            deny=("zqdenyval",),
+        ),
+        outcome=Refused("deny-list entry 1 at exchanges[0].stdin"),
+        markers=("zqdenyval",),
+    ),
+    Row(
+        id="deny_in_top_args",
+        source="spec017-new",
+        inp=Sample(
+            body="ok",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            top_args=(42, "zqdenyval"),
+            deny=("zqdenyval",),
+        ),
+        outcome=Refused("deny-list entry 1 at args[1]"),
+        markers=("zqdenyval",),
+    ),
+    Row(
+        id="deny_in_top_kwargs",
+        source="spec017-new",
+        inp=Sample(
+            body="ok",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            top_kwargs={"note": "zqdenyval"},
+            deny=("zqdenyval",),
+        ),
+        outcome=Refused("deny-list entry 1 at kwargs.{key 0}"),
+        markers=("zqdenyval",),
+    ),
+    Row(
+        id="deny_in_diff_plus",
+        source="spec017-new",
+        inp=Sample(
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            raw_text_stdout="+key = zqdenyval\n",
+            deny=("zqdenyval",),
+        ),
+        outcome=Refused("deny-list entry 1 at exchanges[0].stdout"),
+        markers=("zqdenyval",),
+    ),
+    Row(
+        id="deny_numeric_id_in_branch",
+        source="spec017-new",
+        inp=Sample(
+            body="ok",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            head_ref="fix/91827364-crash",
+            deny=("91827364",),
+        ),
+        outcome=Refused("deny-list entry 1 at exchanges[0].stdout[0].headRefName"),
+        markers=("91827364",),
+    ),
+    Row(
+        id="mention_dotted_gitlab_username_known_login",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="cc @zq.marta please",
+            login="zq.marta",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="cc @author please"),
+        markers=("zq.marta",),
+    ),
+    Row(
+        id="mention_unknown_handle_each_position",
+        source="spec017-new",
+        inp=Sample(
+            body="cc @zqcolleague and @zqcolleague2",
+            title="cc @zqcolleague",
+            login="pubdev99",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            extra_items=(
+                {"user": {"login": "pubdev99", "id": 51928374}, "body": "ack @zqcolleague"},
+            ),
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="cc @author-2 and @author-3", title="cc @author-2"),
+        markers=("zqcolleague",),
+    ),
+    Row(
+        id="uid_known_number_in_prose_replaced_by_synthetic",
+        source="spec017-new",
+        inp=Sample(
+            body="user id 74928163 reported it",
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="user id 1001 reported it"),
+        markers=("74928163",),
+    ),
+    Row(
+        id="uid_known_legacy_node_in_prose_replaced_by_synthetic",
+        source="spec017-new",
+        inp=Sample(
+            body="node MDQ6VXNlcjc0OTI4MTYz seen",
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="node U_1001 seen"),
+        markers=("MDQ6VXNlcjc0OTI4MTYz",),
+    ),
+    Row(
+        id="pid_known_repository_id_in_prose_replaced_by_synthetic",
+        source="spec017-new",
+        inp=Sample(
+            forge="gitlab",
+            body="project 88442211 was archived",
+            login="pubdev99",
+            uid=51928374,
+            remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+            url="https://git.zqcorp.io/zqgroup/zqmainrepo/-/merge_requests/42#note_100",
+            extra_item={
+                "project": {
+                    "id": 88442211,
+                    "name": "Zqmainrepo",
+                    "path": "zqmainrepo",
+                    "web_url": "https://git.zqcorp.io/zqgroup/zqmainrepo",
+                }
+            },
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="project 2001 was archived"),
+        markers=("88442211",),
+    ),
+    Row(
+        id="reg_offline_mixed_case_docs_github_and_gitlab",
+        source="tests/unit/test_forge_recording_regression_corpus.py OFFLINE",
+        inp=Sample(
+            body="See https://Docs.GitHub.com/en/actions and https://Docs.GitLab.com/ee/api/",
+            login="author",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="See https://docs.github.com/en/actions and https://docs.gitlab.com/ee/api/"
+        ),
+    ),
+    Row(
+        id="reg_offline_public_docs_python_and_wikipedia_parens",
+        source="tests/unit/test_forge_recording_regression_corpus.py OFFLINE",
+        inp=Sample(
+            body="See https://DOCS.PYTHON.ORG/3/library/re.html? and https://en.wikipedia.org/wiki/Python_(programming_language)",
+            login="author",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="See https://docs.python.org/3/library/re.html? and https://en.wikipedia.org/wiki/Python_(programming_language)"
+        ),
+    ),
+    Row(
+        id="reg_offline_scp_example_userinfo_and_dunder_anchor",
+        source="tests/unit/test_forge_recording_regression_corpus.py OFFLINE",
+        inp=Sample(
+            body="Run alice@example.com:org/repo.git and https://github.com/python/cpython/blob/main/Lib/pathlib.py#__init__",
+            login="author",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="Run git@forge.example.com:org/project.git and https://forge.example.com/org/project/blob/main/Lib/pathlib.py"
+        ),
+        markers=("alice",),
+    ),
+    Row(
+        id="reg_offline_short_stem_cla_bot",
+        source="tests/unit/test_forge_recording_regression_corpus.py OFFLINE",
+        inp=Sample(
+            body="Run @cla check",
+            login="cla[bot]",
+            uid=44556677,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="Run @bot check"),
+        markers=("cla[bot]", "@cla"),
+    ),
+    Row(
+        id="reg_offline_uppercase_bot_suffix",
+        source="tests/unit/test_forge_recording_regression_corpus.py OFFLINE",
+        inp=Sample(
+            body="Dependabot: @dependabot rebase",
+            login="Dependabot[BOT]",
+            uid=44556677,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="bot: @bot rebase"),
+        markers=("dependabot",),
+    ),
+    Row(
+        id="reg_offline_placeholder_stem_project_bot",
+        source="tests/unit/test_forge_recording_regression_corpus.py OFFLINE",
+        inp=Sample(
+            body="See https://github.com/o/r/pull/1 and @project",
+            login="project[bot]",
+            uid=44556677,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(text="See https://forge.example.com/org/project/pull/1 and @bot"),
+        markers=("@project",),
+    ),
+    Row(
+        id="reg_offline_system_noreply_and_actions_github",
+        source="tests/unit/test_forge_recording_regression_corpus.py OFFLINE",
+        inp=Sample(
+            body="GitHub <noreply@github.com>; Actions <actions@github.com>; keep `https://example.com`",
+            login="author",
+            uid=51928374,
+            ns="pubteam9",
+            repo="pubrepo9",
+            remote="git@github.com:pubteam9/pubrepo9.git",
+            deny=("kvnsecret42",),
+        ),
+        outcome=Written(
+            text="GitHub <noreply@forge.example.com>; Actions <noreply@forge.example.com>; keep `https://example.com`"
+        ),
+    ),
+)
+
+
+def _position(inp: Sample) -> str:
+    """The position the row's ``Written.text`` describes."""
+    if inp.raw_text_stdout is not None:
+        return "stdout"
+    if inp.stderr:
+        return "stderr"
+    if inp.stdin:
+        return "stdin"
+    if tuple(inp.top_args) != (42,):
+        return "args"
+    if inp.top_kwargs:
+        return "kwargs"
+    if inp.call_args is not None or inp.api_path is not None:
+        return "argv"
+    return "body"
+
+
+def _items(inp: Sample) -> list[dict[str, Any]]:
+    """The raw JSON answer of the recorded call (``None`` for a raw text answer)."""
+    user_key = "login" if inp.forge == "github" else "username"
+    item: dict[str, Any] = {
+        "user" if inp.forge == "github" else "author": {user_key: inp.login, "id": inp.uid},
+        "body": inp.body,
+        "created_at": "2026-11-19T12:00:00Z",
+        "html_url" if inp.forge == "github" else "web_url": inp.url
+        or (
+            f"https://github.com/{inp.ns}/{inp.repo}/pull/42#issuecomment-100"
+            if inp.forge == "github"
+            else f"https://{FAKE_HOST}/{inp.ns}/{inp.repo}/-/merge_requests/42#note_100"
+        ),
+    }
+    if inp.title is not None:
+        item["title"] = inp.title
+    if inp.head_ref is not None:
+        item["headRefName" if inp.forge == "github" else "source_branch"] = inp.head_ref
+    if inp.base_ref is not None:
+        item["baseRefName" if inp.forge == "github" else "target_branch"] = inp.base_ref
+    if inp.extra_item:
+        item.update(copy.deepcopy(inp.extra_item))
+    return [item, *(copy.deepcopy(x) for x in inp.extra_items)]
+
+
+def _stdout(inp: Sample) -> str:
+    """The raw stdout the fake forge answers."""
+    if inp.raw_text_stdout is not None:
+        return inp.raw_text_stdout
+    return json.dumps(_items(inp))
+
+
+def _argv(inp: Sample) -> list[str]:
+    """The argv the fake forge's method issues (the recorder records it verbatim)."""
+    if inp.raw_text_stdout is not None:
+        return ["pr" if inp.forge == "github" else "mr", "diff", "42", *inp.argv_extra]
+    if inp.call_args is not None:
+        return list(inp.call_args)
+    default_api = (
+        "repos/:owner/:repo/issues/42/comments"
+        if inp.forge == "github"
+        else "projects/:id/merge_requests/42/notes"
+    )
+    return ["api", inp.api_path or default_api, *inp.argv_extra]
+
+
+def _method(inp: Sample) -> str:
+    return "diff" if inp.raw_text_stdout is not None else "conversation_comments"
+
+
+def _top_kwargs(inp: Sample) -> dict[str, Any]:
+    """The method's keyword arguments: the row's, then the stdin the fake method sends."""
+    kwargs = dict(inp.top_kwargs)
+    if inp.stdin is not None:
+        kwargs["stdin"] = inp.stdin
+    return kwargs
+
+
+def _top_args(inp: Sample) -> list[Any]:
+    """The method's positional arguments: the row's, then a planted argv the fake method issues."""
+    args = list(inp.top_args)
+    if inp.call_args is not None or inp.api_path is not None:
+        args += _argv(inp)
+    return args
+
+
+def _fake_forge(inp: Sample, tmp_path: Path) -> Forge:
+    """A forge whose protocol method issues the row's argv and whose binary answers the row's stdout."""
+    binary = tmp_path / ("gh" if inp.forge == "github" else "glab")
+    binary.write_text("")
+    fixed_argv = _argv(inp)
+    planted_argv = inp.call_args is not None or inp.api_path is not None
+    stdout = _stdout(inp)
+
+    def _issued(extra: tuple[Any, ...]) -> list[str]:
+        """The argv the method issues: the (classified) extra arguments when the row plants argv."""
+        return [str(a) for a in extra] if planted_argv else fixed_argv
+
+    def _spawn(argv_: list[str], *, input_data: str | None = None) -> CommandResult:
+        return CommandResult(returncode=0, stdout=stdout, stderr=inp.stderr, argv=list(argv_))
+
+    if inp.forge == "github":
+
+        class _FakeGitHub(GitHubForge):
+            def conversation_comments(self, number: int, *extra: Any, **_k: Any) -> Any:
+                res = self._spawn([str(binary), *_issued(extra)], input_data=_k.get("stdin"))
+                return [
+                    comment_from_github(c) for c in json.loads(res.stdout) if isinstance(c, dict)
+                ]
+
+            def diff(self, number: int, *extra: Any, **_k: Any) -> Diff:
+                res = self._spawn([str(binary), *_issued(extra)], input_data=_k.get("stdin"))
+                return Diff(text=res.stdout, files=diff_files(res.stdout))
+
+        forge: Any = _FakeGitHub(cwd=tmp_path, gh_path=str(binary), bot_login=inp.bot)
+    else:
+
+        class _FakeGitLab(GitLabForge):
+            def conversation_comments(self, number: int, *extra: Any, **_k: Any) -> Any:
+                res = self._spawn([str(binary), *_issued(extra)], input_data=_k.get("stdin"))
+                return [note_to_comment(n) for n in json.loads(res.stdout) if isinstance(n, dict)]
+
+            def diff(self, number: int, *extra: Any, **_k: Any) -> Diff:
+                res = self._spawn([str(binary), *_issued(extra)], input_data=_k.get("stdin"))
+                return Diff(text=res.stdout, files=diff_files(res.stdout))
+
+        forge = _FakeGitLab(cwd=tmp_path, glab_path=str(binary), bot_username=inp.bot)
+    forge._spawn = _spawn
+    return forge
+
+
+def _record_live(
+    row: Row, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[str, str, dict[str, Any] | None]:
+    """Run the row through ``record()``: the public live path, every helper real but the forge."""
+    inp = row.inp
+    monkeypatch.setenv(REC.DENYLIST_ENV, "\n".join(inp.deny))
+    monkeypatch.setattr(REC, "select_forge", lambda **_kw: _fake_forge(inp, tmp_path))
+    monkeypatch.setattr(REC, "origin_url", lambda _cwd: inp.remote)
+    monkeypatch.setattr(REC, "_author_of", lambda *_a: inp.author)
+    out_root = tmp_path / "out" / row.id
+    try:
+        path = REC.record(
+            forge_name=inp.forge,
+            cwd=tmp_path,
+            case=inp.case,
+            method=_method(inp),
+            args=_top_args(inp),
+            kwargs=_top_kwargs(inp),
+            trim=None,
+            out_root=out_root,
+        )
+    except (
+        REC.UnclassifiedValueError,
+        REC.DenylistError,
+        rec_mod.SyntheticIdsExhaustedError,
+        rec_mod.NeedleError,
+        SystemExit,
+    ) as exc:
+        assert not out_root.exists(), f"{row.id}: a refusal wrote a fixture"
+        return "REFUSED", str(exc), None
+    except rec_mod.ReplayMismatchError as exc:
+        return "REPLAY_MISMATCH", str(exc), None
+    return "WRITTEN", "", json.loads(path.read_text())
+
+
+def _written_parts(row: Row, fixture: dict[str, Any]) -> tuple[str, str | None, dict[str, str]]:
+    """The text at the row's position, the title and the named item fields of the written fixture."""
+    inp = row.inp
+    call = fixture["calls"][0]
+    pos = _position(inp)
+    title: str | None = None
+    fields: dict[str, str] = {}
+    if inp.raw_text_stdout is None:
+        item = json.loads(call["stdout"])[0]
+        if inp.title is not None:
+            title = str(item["title"])
+        for key in ("headRefName", "source_branch", "baseRefName", "target_branch"):
+            if key in item:
+                fields[key] = str(item[key])
+    if pos == "stdout":
+        return str(call["stdout"]), title, fields
+    if pos == "stderr":
+        return str(call["stderr"]), title, fields
+    if pos == "stdin":
+        return str(call["stdin"]), title, fields
+    if pos == "args":
+        return json.dumps(fixture["args"], ensure_ascii=False), title, fields
+    if pos == "kwargs":
+        return json.dumps(fixture["kwargs"], ensure_ascii=False), title, fields
+    if pos == "argv":
+        return json.dumps(call["args"], ensure_ascii=False), title, fields
+    return str(json.loads(call["stdout"])[0]["body"]), title, fields
+
+
+def _judge_live(row: Row, status: str, msg: str, fixture: dict[str, Any] | None) -> list[str]:
+    """Every way the live outcome differs from the row's one expected outcome."""
+    problems: list[str] = []
+    outcome = row.outcome
+    if isinstance(outcome, Refused):
+        if status != "REFUSED":
+            return [f"expected REFUSED {outcome.prefix!r}, got {status}"]
+        if not msg.startswith(outcome.prefix):
+            problems.append(f"expected prefix {outcome.prefix!r}, got {msg!r}")
+        return problems
+    if status != "WRITTEN" or fixture is None:
+        return [f"expected WRITTEN, got {status} ({msg!r})"]
+    blob = json.dumps(fixture, ensure_ascii=False).casefold()
+    survivors = [m for m in row.markers if m.casefold() in blob]
+    if survivors:
+        problems.append(f"survived={survivors}")
+    text, title, fields = _written_parts(row, fixture)
+    if text != outcome.text:
+        problems.append(f"text {text!r} != {outcome.text!r}")
+    if outcome.title is not None and title != outcome.title:
+        problems.append(f"title {title!r} != {outcome.title!r}")
+    for key, expected in outcome.fields:
+        if fields.get(key) != expected:
+            problems.append(f"{key} {fields.get(key)!r} != {expected!r}")
+    return problems
+
+
+_RAW_TEXT_KEYS = ("body", "title", "headRefName", "source_branch", "baseRefName", "target_branch")
+
+
+def _node_legacy(number: int) -> str:
+    """Encode ``number`` as a legacy GitHub ``04:User<n>`` base64 node id."""
+    return base64.b64encode(f"04:User{number}".encode()).decode()
+
+
+def _node_new(number: int) -> str:
+    """Encode ``number`` as a current-format ``U_`` MessagePack node id."""
+    raw = b"\x92\x00\xce" + number.to_bytes(4, "big")
+    return "U_" + base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def _live_only_values(inp: Sample) -> list[str]:
+    """Values only the live recorder learns from the recording (logins, ids and their node forms)."""
+    values: list[str] = []
+    for item in _items(inp):
+        user = item.get("user") or item.get("author") or {}
+        if isinstance(user, dict):
+            for key, value in user.items():
+                if key in ("login", "username", "name", "email"):
+                    values.append(str(value))
+                    if str(value).casefold().endswith("[bot]"):
+                        values.append(str(value)[:-5])
+                if key == "id" and isinstance(value, int):
+                    values += [str(value), _node_legacy(value), _node_new(value)]
+    if inp.author:
+        values.append(inp.author)
+    folded = {v.casefold() for v in values if v}
+    return sorted(folded - {"author", "bot", "maintainer", "service"})
+
+
+def _raw_strings(inp: Sample) -> list[str]:
+    """Every raw text position of the row's input."""
+    out = [
+        inp.body,
+        inp.title or "",
+        inp.head_ref or "",
+        inp.base_ref or "",
+        inp.stderr,
+        inp.stdin or "",
+    ]
+    out += [inp.raw_text_stdout or "", json.dumps(list(inp.top_args)), json.dumps(inp.top_kwargs)]
+    out += [json.dumps(list(inp.call_args or ())), inp.api_path or ""]
+    for item in [inp.extra_item, *inp.extra_items]:
+        out += [str(v) for k, v in item.items() if isinstance(v, str)]
+    return out
+
+
+def _offline_parity_possible(inp: Sample) -> bool:
+    """True when no raw text position holds a value only the live recorder can learn."""
+    text = "\n".join(_raw_strings(inp)).casefold()
+    return not any(v in text for v in _live_only_values(inp))
+
+
+def _restore_raw_text(row: Row, live: dict[str, Any]) -> dict[str, Any]:
+    """The live fixture with every raw text position put back, structured fields kept in class form."""
+    inp = row.inp
+    out = copy.deepcopy(live)
+    call = out["calls"][0]
+    if inp.raw_text_stdout is not None:
+        call["stdout"] = inp.raw_text_stdout
+    else:
+        written = json.loads(call["stdout"])
+        raw = _items(inp)
+        for w_item, r_item in zip(written, raw, strict=True):
+            for key in _RAW_TEXT_KEYS:
+                if key in r_item:
+                    w_item[key] = r_item[key]
+        call["stdout"] = json.dumps(written, ensure_ascii=False)
+    call["stderr"] = inp.stderr
+    call["stdin"] = inp.stdin
+    call["args"] = _argv(inp)
+    out["args"] = _top_args(inp)
+    out["kwargs"] = _top_kwargs(inp)
+    return out
+
+
+def _judge_offline(row: Row, live: dict[str, Any]) -> list[str]:
+    """The offline transform agrees with the live recorder: parity on the raw text, idempotence on the written text."""
+    problems: list[str] = []
+    forge = row.inp.forge
+    deny = tuple(row.inp.deny)
+    again = OFF.redact_fixture(
+        copy.deepcopy(live), forge=forge, remote=row.inp.remote, denylist=deny
+    )
+    if again != live:
+        problems.append("offline: the written fixture is not a fixed point")
+    if _offline_parity_possible(row.inp):
+        restored = _restore_raw_text(row, live)
+        offline = OFF.redact_fixture(restored, forge=forge, remote=row.inp.remote, denylist=deny)
+        if offline != live:
+            problems.append("offline: the raw text does not transform to the live text")
+    return problems
+
+
+def _judge_offline_refusal(row: Row, live_msg: str) -> list[str]:
+    """An offline transform of the raw recording refuses with the same reason prefix."""
+    assert isinstance(row.outcome, Refused)
+    inp = row.inp
+    raw_fixture: dict[str, Any] = {
+        "forge": inp.forge,
+        "case": inp.case,
+        "method": _method(inp),
+        "args": _top_args(inp),
+        "kwargs": _top_kwargs(inp),
+        "bot_username": inp.bot,
+        "source": rec_mod.recorded_source("2026-11-22", inp.forge),
+        "trimmed": None,
+        "calls": [
+            {
+                "program": "gh" if inp.forge == "github" else "glab",
+                "args": _argv(inp),
+                "stdin": inp.stdin,
+                "returncode": 0,
+                "stdout": _stdout(inp),
+                "stderr": inp.stderr,
+            }
+        ],
+        "result": None,
+        "raises": None,
+    }
+    if not _offline_parity_possible(inp) or live_msg.startswith(("needle ", "refusing to write")):
+        return []
+    try:
+        OFF.redact_fixture(
+            raw_fixture, forge=inp.forge, remote=inp.remote, denylist=tuple(inp.deny)
+        )
+    except (
+        OFF.ResidualValueError,
+        REC.UnclassifiedValueError,
+        REC.DenylistError,
+        rec_mod.NeedleError,
+    ) as exc:
+        return _offline_prefix_problems(row.outcome.prefix, str(exc))
+    return ["offline: the raw recording was not refused"]
+
+
+def _offline_prefix_problems(prefix: str, message: str) -> list[str]:
+    """The one problem an offline refusal can have: a reason that does not start with the row's prefix."""
+    if not message.startswith(prefix):
+        return [f"offline: expected prefix {prefix!r}, got {message[:120]!r}"]
+    return []
+
+
+FAILURES: list[tuple[str, list[str]]] = []
+
+
+def test_acceptance_corpus_live_and_offline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Every row yields exactly its one expected outcome, live through ``record`` and offline."""
+    ids = [row.id for row in ROWS]
+    assert len(ids) == len(set(ids))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    FAILURES.clear()
+    for row in ROWS:
+        status, msg, fixture = _record_live(row, monkeypatch, tmp_path)
+        problems = _judge_live(row, status, msg, fixture)
+        if not problems:
+            try:
+                if fixture is not None:
+                    problems += _judge_offline(row, fixture)
+                else:
+                    problems += _judge_offline_refusal(row, msg)
+            except TypeError as exc:
+                problems.append(f"offline: {exc}")
+        if problems:
+            FAILURES.append((row.id, problems))
+    assert FAILURES == [], f"{len(FAILURES)} of {len(ROWS)} rows differ from their expected outcome"
