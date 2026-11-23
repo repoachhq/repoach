@@ -52,6 +52,8 @@ RESIDUAL_UNCHANGED = "RESIDUAL_UNCHANGED"
 """A documented residual that must be written byte-identical (NG4-2, NG4-9, NG4-10)."""
 REFUSED = "REFUSED"
 """Refused with the given reason prefix (an owner decision)."""
+BOUNDED = "BOUNDED"
+"""Written, or refused as ``nesting too deep``, never a crash (0.21, B3: the readers' bound is the interpreter's)."""
 
 
 @dataclass(frozen=True)
@@ -140,6 +142,7 @@ NG4_9 = "NG4-9 a bare public IPv4, or one that is a path segment"
 NG4_10 = "NG4-10 an un-led IPv6 literal"
 NG4_11 = "NG4-11 a lone path segment after a host is a page, not an identity"
 NG4_12 = "NG4-12 a path after a placeholder-class host is not read"
+NG4_13 = "NG4-13 a mention-only handle equal to a language word is written in its @ form"
 
 
 def _led(lead: str) -> bool:
@@ -939,6 +942,194 @@ def carrier_cells() -> list[Cell]:
     return out
 
 
+ROUTES: list[tuple[str, str, str, tuple[str, ...], tuple[str, ...]]] = [
+    ("gitlab_group", "see {lead}{host}/{ns}/-/issues?label_name=bug now", "ns", ("ns",), ()),
+    ("gitlab_group_proto_rel", "see //{host}/{ns}/-/epics/12 now", "ns", ("ns",), ()),
+    ("gitlab_group_subgroup", "see {lead}{host}/{ns}/{sub}/-/epics/3 now", "ns", ("ns", "sub"), ()),
+    (
+        "gitlab_groups_nested",
+        "see {lead}{host}/groups/{ns}/{sub}/-/epics now",
+        "ns",
+        ("ns", "sub"),
+        (),
+    ),
+    (
+        "gitlab_groups_bare",
+        "see {lead}{host}/groups/{ns} and the groups page",
+        "ns",
+        ("ns",),
+        ("groups",),
+    ),
+    ("gitlab_user_snippets", "see {lead}{host}/users/{ns}/-/snippets now", "ns", ("ns",), ()),
+    (
+        "gitlab_project_route",
+        "see {lead}{host}/{ns}/{repo}/-/merge_requests/1 now",
+        "ns",
+        ("ns", "repo"),
+        (),
+    ),
+    ("gitlab_jobs_route", "see {lead}{host}/-/jobs/5 and the jobs page", "ns", (), ("jobs",)),
+    (
+        "gitlab_api_group",
+        "see {lead}{host}/api/v4/groups/{ns}/projects now",
+        "ns",
+        ("ns",),
+        ("projects",),
+    ),
+    (
+        "github_orgs",
+        "see {lead}{host}/orgs/{ns}/repositories and the repositories tab",
+        "ns",
+        ("ns",),
+        ("repositories",),
+    ),
+    ("github_users", "see {lead}{host}/users/{ns}/repos now", "ns", ("ns",), ("repos",)),
+    ("github_repo_route", "see {lead}{host}/{ns}/{repo}/pull/1 now", "ns", ("ns", "repo"), ()),
+    (
+        "github_api_repos",
+        "see {lead}{host}/api/v3/repos/{ns}/{repo}/pulls now",
+        "ns",
+        ("ns", "repo"),
+        ("pulls",),
+    ),
+    (
+        "gitea_org",
+        "see {lead}{host}/org/{ns}/dashboard and the dashboard",
+        "third_party",
+        ("ns",),
+        ("dashboard",),
+    ),
+    (
+        "gitea_api_orgs",
+        "see {lead}{host}/api/v1/orgs/{ns}/repos now",
+        "third_party",
+        ("ns",),
+        ("repos",),
+    ),
+    (
+        "gitea_api_repos",
+        "see {lead}{host}/api/v1/repos/{ns}/{repo}/pulls now",
+        "third_party",
+        ("ns", "repo"),
+        ("pulls",),
+    ),
+    (
+        "bitbucket_repo",
+        "see {lead}{host}/{ns}/{repo}/pull-requests/1 now",
+        "third_party",
+        ("ns", "repo"),
+        (),
+    ),
+]
+"""Forge route grammars (0.21, B1): name, template, where it is met (``ns``: any host, the recorded instance included; ``third_party``: a Gitea or Bitbucket host, never the instance, which is GitHub or GitLab), the identity segments, the route words that must stay."""
+
+ROUTE_HOSTS: dict[str, str] = {
+    "host3": "host3",
+    "known_host": "known_host",
+    "ipv4_private": "ipv4_private",
+    "localhost": "localhost",
+    "public_host": "public_host",
+}
+
+
+def route_cells() -> list[Cell]:
+    """Every forge route grammar with every host class: the identity before the route is learnt, the route words are not."""
+    out: list[Cell] = []
+    for name, template, where, identity, kept in ROUTES:
+        for hname, kind in ROUTE_HOSTS.items():
+            host, cls = KINDS[kind]
+            if where == "third_party" and cls == "known":
+                continue
+            for lead_name, lead in (("https", "https://"), ("http", "http://")):
+                if "{lead}" not in template and lead_name == "http":
+                    continue
+                text = template.format(lead=lead, host=host, ns=NS, sub="kvnsub", repo=REPO)
+                values = {"ns": NS, "sub": "kvnsub", "repo": REPO}
+                markers = tuple(values[k] for k in identity)
+                if cls in ("placeholder", "public"):
+                    category, note = (RESIDUAL, NG4_12) if markers else (ORDINARY, "")
+                    markers = ()
+                else:
+                    category, note = PLANTED, "the identity before the route is a value"
+                    markers = (host, *markers)
+                out.append(
+                    Cell(
+                        id=f"route:{name}:{hname}:{lead_name}",
+                        rule="routes",
+                        text=text,
+                        category=category,
+                        markers=markers,
+                        note=note,
+                        remote=KNOWN_REMOTE if cls == "known" else Sample.remote,
+                        extra={"kept": kept},
+                    )
+                )
+    return out
+
+
+def language_word_cells() -> list[Cell]:
+    """Every language word after ``@``: mention-only it is written (NG4-13), a participant's login it is replaced."""
+    out: list[Cell] = []
+    for word in sorted(corpus.rec_mod.LANGUAGE_AT_WORDS):
+        out.append(
+            Cell(
+                id=f"logins:mention_only:{word}",
+                rule="logins",
+                text=f"cc @{word} please review",
+                category=RESIDUAL_UNCHANGED,
+                note=NG4_13,
+            )
+        )
+        if corpus.rec_mod.CLASS_WORD_RE.match(word):
+            continue
+        short = len(word) < corpus.rec_mod.NEEDLE_MIN_LENGTH
+        out.append(
+            Cell(
+                id=f"logins:participant:{word}",
+                rule="logins",
+                text=f"cc @{word} please review, {word}",
+                category=REFUSED if short else PLANTED,
+                markers=() if short else (f"@{word}",),
+                note="a short login is a configuration error (D7)"
+                if short
+                else "a participant login is a known value",
+                prefix="needle login" if short else "",
+                extra={"login": word},
+            )
+        )
+    return out
+
+
+def nesting_cells() -> list[Cell]:
+    """Nesting depth (0.21, B3): shallow values are ordinary, deep ones are written or refused, never a crash."""
+    out: list[Cell] = []
+    for depth in (1, 10, 100, 990, 2000, 20000):
+        for shape, text in (
+            ("open_brackets", "[" * depth),
+            ("lists", "[" * depth + "1" + "]" * depth),
+            ("dicts", '{"a":' * depth + "1" + "}" * depth),
+        ):
+            for position in ("body", "stdout_text", "stderr"):
+                if depth <= 100:
+                    category = (
+                        REWRITE if shape == "dicts" and position == "stdout_text" else ORDINARY
+                    )
+                    prefix = ""
+                else:
+                    category, prefix = BOUNDED, "nesting too deep"
+                out.append(
+                    Cell(
+                        id=f"nesting:{shape}:{depth}:{position}",
+                        rule="nesting",
+                        text=text,
+                        category=category,
+                        prefix=prefix,
+                        position=position,
+                    )
+                )
+    return out
+
+
 def cells() -> list[Cell]:
     """The whole sweep, in a fixed order, ids unique."""
     out = [
@@ -950,6 +1141,9 @@ def cells() -> list[Cell]:
         *mailbox_cells(),
         *mention_cells(),
         *carrier_cells(),
+        *route_cells(),
+        *language_word_cells(),
+        *nesting_cells(),
     ]
     ids = [c.id for c in out]
     assert len(ids) == len(set(ids)), [i for i in ids if ids.count(i) > 1][:5]
@@ -959,7 +1153,9 @@ def cells() -> list[Cell]:
 def sample(cell: Cell) -> Sample:
     """The row input that carries the cell's text at its position."""
     text, position = cell.text, cell.position
-    base = {"remote": cell.remote}
+    base: dict[str, Any] = {"remote": cell.remote}
+    if "login" in cell.extra:
+        base["login"] = cell.extra["login"]
     if position == "body":
         return Sample(body=text, **base)
     if position == "title":
@@ -1060,6 +1256,11 @@ def run_cell(cell: Cell, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Out
             verdict, detail = "LEAK", "written"
         elif not msg.startswith(cell.prefix):
             verdict, detail = "WRONG-REASON", msg[:60]
+    elif cell.category == BOUNDED and status == "REFUSED" and not msg.startswith(cell.prefix):
+        verdict, detail = "WRONG-REASON", msg[:60]
+    kept = [w for w in cell.extra.get("kept", ()) if w.casefold() not in blob]
+    if verdict == "ok" and status == "WRITTEN" and kept:
+        verdict, detail = "CORRUPTION", "route word replaced"
     if verdict == "ok" and offline:
         verdict, detail = "OFFLINE", offline[0][:80]
     return Outcome(status, msg[:80], verdict, detail)
@@ -1085,11 +1286,15 @@ def test_the_sweep_states_every_rule_and_names_at_least_two_thousand_cells() -> 
         "mailbox",
         "mentions",
         "carriers",
+        "routes",
+        "logins",
+        "nesting",
     }
     assert all(
-        c.category in (ORDINARY, REWRITE, PLANTED, RESIDUAL, RESIDUAL_UNCHANGED, REFUSED)
+        c.category in (ORDINARY, REWRITE, PLANTED, RESIDUAL, RESIDUAL_UNCHANGED, REFUSED, BOUNDED)
         for c in all_cells
     )
+    assert all(c.prefix for c in all_cells if c.category == BOUNDED)
     assert all(c.markers for c in all_cells if c.category == PLANTED)
     assert all(c.prefix for c in all_cells if c.category == REFUSED)
     assert sum(in_sample(c.id) for c in all_cells) >= 500

@@ -9627,6 +9627,111 @@ ROWS: tuple[Row, ...] = (
             text="Deployed Version: 1.8.0.252/linux and version = 1.8.0.252:8443 today"
         ),
     ),
+    Row(
+        id="v21_gitlab_group_route_namespace_replaced",
+        source="verify020/repro_blocking.py",
+        inp=Sample(body="see https://code.kvncloud.io/kvnteam/-/issues?label_name=bug now"),
+        outcome=Written(text="see https://forge.example.com/org/-/issues now"),
+        markers=("code.kvncloud.io", "kvnteam"),
+    ),
+    Row(
+        id="v21_gitlab_group_route_on_the_instance",
+        source="verify020/repro_blocking.py",
+        inp=Sample(
+            forge="gitlab",
+            remote=f"git@{FAKE_HOST}:{FAKE_NS}/{FAKE_REPO}.git",
+            body=f"see https://{FAKE_HOST}/kvnteam/-/epics/12 now",
+        ),
+        outcome=Written(text="see https://forge.example.com/org/-/epics/12 now"),
+        markers=(FAKE_HOST, "kvnteam"),
+    ),
+    Row(
+        id="v21_gitlab_group_route_proto_rel",
+        source="verify020/repro_blocking.py",
+        inp=Sample(body="see //code.kvncloud.io/kvnteam/-/issues now"),
+        outcome=Written(text="see //forge.example.com/org/-/issues now"),
+        markers=("code.kvncloud.io", "kvnteam"),
+    ),
+    Row(
+        id="v21_gitlab_groups_route_nested_namespace",
+        source="fable021/probe1.py",
+        inp=Sample(body="see https://gitlab.com/groups/kvnteam/kvnsub/-/epics now"),
+        outcome=Written(text="see https://forge.example.com/groups/org/-/epics now"),
+        markers=("kvnteam", "kvnsub"),
+    ),
+    Row(
+        id="v21_gitlab_user_route_snippets",
+        source="fable021/probe1.py",
+        inp=Sample(body="see https://code.kvncloud.io/users/kvnperson/-/snippets now"),
+        outcome=Written(text="see https://forge.example.com/users/org/-/snippets now"),
+        markers=("code.kvncloud.io", "kvnperson"),
+    ),
+    Row(
+        id="v21_gitlab_group_route_word_replaced_elsewhere",
+        source="fable021/probe2.py",
+        inp=Sample(body="see https://code.kvncloud.io/kvnteam/-/issues and ask kvnteam"),
+        outcome=Written(text="see https://forge.example.com/org/-/issues and ask org"),
+        markers=("code.kvncloud.io", "kvnteam"),
+    ),
+    Row(
+        id="v21_gitlab_jobs_route_names_no_one",
+        source="fable021/probe2.py",
+        inp=Sample(body="see https://code.kvncloud.io/-/jobs/5 and the jobs page"),
+        outcome=Written(text="see https://forge.example.com/-/jobs/5 and the jobs page"),
+        markers=("code.kvncloud.io",),
+    ),
+    Row(
+        id="v21_language_word_mention_only_NG4_13",
+        source="verify020/repro_blocking.py",
+        inp=Sample(body="cc @test please review"),
+        outcome=Written(text="cc @test please review"),
+        residual=True,
+    ),
+    Row(
+        id="v21_language_word_mention_only_in_title_NG4_13",
+        source="verify020/repro_blocking.py",
+        inp=Sample(title="fix: @link reported this", body="x"),
+        outcome=Written(text="x", title="fix: @link reported this"),
+        residual=True,
+    ),
+    Row(
+        id="v21_language_word_participant_login_replaced",
+        source="fable021/probe2.py",
+        inp=Sample(login="test", body="cc @test please review, test"),
+        outcome=Written(text="cc @author please review, author"),
+        markers=("@test",),
+    ),
+    Row(
+        id="v21_language_word_participant_login_replaced_doc_tag",
+        source="fable021/probe2.py",
+        inp=Sample(login="link", body="fix: @link reported this"),
+        outcome=Written(text="fix: @author reported this"),
+        markers=("@link",),
+    ),
+    Row(
+        id="v21_nesting_unterminated_brackets_in_body_written",
+        source="verify020/repro_blocking.py",
+        inp=Sample(body="[" * 20000),
+        outcome=Written(text="[" * 20000),
+    ),
+    Row(
+        id="v21_nesting_past_the_decoder_in_stdout_written",
+        source="fable021/probe2.py",
+        inp=Sample(raw_text_stdout="[" * 20000 + "]" * 20000),
+        outcome=Written(text="[" * 20000 + "]" * 20000),
+    ),
+    Row(
+        id="v21_nesting_decodable_not_walkable_in_body_refused",
+        source="fable021/probe2.py",
+        inp=Sample(body="[" * 990 + "]" * 990),
+        outcome=Refused(prefix="nesting too deep"),
+    ),
+    Row(
+        id="v21_nesting_decodable_not_walkable_in_stdout_refused",
+        source="fable021/probe2.py",
+        inp=Sample(raw_text_stdout='{"a":' * 990 + "1" + "}" * 990),
+        outcome=Refused(prefix="nesting too deep"),
+    ),
 )
 
 
@@ -10037,11 +10142,11 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
     assert all(_is_planted(row) for row in residual)
     refused = [row for row in ROWS if isinstance(row.outcome, Refused)]
     assert (len(ROWS), len(planted), len(ordinary), len(refused), len(residual)) == (
-        800,
-        545,
-        255,
-        71,
-        16,
+        815,
+        558,
+        257,
+        73,
+        18,
     )
     assert all(not row.residual for row in refused)
     for row in residual:
