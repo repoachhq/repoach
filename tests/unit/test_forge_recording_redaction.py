@@ -5385,6 +5385,9 @@ def test_a_web_ide_route_reads_its_project_path() -> None:
     )
     lone = identity(["-", "ide", "project", "zqg"])
     assert lone == recording.PathIdentity(["-", "ide", "project", "org"], ("zqg",))
+    assert identity(["-", "ide", "project", "zqg", "edit", "main", ""]) == recording.PathIdentity(
+        ["-", "ide", "project", "org", "edit", "main", ""], ("zqg",)
+    )
     assert identity(["-", "ide", "project", "edit", "zqr", "edit", "main"]).namespace == ("edit",)
     assert identity(["-", "IDE", "PROJECT", "zqg", "zqr"]).repository == "zqr"
     for path in (
@@ -5456,7 +5459,9 @@ def test_an_owner_root_reads_the_identity_slots_of_its_grammar() -> None:
         "overview",
     ]
     assert (project.namespace, project.repository) == (("ZQKEY",), "zqr")
-    assert identity(["Projects", "ZQKEY", "REPOS", "zqr"]).repository == "zqr"
+    assert identity(["Projects", "ZQKEY", "REPOS", "zqr"]) == recording.PathIdentity(
+        ["Projects", "org", "REPOS", "project"], ("ZQKEY",), "zqr"
+    )
     assert identity(["users", "zqu", "REPOS", "zqr"]).repository == "zqr"
     team = identity(["orgs", "zqo", "teams", "zqt", "members"])
     assert team == recording.PathIdentity(
@@ -5547,25 +5552,28 @@ def test_a_package_tarball_before_a_dash_names_no_one() -> None:
         ["lodash", "-", "lodash-4.17.21-beta.1.tgz"],
         ["lodash", "-", "lodash-4.17.21-RC1.tgz"],
         ["lodash", "-", "lodash-1.0.0+build.5.tgz"],
+        ["lodash", "-", "lodash-1.tgz"],
         ["lodash", "-", "lodash-4.17.21.tgz", ""],
         ["lodash", "-", "lodash-4.17.21.tgz", "x"],
     ):
         assert identity(path) == recording.PathIdentity(path), path
-        assert recording._package_tarball([s for s in path if s], path.index("-")), path
+        assert recording._package_tarball([s for s in path if s], path.index("-")) is True, path
     for path in (
         ["lodash", "-", "other-4.17.21.tgz"],
         ["lodash", "-", "lodash-4.17.21.zip"],
         ["lodash", "-", "lodash-x.tgz"],
         ["lodash", "-", "lodash-.tgz"],
         ["lodash", "-", "lodash4.17.21.tgz"],
+        ["lodash", "-", "lodash_4.17.21.tgz"],
+        ["lodash", "-", "lodasx-4.17.21.tgz"],
         ["lodash", "-", "lodash-4.17.21.tgz.sig"],
         ["lodash", "-", "lodash-4.17 21.tgz"],
         ["lodash", "-"],
     ):
         assert identity(path).namespace == ("lodash",), path
-        assert not recording._package_tarball(path, 1), path
-    assert not recording._package_tarball(["-", "x-1.tgz", "x"], 0)
-    assert not recording._package_tarball(["x", "-", "x-1.tgz"], 2)
+        assert recording._package_tarball(path, 1) is False, path
+    assert recording._package_tarball(["-", "x-1.tgz", "x"], 0) is False
+    assert recording._package_tarball(["x", "-", "x-1.tgz"], 2) is False
     assert closure.is_public_host("registry.yarnpkg.com")
     assert closure.is_public_host("registry.npmmirror.com")
     assert recording._kept_host("registry.yarnpkg.com")
