@@ -5733,6 +5733,10 @@ def test_a_gitlab_npm_scope_is_a_root_group() -> None:
     assert encoded == recording.PathIdentity(
         ["api", "v4", "projects", "org%2Fproject", "packages", "npm", "@org", *tgz], ("zqg",), "zqr"
     )
+    upper = identity(["api", "v4", "Projects", "zqg%2Fzqr", "packages", "npm", "@zqg", *tgz])
+    assert upper == recording.PathIdentity(
+        ["api", "v4", "Projects", "org%2Fproject", "packages", "npm", "@org", *tgz], ("zqg",), "zqr"
+    )
     text = recording.redact_urls_in_text
     for body, expected in (
         (
