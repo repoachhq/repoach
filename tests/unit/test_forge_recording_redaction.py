@@ -5442,6 +5442,9 @@ def test_an_owner_root_reads_the_identity_slots_of_its_grammar() -> None:
     personal = identity(["users", "zqu", "repos", "zqr.git", "browse", ""])
     assert personal.segments == ["users", "org", "repos", "project.git", "browse", ""]
     assert (personal.namespace, personal.repository) == (("zqu",), "zqr")
+    assert identity(["projects", "ZQKEY", "repos", "zqr"]) == recording.PathIdentity(
+        ["projects", "org", "repos", "project"], ("ZQKEY",), "zqr"
+    )
     project = identity(["projects", "ZQKEY", "repos", "zqr", "pull-requests", "5", "overview"])
     assert project.segments == [
         "projects",
@@ -5561,7 +5564,8 @@ def test_a_package_tarball_before_a_dash_names_no_one() -> None:
     ):
         assert identity(path).namespace == ("lodash",), path
         assert not recording._package_tarball(path, 1), path
-    assert not recording._package_tarball(["-", "x-1.tgz"], 0)
+    assert not recording._package_tarball(["-", "x-1.tgz", "x"], 0)
+    assert not recording._package_tarball(["x", "-", "x-1.tgz"], 2)
     assert closure.is_public_host("registry.yarnpkg.com")
     assert closure.is_public_host("registry.npmmirror.com")
     assert recording._kept_host("registry.yarnpkg.com")
