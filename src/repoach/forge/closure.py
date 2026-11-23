@@ -461,6 +461,7 @@ PUBLIC_SUFFIXES: frozenset[str] = frozenset(
         "nuget.org",
         "npmjs.com",
         "npmjs.org",
+        "npmmirror.com",
         "pypi.org",
         "pythonhosted.org",
         "python.org",
@@ -470,9 +471,10 @@ PUBLIC_SUFFIXES: frozenset[str] = frozenset(
         "stackoverflow.com",
         "unpkg.com",
         "wikipedia.org",
+        "yarnpkg.com",
     }
 )
-"""Registrable suffixes of public documentation, package and CDN hosts (option A)."""
+"""Registrable suffixes of public documentation, package and CDN hosts (option A; 0.22: the yarn and npmmirror registries)."""
 
 _CLASS_WORD_LOCAL = re.compile(r"(?:maintainer|author|bot|agent|service)(?:-[1-9][0-9]*)?")
 
