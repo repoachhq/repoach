@@ -2495,6 +2495,12 @@ def known_values(
     A login known only from a mention and shorter than
     :data:`NEEDLE_MIN_LENGTH` is no value (0.20): the convenience layer
     replaces its ``@`` form and its bare word is too short to be a token.
+    The remote and an argv API path (:func:`_api_project`) name a
+    repository by construction (``path_identity(remote=True)``, 0.24):
+    their namespace is every segment but the last whatever the words, and
+    a namespace of two segments or more is a value as each of its leading
+    paths too (``<a>/<b>`` -> ``org``), so a text path the route grammar
+    keeps as it stands is written as the grammar writes any other.
 
     Args:
         raw: The exchanges as the forge printed them, the method's
@@ -2537,6 +2543,11 @@ def known_values(
             return
         for segment in identity.namespace:
             _add("segment", segment, PLACEHOLDER_NAMESPACE, hard=hard)
+        if remote:
+            for end in range(2, len(identity.namespace) + 1):
+                _add(
+                    "segment", "/".join(identity.namespace[:end]), PLACEHOLDER_NAMESPACE, hard=hard
+                )
         if identity.repository:
             _add("segment", identity.repository, PLACEHOLDER_PROJECT, hard=hard)
 
@@ -2617,7 +2628,7 @@ def known_values(
                         _segments([s for s in parts.path.split("/") if s], hard=True)
 
     for _path, text in strings:
-        _segments(_api_project(text), hard=True)
+        _segments(_api_project(text), hard=True, remote=True)
         for found in _ENCODED_PROJECT_RE.finditer(text):
             _segments(unquote(found.group("path")).split("/"), hard=False)
         for form in closure.decoded_forms(text):

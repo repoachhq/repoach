@@ -5666,7 +5666,7 @@ def test_a_remote_path_names_a_repository_by_construction() -> None:
             "ssh://git@git.zqcorp.io:2222/uploads/zqsub/zqmainrepo.git",
             "uploads",
             "img https://git.zqcorp.io/uploads/zqsub/zqmainrepo/-/raw/main/a.png now",
-            "img https://forge.example.com/org/org/project/-/raw/main/a.png now",
+            "img https://forge.example.com/org/project/-/raw/main/a.png now",
         ),
     ):
         found = needles(_one_call({"body": body}), roles={}, remote=remote)
@@ -5683,6 +5683,88 @@ def test_a_remote_path_names_a_repository_by_construction() -> None:
     for remote in ("git@github.com:jwt/zqmainrepo.git", "git@git.zqcorp.io:s/zqmainrepo.git"):
         with pytest.raises(recording.NeedleError, match="needle segment 1: too short"):
             needles(_one_call({"body": "x"}), roles={}, remote=remote)
+
+
+def test_every_hard_identity_path_reads_a_repository_path_by_construction() -> None:
+    """D7 sources 1 and 2 (0.24, B1-a, B1-b, N13): the recorded remote and an argv API path (``repos/<o>/<r>/…``, ``projects/<ns>%2F<r>/…``) name a repository by construction, the namespace every segment but the last whatever the words; a namespace of two segments or more is a value as a whole path too, so a text path led by a reserved word that is that namespace is written ``org/project`` live and offline alike; a lone remote segment is the namespace, a reserved word included; a structured URL field keeps the route grammar."""
+    identity = recording.path_identity
+    assert identity(["assets"], remote=True) == recording.PathIdentity(["org"], ("assets",))
+    assert identity(["uploads", ""], remote=True) == recording.PathIdentity(
+        ["org", ""], ("uploads",)
+    )
+    found = needles(
+        _one_call({"body": "see assets now"}), roles={}, remote="https://git.zqcorp.io/assets"
+    )
+    assert _kinds(found, "segment") == ["assets"]
+    assert recording.replace_known("see assets now", found) == "see org now"
+    for word in ("marketplace", "uploads", "settings", "assets"):
+        remote = f"git@git.zqcorp.io:{word}/kvnsub/zqmainrepo.git"
+        found = needles(_one_call({"body": "x"}), roles={}, remote=remote)
+        assert _kinds(found, "segment") == [word, "kvnsub", f"{word}/kvnsub", "zqmainrepo"], word
+        assert dict(found.tokens)[f"{word}/kvnsub"] == "org", word
+        for body, expected in (
+            (
+                f"see https://git.zqcorp.io/{word}/kvnsub/zqmainrepo/-/merge_requests/1 and kvnsub",
+                "see https://forge.example.com/org/project/-/merge_requests/1 and org",
+            ),
+            (
+                f"see https://git.zqcorp.io/{word}/kvnsub/zqmainrepo and https://git.zqcorp.io/{word}/kvnsub",
+                "see https://forge.example.com/org/project and https://forge.example.com/org",
+            ),
+            (
+                f"clone git@git.zqcorp.io:{word}/kvnsub/zqmainrepo.git now",
+                "clone git@forge.example.com:org/project.git now",
+            ),
+        ):
+            written = recording.replace_known(recording.redact_urls_in_text(body), found)
+            assert written == expected, body
+            assert recording.redact_urls_in_text(written) == written, body
+    deep = needles(
+        _one_call({"body": "x"}),
+        roles={},
+        remote="git@git.zqcorp.io:help/kvnsub/kvnleaf/zqmainrepo.git",
+    )
+    assert _kinds(deep, "segment") == [
+        "help",
+        "kvnsub",
+        "kvnleaf",
+        "help/kvnsub",
+        "help/kvnsub/kvnleaf",
+        "zqmainrepo",
+    ]
+    body = "see https://git.zqcorp.io/help/kvnsub/-/epics/1 and https://git.zqcorp.io/help/kvnsub/kvnleaf/zqmainrepo/-/issues/2"
+    written = recording.replace_known(recording.redact_urls_in_text(body), deep)
+    assert (
+        written
+        == "see https://forge.example.com/org/-/epics/1 and https://forge.example.com/org/project/-/issues/2"
+    )
+    assert recording.redact_urls_in_text(written) == written
+    flat = needles(
+        _one_call({"body": "x"}), roles={}, remote="git@github.com:zqgroup/zqmainrepo.git"
+    )
+    assert _kinds(flat, "segment") == ["zqgroup", "zqmainrepo"]
+    for word in ("assets", "help", "uploads", "settings", "repos", "users", "groups"):
+        for args, segments in (
+            (["api", f"repos/{word}/kvnbilling/pulls/5/comments"], [word, "kvnbilling"]),
+            (["api", f"projects/{word}%2Fkvnbilling/merge_requests/1/notes"], [word, "kvnbilling"]),
+            (
+                ["api", f"api/v4/projects/{word}%2Fkvnsub%2Fkvnbilling/issues"],
+                [word, "kvnsub", f"{word}/kvnsub", "kvnbilling"],
+            ),
+        ):
+            found = needles(_one_call({"body": "ok"}, args), roles={})
+            assert _kinds(found, "segment") == segments, args
+            written = recording.replace_known(args[1], found)
+            assert word not in written and "kvnbilling" not in written, args
+    for args in (["api", "repos/jwt/kvnbilling/pulls"], ["api", "projects/s%2Fkvnbilling/notes"]):
+        with pytest.raises(recording.NeedleError, match="needle segment 1: too short"):
+            needles(_one_call({"body": "ok"}, args), roles={})
+    found = needles(
+        _one_call({"body": "x", "web_url": "https://git.zqcorp.io/assets/kvnsub/-/epics/1"}),
+        roles={},
+        remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+    )
+    assert _kinds(found, "segment") == ["zqgroup", "zqmainrepo"]
 
 
 def test_a_gitlab_npm_scope_is_a_root_group() -> None:
