@@ -1150,6 +1150,25 @@ _IDE_ROUTES: frozenset[str] = frozenset({"edit", "blob", "tree", "merge_requests
 _TARBALL_VERSION_RE = re.compile(r"^[0-9][0-9a-z.+-]*$", re.I)
 """The version of an npm tarball name, ``<pkg>-<version>.tgz``: a digit first, then digits, letters, dots, ``+`` and ``-`` (0.22)."""
 
+_NPM_SCOPE_RE = re.compile(r"^@(?P<scope>[^%]+)", re.I)
+"""The scope of an npm package segment, ``@<scope>`` or the encoded ``@<scope>%2F<pkg>`` (0.23)."""
+
+
+def _npm_registry(core: list[str]) -> int | None:
+    """The index of the first segment after ``packages/npm`` in a GitLab API path, else ``None`` (0.23).
+
+    GitLab's npm registry is ``api/v<N>/packages/npm/…`` on the instance,
+    ``api/v<N>/projects/<id>/packages/npm/…`` and
+    ``api/v<N>/groups/<id>/-/packages/npm/…``: by construction an
+    ``@<scope>`` there is a root group of the instance.
+    """
+    if len(core) < 4 or core[0].casefold() != "api" or not _API_VERSION_RE.match(core[1]):
+        return None
+    for i in range(2, len(core) - 1):
+        if core[i].casefold() == "packages" and core[i + 1].casefold() == "npm":
+            return i + 2
+    return None
+
 
 def _ide_route(core: list[str]) -> bool:
     """Whether ``core`` is a GitLab Web IDE route, ``-/ide/project/<path>/…`` (0.22)."""
@@ -1182,7 +1201,7 @@ def _package_tarball(core: list[str], dash: int) -> bool:
     return _TARBALL_VERSION_RE.match(tarball[len(package) + 1 : -4]) is not None
 
 
-def path_identity(segments: list[str]) -> PathIdentity:
+def path_identity(segments: list[str], *, remote: bool = False) -> PathIdentity:
     """Split a forge path's segments into its placeholder form, its namespace and its repository.
 
     The one reading of a forge path: :func:`redact_url` writes
@@ -1200,13 +1219,21 @@ def path_identity(segments: list[str]) -> PathIdentity:
     is never an identity, a Web IDE route reads its project path
     (``-/ide/project/<ns>/<repo>/edit/…``), an owner root reads the
     identity slots of its grammar (:data:`_IDENTITY_SLOTS`:
-    ``users/<u>/repos/<r>``, ``orgs/<o>/teams/<t>``), and a package
-    tarball before a ``-`` (``<pkg>/-/<pkg>-<version>.tgz``) names no one.
+    ``users/<u>/repos/<r>``, ``orgs/<o>/teams/<t>``), a package
+    tarball before a ``-`` (``<pkg>/-/<pkg>-<version>.tgz``) names no one,
+    and the ``@<scope>`` of GitLab's npm registry (``api/v4/…/packages/npm/``,
+    :func:`_npm_registry`) is a root group (0.23). The route grammars are
+    those of a URL path; a ``remote`` path names a repository by
+    construction (``<ns>/…/<repo>``, 0.23) and reads that way whatever its
+    first word, so a recorded remote whose namespace is a reserved word
+    (``jwt``, ``assets``, real GitHub accounts) still yields its identity.
     """
     core = [s for s in segments if s]
     if not core:
         return PathIdentity(segments)
     trailing = [""] if segments[-1] == "" else []
+    if remote:
+        return _repository_path(core, trailing)
     if _ide_route(core):
         stop = next(
             (i for i in range(4, len(core)) if core[i].casefold() in _IDE_ROUTES), len(core)
@@ -1221,13 +1248,28 @@ def path_identity(segments: list[str]) -> PathIdentity:
             tuple(project[:-1]),
             _bare(project[-1]),
         )
+    npm = _npm_registry(core)
+    if npm is not None:
+        head = core[: npm - 2]
+        prefix = (
+            path_identity(head)
+            if head[2:3] and head[2].casefold() in ("projects", "groups")
+            else PathIdentity(head)
+        )
+        scopes = [m.group("scope") for s in core[npm:] if (m := _NPM_SCOPE_RE.match(s))]
+        rest = [_NPM_SCOPE_RE.sub(f"@{PLACEHOLDER_NAMESPACE}", s) for s in core[npm:]]
+        return PathIdentity(
+            [*prefix.segments, *core[npm - 2 : npm], *rest, *trailing],
+            tuple(dict.fromkeys([*prefix.namespace, *scopes])),
+            prefix.repository,
+        )
     if core[0].casefold() in _RESERVED_ROUTE_WORDS:
         return PathIdentity([*core, *trailing])
     if (
         len(core) > 3
         and core[0].casefold() == "api"
         and _API_VERSION_RE.match(core[1])
-        and core[2] in _API_RESOURCES
+        and core[2].casefold() in _API_RESOURCES
     ):
         inner = path_identity([*core[2:], *trailing])
         return PathIdentity([*core[:2], *inner.segments], inner.namespace, inner.repository)
@@ -1246,13 +1288,13 @@ def path_identity(segments: list[str]) -> PathIdentity:
                 _bare(parts[-1]),
             )
         return PathIdentity([*core, *trailing])
-    if core[0] == "repos" and len(core) >= 3:
+    if core[0].casefold() == "repos" and len(core) >= 3:
         return PathIdentity(
-            ["repos", PLACEHOLDER_NAMESPACE, _project(core[2]), *core[3:], *trailing],
+            [core[0], PLACEHOLDER_NAMESPACE, _project(core[2]), *core[3:], *trailing],
             (core[1],),
             _bare(core[2]),
         )
-    if (core[0] in _API_RESOURCES and len(core) >= 2) or _project_root(core):
+    if (core[0].casefold() in _API_RESOURCES and len(core) >= 2) or _project_root(core):
         stop = core.index("-") if "-" in core else 2
         owner = core[1:stop]
         rest = core[stop:]
@@ -1290,6 +1332,18 @@ def path_identity(segments: list[str]) -> PathIdentity:
             repository = _bare(rest[0])
             rest = [_project(rest[0]), *rest[1:]]
         return PathIdentity([PLACEHOLDER_NAMESPACE, *rest, *trailing], (core[0],), repository)
+    return _repository_path(core, trailing)
+
+
+def _repository_path(core: list[str], trailing: list[str]) -> PathIdentity:
+    """The generic reading of a repository path: every segment but the last is the namespace, the last the repository (0.23).
+
+    A lone segment is a namespace. The route grammars of
+    :func:`path_identity` are not applied: this is the reading of a remote,
+    and of a URL path no grammar claimed.
+    """
+    if len(core) == 1:
+        return PathIdentity([PLACEHOLDER_NAMESPACE, *trailing], (core[0],))
     return PathIdentity(
         [PLACEHOLDER_NAMESPACE, _project(core[-1]), *trailing],
         tuple(core[:-1]),
@@ -2477,8 +2531,8 @@ def known_values(
         if value and not (kind == "segment" and _names_no_one(value)):
             (strict if hard else soft)[kind].append((value, token))
 
-    def _segments(path: Sequence[str], *, hard: bool) -> None:
-        identity = path_identity(list(path))
+    def _segments(path: Sequence[str], *, hard: bool, remote: bool = False) -> None:
+        identity = path_identity(list(path), remote=remote)
         if not hard and identity.repository is None and not _api_route(path):
             return
         for segment in identity.namespace:
@@ -2523,7 +2577,7 @@ def known_values(
     for host in sorted(FORGE_HOSTS | own):
         _host(host)
     if remote_path:
-        _segments(remote_path, hard=True)
+        _segments(remote_path, hard=True, remote=True)
 
     strings = fixture_strings(raw, "")
     for node in _walk_dicts(raw):
