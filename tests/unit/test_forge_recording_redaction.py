@@ -5767,6 +5767,25 @@ def test_every_hard_identity_path_reads_a_repository_path_by_construction() -> N
     assert _kinds(found, "segment") == ["zqgroup", "zqmainrepo"]
 
 
+def test_a_url_field_path_learns_no_joined_namespace() -> None:
+    """D7 source 2 (0.25, V09): only a path read by construction (the remote, an argv API path) makes its namespace of two segments or more a value as a whole path; a structured URL field names its segments one by one, so a text path sharing its first segments keeps its own boundaries."""
+    found = needles(
+        _one_call(
+            {
+                "body": "see kvnteam/kvnsub-old and kvnteam/kvnsub now",
+                "web_url": "https://git.zqcorp.io/kvnteam/kvnsub/kvnbilling/-/merge_requests/42",
+            }
+        ),
+        roles={},
+        remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+    )
+    segments = _kinds(found, "segment")
+    assert segments == ["zqgroup", "zqmainrepo", "kvnteam", "kvnsub", "kvnbilling"]
+    assert not [value for value in segments if "/" in value]
+    written = recording.replace_known("see kvnteam/kvnsub-old and kvnteam/kvnsub now", found)
+    assert written == "see org/org-old and org/org now"
+
+
 def test_only_an_argv_string_is_read_as_an_api_path() -> None:
     """D7 source 1 (0.25): ``_api_project`` reads the argv of a recorded call and no other string; a body, a field or a review comment's ``path`` led by ``repos/<word>/…`` or ``projects/<word>%2F…`` is text, so neither a reserved word nor a plain directory name is learnt from it, while the same path in argv is still read by construction."""
     texts = (
