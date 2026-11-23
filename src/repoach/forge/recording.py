@@ -1080,6 +1080,107 @@ _API_VERSION_RE = re.compile(r"^v[0-9]+$", re.I)
 _API_RESOURCES: tuple[str, ...] = ("repos", "users", "orgs", "apps", "groups")
 """First path segments of a forge route that name an owner next: ``repos/<o>/<r>``, ``users/<u>``, GitLab's ``groups/<g>`` (0.21)."""
 
+_IDENTITY_SLOTS: dict[str, tuple[str, str]] = {
+    "users": ("repos", PLACEHOLDER_PROJECT),
+    "projects": ("repos", PLACEHOLDER_PROJECT),
+    "orgs": ("teams", PLACEHOLDER_NAMESPACE),
+}
+"""After an owner root, the route word that opens the grammar's next identity slot and the placeholder written there (0.22).
+
+Bitbucket Server's ``users/<u>/repos/<r>`` and ``projects/<KEY>/repos/<r>``
+name a repository; GitHub's ``orgs/<o>/teams/<t>`` names a team, a
+namespace of people.
+"""
+
+_RESERVED_ROUTE_WORDS: frozenset[str] = frozenset(
+    {
+        "-",
+        ".well-known",
+        "admin",
+        "assets",
+        "dashboard",
+        "explore",
+        "files",
+        "help",
+        "import",
+        "jwt",
+        "oauth",
+        "public",
+        "s",
+        "search",
+        "snippets",
+        "uploads",
+        "codespaces",
+        "collections",
+        "join",
+        "login",
+        "logout",
+        "marketplace",
+        "notifications",
+        "organizations",
+        "pricing",
+        "sessions",
+        "settings",
+        "topics",
+        "trending",
+        "attachments",
+        "avatars",
+        "milestones",
+        "repo",
+        "account",
+        "plugins",
+    }
+)
+"""First path segments a forge reserves for its own pages: never an identity (0.22).
+
+GitLab's top-level words (``uploads/-/system/…``, ``help/…``, ``-/jobs/5``;
+the owner's list), then the words GitHub (``marketplace/actions/…``,
+``settings/…``), Gitea (``repo/create``, ``milestones``) and Bitbucket
+(``account/…``, ``plugins/servlet/…``) reserve and let no user or group
+take; ``user`` stays out, since ``<host>/user/<repo>`` is the stand-in of
+every documentation example and is still rewritten. A path led by a
+reserved word names no one: nothing is learnt and the word is written as
+it stands. An identity that follows such a word (GitLab's ``s/<user>``
+redirect and admin area) is not read (NG4-14).
+"""
+
+_IDE_ROUTES: frozenset[str] = frozenset({"edit", "blob", "tree", "merge_requests"})
+"""The words that end the project path of a GitLab Web IDE route, ``-/ide/project/<path>/<word>/…`` (0.22)."""
+
+_TARBALL_VERSION_RE = re.compile(r"^[0-9][0-9a-z.+-]*$", re.I)
+"""The version of an npm tarball name, ``<pkg>-<version>.tgz``: a digit first, then digits, letters, dots, ``+`` and ``-`` (0.22)."""
+
+
+def _ide_route(core: list[str]) -> bool:
+    """Whether ``core`` is a GitLab Web IDE route, ``-/ide/project/<path>/…`` (0.22)."""
+    return (
+        len(core) > 3
+        and core[0] == "-"
+        and core[1].casefold() == "ide"
+        and core[2].casefold() == "project"
+    )
+
+
+def _project_root(core: list[str]) -> bool:
+    """Whether ``core`` is a Bitbucket Server project route, ``projects/<KEY>/repos/<r>/…`` (0.22)."""
+    return core[0].casefold() == "projects" and len(core) > 3 and core[2].casefold() == "repos"
+
+
+def _package_tarball(core: list[str], dash: int) -> bool:
+    """Whether the ``-`` at ``dash`` separates an npm package from its tarball, ``<pkg>/-/<pkg>-<version>.tgz`` (0.22).
+
+    The grammar of every npm-compatible registry — npmjs, yarnpkg,
+    npmmirror, a private ``npm.<corp>``, a Nexus ``repository/<repo>/``
+    prefix — scoped (``@scope/<pkg>/-/<pkg>-<version>.tgz``) or not: the
+    package names no one, so it is neither a namespace nor a repository.
+    """
+    if dash < 1 or dash + 1 >= len(core):
+        return False
+    package, tarball = core[dash - 1], core[dash + 1]
+    if not tarball.startswith(package + "-") or not tarball.endswith(".tgz"):
+        return False
+    return _TARBALL_VERSION_RE.match(tarball[len(package) + 1 : -4]) is not None
+
 
 def path_identity(segments: list[str]) -> PathIdentity:
     """Split a forge path's segments into its placeholder form, its namespace and its repository.
@@ -1094,12 +1195,34 @@ def path_identity(segments: list[str]) -> PathIdentity:
     an identity (0.21, B1): one segment is a namespace (``<group>/-/issues``,
     ``<user>/-/snippets``), two or more are the namespace and the
     repository, and after an owner root (``groups/<g>/<sub>/-/epics``)
-    every segment up to the separator is the namespace.
+    every segment up to the separator is the namespace. The grammars are
+    a table (0.22): a reserved route word (:data:`_RESERVED_ROUTE_WORDS`)
+    is never an identity, a Web IDE route reads its project path
+    (``-/ide/project/<ns>/<repo>/edit/…``), an owner root reads the
+    identity slots of its grammar (:data:`_IDENTITY_SLOTS`:
+    ``users/<u>/repos/<r>``, ``orgs/<o>/teams/<t>``), and a package
+    tarball before a ``-`` (``<pkg>/-/<pkg>-<version>.tgz``) names no one.
     """
     core = [s for s in segments if s]
     if not core:
         return PathIdentity(segments)
     trailing = [""] if segments[-1] == "" else []
+    if _ide_route(core):
+        stop = next(
+            (i for i in range(4, len(core)) if core[i].casefold() in _IDE_ROUTES), len(core)
+        )
+        project = core[3:stop]
+        if len(project) == 1:
+            return PathIdentity(
+                [*core[:3], PLACEHOLDER_NAMESPACE, *core[stop:], *trailing], (project[0],)
+            )
+        return PathIdentity(
+            [*core[:3], PLACEHOLDER_NAMESPACE, _project(project[-1]), *core[stop:], *trailing],
+            tuple(project[:-1]),
+            _bare(project[-1]),
+        )
+    if core[0].casefold() in _RESERVED_ROUTE_WORDS:
+        return PathIdentity([*core, *trailing])
     if (
         len(core) > 3
         and core[0].casefold() == "api"
@@ -1129,26 +1252,37 @@ def path_identity(segments: list[str]) -> PathIdentity:
             (core[1],),
             _bare(core[2]),
         )
-    if core[0] in _API_RESOURCES and len(core) >= 2:
+    if (core[0] in _API_RESOURCES and len(core) >= 2) or _project_root(core):
         stop = core.index("-") if "-" in core else 2
         owner = core[1:stop]
+        rest = core[stop:]
+        namespace, repository = tuple(owner), None
+        slot = _IDENTITY_SLOTS.get(core[0].casefold())
+        if slot is not None and len(rest) > 1 and rest[0].casefold() == slot[0]:
+            if slot[1] == PLACEHOLDER_PROJECT:
+                repository = _bare(rest[1])
+                rest = [rest[0], _project(rest[1]), *rest[2:]]
+            else:
+                namespace = (*namespace, rest[1])
+                rest = [rest[0], slot[1], *rest[2:]]
         return PathIdentity(
-            [core[0], *([PLACEHOLDER_NAMESPACE] if owner else []), *core[stop:], *trailing],
-            tuple(owner),
+            [core[0], *([PLACEHOLDER_NAMESPACE] if owner else []), *rest, *trailing],
+            namespace,
+            repository,
         )
     if core[0].casefold() == "projects" and len(core) >= 2 and core[1].isdigit():
         return PathIdentity([*core, *trailing])
     if "-" in core:
         dash = core.index("-")
+        if _package_tarball(core, dash):
+            return PathIdentity([*core, *trailing])
         if dash == 1:
             return PathIdentity([PLACEHOLDER_NAMESPACE, *core[1:], *trailing], (core[0],))
-        if dash >= 2:
-            return PathIdentity(
-                [PLACEHOLDER_NAMESPACE, _project(core[dash - 1]), *core[dash:], *trailing],
-                tuple(core[: dash - 1]),
-                _bare(core[dash - 1]),
-            )
-        return PathIdentity([*core, *trailing])
+        return PathIdentity(
+            [PLACEHOLDER_NAMESPACE, _project(core[dash - 1]), *core[dash:], *trailing],
+            tuple(core[: dash - 1]),
+            _bare(core[dash - 1]),
+        )
     if len(core) < 3 or core[2] in _GITHUB_ROUTES:
         rest = core[1:]
         repository = None
@@ -2236,12 +2370,14 @@ def _follow_segments(segments: list[str], *, full: bool) -> list[str]:
     In a URL on the recorded instance every segment counts, since the
     project's pages sit under its repository; after any other lead
     (``//cdn.example.io/<ns>/<repo>/app.js``, a bare host, another
-    host's URL) only the first two do, so the file name stays.
+    host's URL) only the first two do, so the file name stays — unless
+    the path is a route grammar whose identity sits deeper (an API root,
+    a GitLab ``-``, Bitbucket Server's ``projects/<KEY>/repos/<r>``, 0.22).
     """
     named = [s for s in segments if s]
     if not named:
         return []
-    if full or "-" in named or named[0].casefold() in _API_ROOTS:
+    if full or "-" in named or named[0].casefold() in _API_ROOTS or _project_root(named):
         return segments
     return named[:2]
 
@@ -2252,12 +2388,15 @@ def _api_route(path: Sequence[str]) -> bool:
     A text path names someone only with both a namespace and a
     repository, or through such a root, or before a GitLab ``/-/``
     separator (``<group>/-/issues``, 0.21 B1: everything before ``-`` is
-    an identity); a lone segment after a host (``/docs``, ``/health``,
+    an identity), or through a Web IDE route (``-/ide/project/<ns>``,
+    0.22); a lone segment after a host (``/docs``, ``/health``,
     ``/explore``) is a page, not an identity (D7 source 3, NG4-11), so
     the word is not learnt and not replaced wherever else it stands.
     """
     named = [s for s in path if s]
-    return bool(named) and (named[0].casefold() in _API_ROOTS or "-" in named[1:])
+    return bool(named) and (
+        named[0].casefold() in _API_ROOTS or "-" in named[1:] or _ide_route(named)
+    )
 
 
 def _path_after(text: str, end: int) -> list[str]:

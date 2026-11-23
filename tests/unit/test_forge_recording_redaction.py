@@ -5249,6 +5249,342 @@ def test_a_lone_path_segment_after_a_host_is_a_page_not_a_namespace() -> None:
     assert "zqother" in _kinds(group_route, "segment")
 
 
+def test_a_reserved_route_word_is_never_an_identity() -> None:
+    """D1b, D7 source 3 (0.22): a path led by a word a forge reserves names no one on any host; the word is written, never learnt; an identity after one is NG4-14."""
+    identity = recording.path_identity
+    words = recording._RESERVED_ROUTE_WORDS
+    gitlab = {
+        "uploads",
+        "help",
+        "explore",
+        "admin",
+        "dashboard",
+        "snippets",
+        "search",
+        "public",
+        "s",
+        "files",
+        "assets",
+        "import",
+        "oauth",
+        "jwt",
+        ".well-known",
+        "-",
+    }
+    assert gitlab <= words
+    assert {"marketplace", "settings", "login", "repo", "account", "plugins"} <= words
+    assert words.isdisjoint(recording._API_ROOTS) and "projects" not in words
+    assert "user" not in words
+    assert redact_url("https://github.com/user/repo") == "https://forge.example.com/org/project"
+    for word in sorted(words):
+        for path in (
+            [word, "zqx", "zqy"],
+            [word, "-", "system", "zqx"],
+            [word],
+            [word, "zqx", "zqy", ""],
+            [word.upper(), "zqx", "zqy"],
+        ):
+            assert identity(path) == recording.PathIdentity(path), path
+        assert redact_url(f"https://code.kvncloud.io/{word}/zqx/zqy") == (
+            f"https://forge.example.com/{word}/zqx/zqy"
+        )
+    text = recording.redact_urls_in_text
+    for body, expected in (
+        (
+            "see https://code.kvncloud.io/uploads/-/system/user/avatar/42/avatar.png and the uploads folder",
+            "see https://forge.example.com/uploads/-/system/user/avatar/42/avatar.png and the uploads folder",
+        ),
+        (
+            "see https://gitea.kvncorp.net/repo/create and https://gitea.kvncorp.net/milestones/x/y now",
+            "see https://forge.example.com/repo/create and https://forge.example.com/milestones/x/y now",
+        ),
+        (
+            "see https://github.com/marketplace/actions/checkout and the marketplace",
+            "see https://forge.example.com/marketplace/actions/checkout and the marketplace",
+        ),
+        (
+            "see https://bitbucket.org/account/signin/ and the account page",
+            "see https://forge.example.com/account/signin/ and the account page",
+        ),
+        (
+            "see https://code.kvncloud.io/-/snippets/42 and https://code.kvncloud.io/help/user/profile now",
+            "see https://forge.example.com/-/snippets/42 and https://forge.example.com/help/user/profile now",
+        ),
+        (
+            "see https://10.1.2.3:8443/explore/projects/topics and the topics",
+            "see https://forge.example.com/explore/projects/topics and the topics",
+        ),
+    ):
+        found = needles(_one_call({"body": body}), roles={})
+        assert _kinds(found, "segment") == [], body
+        assert text(body) == expected, body
+    body = "see //code.kvncloud.io/public/projects/x now"
+    found = needles(_one_call({"body": body}), roles={})
+    assert _kinds(found, "segment") == []
+    assert recording.replace_known(body, found) == "see //forge.example.com/public/projects/x now"
+    instance = needles(
+        _one_call({"body": "see https://git.zqcorp.io/uploads/-/system/user/avatar/42/a.png"}),
+        roles={},
+        remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+    )
+    assert set(_kinds(instance, "segment")) == {"zqgroup", "zqmainrepo"}
+    for path in (
+        ["s", "zqu"],
+        ["admin", "users", "zqu"],
+        ["admin", "groups", "zqg"],
+        ["admin", "projects", "zqg", "zqr"],
+        ["snippets", "zqws", "42"],
+    ):
+        assert identity(path) == recording.PathIdentity(path), path
+
+
+def test_a_web_ide_route_reads_its_project_path() -> None:
+    """D1b, D7 source 3 (0.22): after ``-/ide/project/`` the segments up to an IDE word are the namespace and the repository, on every host; another dash-led path names no one."""
+    identity = recording.path_identity
+    ide = identity(["-", "ide", "project", "zqg", "zqr", "edit", "main", "-", "src", "app.py"])
+    assert ide.segments == [
+        "-",
+        "ide",
+        "project",
+        "org",
+        "project",
+        "edit",
+        "main",
+        "-",
+        "src",
+        "app.py",
+    ]
+    assert (ide.namespace, ide.repository) == (("zqg",), "zqr")
+    nested = identity(
+        ["-", "ide", "project", "zqg", "zqs", "zqr.git", "blob", "main", "-", "x", ""]
+    )
+    assert nested.segments == [
+        "-",
+        "ide",
+        "project",
+        "org",
+        "project.git",
+        "blob",
+        "main",
+        "-",
+        "x",
+        "",
+    ]
+    assert (nested.namespace, nested.repository) == (("zqg", "zqs"), "zqr")
+    assert {"edit", "blob", "tree", "merge_requests"} == recording._IDE_ROUTES
+    for word in sorted(recording._IDE_ROUTES):
+        out = identity(["-", "ide", "project", "zqg", "zqr", word, "x"])
+        assert out.segments == ["-", "ide", "project", "org", "project", word, "x"], word
+        assert (out.namespace, out.repository) == (("zqg",), "zqr"), word
+        assert (
+            identity(["-", "ide", "project", "zqg", "zqr", word.upper(), "x"]).repository == "zqr"
+        )
+    bare = identity(["-", "ide", "project", "zqg", "zqr"])
+    assert bare == recording.PathIdentity(
+        ["-", "ide", "project", "org", "project"], ("zqg",), "zqr"
+    )
+    lone = identity(["-", "ide", "project", "zqg"])
+    assert lone == recording.PathIdentity(["-", "ide", "project", "org"], ("zqg",))
+    assert identity(["-", "ide", "project", "edit", "zqr", "edit", "main"]).namespace == ("edit",)
+    assert identity(["-", "IDE", "PROJECT", "zqg", "zqr"]).repository == "zqr"
+    for path in (
+        ["-", "ide", "x", "zqg"],
+        ["-", "ide", "project"],
+        ["-", "x", "project", "zqg"],
+        ["-", "ide"],
+    ):
+        assert identity(path) == recording.PathIdentity(path), path
+        assert not recording._api_route(path), path
+    assert identity(["x", "ide", "project", "zqg"]).segments == ["org", "project"]
+    assert recording._api_route(["-", "ide", "project", "zqg"])
+    assert recording._api_route(["", "-", "ide", "project", "zqg"])
+    for body, segments in (
+        (
+            "open https://code.kvncloud.io/-/ide/project/kvnteam/kvnbilling/edit/main/-/src/app.py in the IDE",
+            ["kvnteam", "kvnbilling"],
+        ),
+        (
+            "open //code.kvncloud.io/-/ide/project/kvnteam/kvnsub/kvnbilling/blob/main/-/x.py now",
+            ["kvnteam", "kvnsub", "kvnbilling"],
+        ),
+        ("open https://code.kvncloud.io/-/ide/project/kvnteam now", ["kvnteam"]),
+        ("open https://gitlab.com/-/ide/project/kvnteam/kvnbilling/edit/main now", []),
+    ):
+        found = needles(_one_call({"body": body}), roles={})
+        assert _kinds(found, "segment") == segments, body
+    text = recording.redact_urls_in_text
+    assert text(
+        "open https://code.kvncloud.io/-/ide/project/kvnteam/kvnbilling/edit/main/-/src/app.py in the IDE"
+    ) == (
+        "open https://forge.example.com/-/ide/project/org/project/edit/main/-/src/app.py in the IDE"
+    )
+    assert text(
+        "open https://gitlab.com/-/ide/project/kvnteam/kvnbilling/merge_requests/3 now"
+    ) == ("open https://forge.example.com/-/ide/project/org/project/merge_requests/3 now")
+    instance = needles(
+        _one_call(
+            {"body": "open https://git.zqcorp.io/-/ide/project/zqother/zqrepo/tree/main/-/src now"}
+        ),
+        roles={},
+        remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+    )
+    assert {"zqother", "zqrepo"} <= set(_kinds(instance, "segment"))
+
+
+def test_an_owner_root_reads_the_identity_slots_of_its_grammar() -> None:
+    """D1b, D7 source 3 (0.22): ``users/<u>/repos/<r>`` and ``projects/<KEY>/repos/<r>`` name a repository, ``orgs/<o>/teams/<t>`` a team."""
+    identity = recording.path_identity
+    assert recording._IDENTITY_SLOTS == {
+        "users": ("repos", "project"),
+        "projects": ("repos", "project"),
+        "orgs": ("teams", "org"),
+    }
+    personal = identity(["users", "zqu", "repos", "zqr.git", "browse", ""])
+    assert personal.segments == ["users", "org", "repos", "project.git", "browse", ""]
+    assert (personal.namespace, personal.repository) == (("zqu",), "zqr")
+    project = identity(["projects", "ZQKEY", "repos", "zqr", "pull-requests", "5", "overview"])
+    assert project.segments == [
+        "projects",
+        "org",
+        "repos",
+        "project",
+        "pull-requests",
+        "5",
+        "overview",
+    ]
+    assert (project.namespace, project.repository) == (("ZQKEY",), "zqr")
+    assert identity(["Projects", "ZQKEY", "REPOS", "zqr"]).repository == "zqr"
+    assert identity(["users", "zqu", "REPOS", "zqr"]).repository == "zqr"
+    team = identity(["orgs", "zqo", "teams", "zqt", "members"])
+    assert team == recording.PathIdentity(
+        ["orgs", "org", "teams", "org", "members"], ("zqo", "zqt")
+    )
+    api_team = identity(["api", "v3", "orgs", "zqo", "teams", "zqt"])
+    assert api_team.segments == ["api", "v3", "orgs", "org", "teams", "org"]
+    assert api_team.namespace == ("zqo", "zqt")
+    assert identity(["users", "zqu", "repos"]) == recording.PathIdentity(
+        ["users", "org", "repos"], ("zqu",)
+    )
+    assert identity(["orgs", "zqo", "teams"]) == recording.PathIdentity(
+        ["orgs", "org", "teams"], ("zqo",)
+    )
+    assert identity(["users", "zqu", "teams", "zqt"]) == recording.PathIdentity(
+        ["users", "org", "teams", "zqt"], ("zqu",)
+    )
+    assert identity(["orgs", "zqo", "repos", "zqr"]) == recording.PathIdentity(
+        ["orgs", "org", "repos", "zqr"], ("zqo",)
+    )
+    assert identity(["apps", "zqa", "repos", "zqr"]) == recording.PathIdentity(
+        ["apps", "org", "repos", "zqr"], ("zqa",)
+    )
+    assert identity(["users", "zqu", "-", "repos", "zqr"]) == recording.PathIdentity(
+        ["users", "org", "-", "repos", "zqr"], ("zqu",)
+    )
+    assert identity(["projects", "ZQKEY", "repos"]).segments == ["org", "project"]
+    assert identity(["projects", "ZQKEY", "x", "zqr"]).segments == ["org", "project"]
+    text = recording.redact_urls_in_text
+    assert text("see https://bb.kvncorp.net/users/kvnperson/repos/kvnbilling/browse now") == (
+        "see https://forge.example.com/users/org/repos/project/browse now"
+    )
+    assert text(
+        "see https://bb.kvncorp.net/projects/KVNKEY/repos/kvnbilling/pull-requests/5/overview now"
+    ) == ("see https://forge.example.com/projects/org/repos/project/pull-requests/5/overview now")
+    assert text("see https://github.com/orgs/kvnteam/teams/kvnsub now") == (
+        "see https://forge.example.com/orgs/org/teams/org now"
+    )
+    for body, segments in (
+        (
+            "see https://bb.kvncorp.net/users/kvnperson/repos/kvnbilling/browse now",
+            ["kvnperson", "kvnbilling"],
+        ),
+        (
+            "see https://bb.kvncorp.net/projects/KVNKEY/repos/kvnbilling/pull-requests/5 now",
+            ["kvnkey", "kvnbilling"],
+        ),
+        (
+            "see https://ghe.kvncorp.net/orgs/kvnteam/teams/kvnsub/members now",
+            ["kvnteam", "kvnsub"],
+        ),
+        ("see https://ghe.kvncorp.net/api/v3/orgs/kvnteam/teams/kvnsub now", ["kvnteam", "kvnsub"]),
+        ("see https://ghe.kvncorp.net/orgs/kvnteam/teams now", ["kvnteam"]),
+    ):
+        found = needles(_one_call({"body": body}), roles={})
+        assert _kinds(found, "segment") == segments, body
+    body = "see https://ghe.kvncorp.net/orgs/kvnteam/teams/kvnsub and ping kvnsub"
+    found = needles(_one_call({"body": body}), roles={})
+    assert recording.replace_known(body, found) == (
+        "see https://forge.example.com/orgs/org/teams/org and ping org"
+    )
+
+
+def test_a_package_tarball_before_a_dash_names_no_one() -> None:
+    """D1b, D7 source 3, D8 (0.22): ``<pkg>/-/<pkg>-<version>.tgz`` is a registry grammar on every host, the package neither namespace nor repository; yarnpkg.com and npmmirror.com join the allowlist."""
+    identity = recording.path_identity
+    for path in (
+        ["lodash", "-", "lodash-4.17.21.tgz"],
+        ["@babel", "core", "-", "core-7.24.0.tgz"],
+        ["repository", "npm-all", "lodash", "-", "lodash-4.17.21.tgz"],
+        ["lodash", "-", "lodash-4.17.21-beta.1.tgz"],
+        ["lodash", "-", "lodash-4.17.21-RC1.tgz"],
+        ["lodash", "-", "lodash-1.0.0+build.5.tgz"],
+        ["lodash", "-", "lodash-4.17.21.tgz", ""],
+        ["lodash", "-", "lodash-4.17.21.tgz", "x"],
+    ):
+        assert identity(path) == recording.PathIdentity(path), path
+        assert recording._package_tarball([s for s in path if s], path.index("-")), path
+    for path in (
+        ["lodash", "-", "other-4.17.21.tgz"],
+        ["lodash", "-", "lodash-4.17.21.zip"],
+        ["lodash", "-", "lodash-x.tgz"],
+        ["lodash", "-", "lodash-.tgz"],
+        ["lodash", "-", "lodash4.17.21.tgz"],
+        ["lodash", "-", "lodash-4.17.21.tgz.sig"],
+        ["lodash", "-", "lodash-4.17 21.tgz"],
+        ["lodash", "-"],
+    ):
+        assert identity(path).namespace == ("lodash",), path
+        assert not recording._package_tarball(path, 1), path
+    assert not recording._package_tarball(["-", "x-1.tgz"], 0)
+    assert closure.is_public_host("registry.yarnpkg.com")
+    assert closure.is_public_host("registry.npmmirror.com")
+    assert recording._kept_host("registry.yarnpkg.com")
+    assert not recording._kept_host("npm.kvncorp.net")
+    text = recording.redact_urls_in_text
+    for body in (
+        'resolved "https://registry.yarnpkg.com/lodash/-/lodash-4.17.21.tgz#abc" and lodash is fine',
+        "resolved https://registry.npmmirror.com/@babel/core/-/core-7.24.0.tgz now",
+        "resolved https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz and lodash is fine",
+    ):
+        assert text(body) == body, body
+        assert _kinds(needles(_one_call({"body": body}), roles={}), "segment") == [], body
+    for body, expected, segments in (
+        (
+            "resolved https://npm.kvncorp.net/lodash/-/lodash-4.17.21.tgz and lodash is fine",
+            "resolved https://forge.example.com/lodash/-/lodash-4.17.21.tgz and lodash is fine",
+            [],
+        ),
+        (
+            "resolved https://nexus.kvncorp.net/repository/npm-all/@babel/core/-/core-7.24.0.tgz now",
+            "resolved https://forge.example.com/repository/npm-all/@babel/core/-/core-7.24.0.tgz now",
+            [],
+        ),
+        (
+            "resolved https://10.1.2.3/lodash/-/lodash-4.17.21.tgz and lodash is fine",
+            "resolved https://forge.example.com/lodash/-/lodash-4.17.21.tgz and lodash is fine",
+            [],
+        ),
+        (
+            "resolved https://code.kvncloud.io/lodash/-/other-4.17.21.tgz now",
+            "resolved https://forge.example.com/org/-/other-4.17.21.tgz now",
+            ["lodash"],
+        ),
+    ):
+        found = needles(_one_call({"body": body}), roles={})
+        assert _kinds(found, "segment") == segments, body
+        assert text(body) == expected, body
+        assert recording.replace_known(body, found) == expected, body
+
+
 def test_nothing_is_read_after_a_placeholder_class_host() -> None:
     """D7 source 3 (0.20, NG4-12): a placeholder-class or public host names no one, so its path is never read, IPv4, IPv6 and name alike."""
     for body in (
