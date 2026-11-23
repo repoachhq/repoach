@@ -1020,8 +1020,153 @@ ROUTES: list[tuple[str, str, str, tuple[str, ...], tuple[str, ...]]] = [
         ("ns", "repo"),
         (),
     ),
+    (
+        "gitlab_web_ide_edit",
+        "open {lead}{host}/-/ide/project/{ns}/{repo}/edit/main/-/src/app.py in the IDE",
+        "ns",
+        ("ns", "repo"),
+        ("ide", "edit", "main", "src", "app.py"),
+    ),
+    (
+        "gitlab_web_ide_subgroup_blob",
+        "open {lead}{host}/-/ide/project/{ns}/{sub}/{repo}/blob/main/-/README.md now",
+        "ns",
+        ("ns", "sub", "repo"),
+        ("ide", "blob", "main", "README.md"),
+    ),
+    (
+        "gitlab_web_ide_tree",
+        "open {lead}{host}/-/ide/project/{ns}/{repo}/tree/main/-/src/ now",
+        "ns",
+        ("ns", "repo"),
+        ("ide", "tree", "main", "src"),
+    ),
+    (
+        "gitlab_web_ide_merge_request",
+        "open {lead}{host}/-/ide/project/{ns}/{repo}/merge_requests/3 now",
+        "ns",
+        ("ns", "repo"),
+        ("ide", "merge_requests"),
+    ),
+    (
+        "gitlab_web_ide_bare",
+        "open {lead}{host}/-/ide/project/{ns}/{repo} now",
+        "ns",
+        ("ns", "repo"),
+        ("ide",),
+    ),
+    (
+        "bitbucket_server_personal_repo",
+        "see {lead}{host}/users/{ns}/repos/{repo}/browse now",
+        "third_party",
+        ("ns", "repo"),
+        ("users", "repos", "browse"),
+    ),
+    (
+        "bitbucket_server_project_repo",
+        "see {lead}{host}/projects/{ns}/repos/{repo}/pull-requests/1/overview now",
+        "third_party",
+        ("ns", "repo"),
+        ("projects", "repos", "pull-requests", "overview"),
+    ),
+    (
+        "github_org_team",
+        "see {lead}{host}/orgs/{ns}/teams/{sub}/members now",
+        "ns",
+        ("ns", "sub"),
+        ("orgs", "teams", "members"),
+    ),
+    (
+        "github_api_org_team",
+        "see {lead}{host}/api/v3/orgs/{ns}/teams/{sub} now",
+        "ns",
+        ("ns", "sub"),
+        ("orgs", "teams"),
+    ),
 ]
-"""Forge route grammars (0.21, B1): name, template, where it is met (``ns``: any host, the recorded instance included; ``third_party``: a Gitea or Bitbucket host, never the instance, which is GitHub or GitLab), the identity segments, the route words that must stay."""
+"""Forge route grammars (0.21, B1; 0.22: the Web IDE and the owner-root identity slots): name, template, where it is met (``ns``: any host, the recorded instance included; ``third_party``: a Gitea or Bitbucket host, never the instance, which is GitHub or GitLab), the identity segments, the route words that must stay."""
+
+RESERVED_WORDS: dict[str, tuple[str, ...]] = {
+    "gitlab": (
+        "uploads",
+        "help",
+        "explore",
+        "admin",
+        "dashboard",
+        "snippets",
+        "search",
+        "public",
+        "s",
+        "files",
+        "assets",
+        "import",
+        "oauth",
+        "jwt",
+        ".well-known",
+        "-",
+    ),
+    "github": (
+        "codespaces",
+        "collections",
+        "join",
+        "login",
+        "logout",
+        "marketplace",
+        "notifications",
+        "organizations",
+        "pricing",
+        "sessions",
+        "settings",
+        "topics",
+        "trending",
+        "explore",
+        "search",
+        "dashboard",
+    ),
+    "gitea": ("attachments", "avatars", "milestones", "repo", "explore", "notifications"),
+    "bitbucket": ("account", "plugins", "dashboard", "snippets"),
+}
+"""The top-level words each forge reserves for its own pages (0.22): read from the forges' routing, not from the code under test."""
+
+RESERVED_SHAPES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("pages", "see {lead}{host}/{word}/pages/index and the {word} page", ("pages", "index")),
+    ("dash", "img {lead}{host}/{word}/-/system/zqfile.png now", ("system", "zqfile.png")),
+)
+"""A reserved word followed by two segments, and by a GitLab ``/-/`` route: the word and what follows are written, nothing is learnt."""
+
+TARBALLS: tuple[tuple[str, str, tuple[str, ...], str], ...] = (
+    (
+        "npm_tarball",
+        'resolved "{lead}{host}/lodash/-/lodash-4.17.21.tgz#abc" and lodash is fine',
+        ("lodash",),
+        "body",
+    ),
+    (
+        "npm_scoped_tarball",
+        "resolved {lead}{host}/@babel/core/-/core-7.24.0.tgz now",
+        ("@babel", "core-7.24.0.tgz"),
+        "body",
+    ),
+    (
+        "nexus_tarball",
+        "resolved {lead}{host}/repository/npm-all/lodash/-/lodash-4.17.21.tgz now",
+        ("repository", "npm-all", "lodash"),
+        "body",
+    ),
+    (
+        "npm_prerelease_tarball",
+        "resolved {lead}{host}/lodash/-/lodash-4.17.21-beta.1.tgz now",
+        ("lodash-4.17.21-beta.1.tgz",),
+        "body",
+    ),
+    (
+        "yarn_lock_diff",
+        '  resolved "{lead}{host}/lodash/-/lodash-4.17.21.tgz#abc"',
+        ("lodash",),
+        "diff_plus",
+    ),
+)
+"""The npm tarball grammar ``<pkg>/-/<pkg>-<version>.tgz`` (0.22): plain, scoped, under a Nexus prefix, a prerelease, in a lock-file diff; the package is never an identity."""
 
 ROUTE_HOSTS: dict[str, str] = {
     "host3": "host3",
@@ -1031,39 +1176,85 @@ ROUTE_HOSTS: dict[str, str] = {
     "public_host": "public_host",
 }
 
+REGISTRY_HOSTS: dict[str, tuple[str, str]] = {
+    "npmjs": ("registry.npmjs.org", "public"),
+    "yarnpkg": ("registry.yarnpkg.com", "public"),
+    "npmmirror": ("registry.npmmirror.com", "public"),
+    "private_npm": ("npm.kvncorp.net", "host3"),
+    "nexus": ("nexus.kvncorp.net", "host3"),
+}
+"""The registry hosts of the tarball cells (0.22): the three public registries of the allowlist, a private one, a Nexus."""
+
+
+def _route_cell(
+    name: str,
+    hname: str,
+    host: str,
+    cls: str,
+    lead_name: str,
+    text: str,
+    identity: tuple[str, ...],
+    kept: tuple[str, ...],
+    position: str = "body",
+) -> Cell:
+    """One route cell: on a placeholder or public host nothing is read, elsewhere the host and the identity are values."""
+    values = {"ns": NS, "sub": "kvnsub", "repo": REPO}
+    markers = tuple(values[k] for k in identity)
+    if cls in ("placeholder", "public"):
+        category, note = (RESIDUAL, NG4_12) if markers else (ORDINARY, "")
+        markers = ()
+    else:
+        category, note = PLANTED, "the identity before the route is a value"
+        markers = (host, *markers)
+    return Cell(
+        id=f"route:{name}:{hname}:{lead_name}",
+        rule="routes",
+        text=text,
+        category=category,
+        markers=markers,
+        note=note,
+        position=position,
+        remote=KNOWN_REMOTE if cls == "known" else Sample.remote,
+        extra={"kept": kept},
+    )
+
 
 def route_cells() -> list[Cell]:
-    """Every forge route grammar with every host class: the identity before the route is learnt, the route words are not."""
+    """Every forge route grammar with every host class: the identity before the route is learnt, the route words are not.
+
+    0.22 adds, on the same host classes, every forge's reserved words in
+    two shapes (nothing is learnt, the word stays) and the npm tarball
+    grammar on the route hosts and on five registry hosts.
+    """
     out: list[Cell] = []
+    leads = (("https", "https://"), ("http", "http://"))
     for name, template, where, identity, kept in ROUTES:
         for hname, kind in ROUTE_HOSTS.items():
             host, cls = KINDS[kind]
             if where == "third_party" and cls == "known":
                 continue
-            for lead_name, lead in (("https", "https://"), ("http", "http://")):
+            for lead_name, lead in leads:
                 if "{lead}" not in template and lead_name == "http":
                     continue
                 text = template.format(lead=lead, host=host, ns=NS, sub="kvnsub", repo=REPO)
-                values = {"ns": NS, "sub": "kvnsub", "repo": REPO}
-                markers = tuple(values[k] for k in identity)
-                if cls in ("placeholder", "public"):
-                    category, note = (RESIDUAL, NG4_12) if markers else (ORDINARY, "")
-                    markers = ()
-                else:
-                    category, note = PLANTED, "the identity before the route is a value"
-                    markers = (host, *markers)
-                out.append(
-                    Cell(
-                        id=f"route:{name}:{hname}:{lead_name}",
-                        rule="routes",
-                        text=text,
-                        category=category,
-                        markers=markers,
-                        note=note,
-                        remote=KNOWN_REMOTE if cls == "known" else Sample.remote,
-                        extra={"kept": kept},
-                    )
-                )
+                out.append(_route_cell(name, hname, host, cls, lead_name, text, identity, kept))
+    for forge, words in RESERVED_WORDS.items():
+        for word in words:
+            for shape, template, rest in RESERVED_SHAPES:
+                for hname, kind in ROUTE_HOSTS.items():
+                    host, cls = KINDS[kind]
+                    for lead_name, lead in leads:
+                        text = template.format(lead=lead, host=host, word=word)
+                        name = f"reserved:{forge}:{word}:{shape}"
+                        out.append(
+                            _route_cell(name, hname, host, cls, lead_name, text, (), (word, *rest))
+                        )
+    hosts = {h: KINDS[k] for h, k in ROUTE_HOSTS.items()} | REGISTRY_HOSTS
+    for name, template, kept, position in TARBALLS:
+        for hname, (host, cls) in hosts.items():
+            for lead_name, lead in leads:
+                text = template.format(lead=lead, host=host)
+                out.append(_route_cell(name, hname, host, cls, lead_name, text, (), kept, position))
     return out
 
 

@@ -9732,6 +9732,148 @@ ROWS: tuple[Row, ...] = (
         inp=Sample(raw_text_stdout='{"a":' * 990 + "1" + "}" * 990),
         outcome=Refused(prefix="nesting too deep"),
     ),
+    Row(
+        id="v22_gitlab_web_ide_route_identity_replaced",
+        source="verify021/cells.py",
+        inp=Sample(
+            body="open https://code.kvncloud.io/-/ide/project/kvnteam/kvnbilling/edit/main/-/src/app.py in the IDE"
+        ),
+        outcome=Written(
+            text="open https://forge.example.com/-/ide/project/org/project/edit/main/-/src/app.py in the IDE"
+        ),
+        markers=("code.kvncloud.io", "kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v22_gitlab_web_ide_route_nested_on_the_instance",
+        source="verify021/cells.py",
+        inp=Sample(
+            forge="gitlab",
+            remote=f"git@{FAKE_HOST}:{FAKE_NS}/{FAKE_REPO}.git",
+            body=f"open https://{FAKE_HOST}/-/ide/project/kvnteam/kvnsub/kvnbilling/blob/main/-/x.py now",
+        ),
+        outcome=Written(
+            text="open https://forge.example.com/-/ide/project/org/project/blob/main/-/x.py now"
+        ),
+        markers=(FAKE_HOST, "kvnteam", "kvnsub", "kvnbilling"),
+    ),
+    Row(
+        id="v22_gitlab_web_ide_third_party_project_on_the_instance",
+        source="verify021/cells.py",
+        inp=Sample(
+            forge="gitlab",
+            remote=f"git@{FAKE_HOST}:{FAKE_NS}/{FAKE_REPO}.git",
+            body=f"open https://{FAKE_HOST}/-/ide/project/zqother/kvnbilling/edit/main/- now",
+        ),
+        outcome=Written(
+            text="open https://forge.example.com/-/ide/project/org/project/edit/main/- now"
+        ),
+        markers=(FAKE_HOST, "zqother", "kvnbilling"),
+    ),
+    Row(
+        id="v22_gitlab_reserved_word_uploads_is_written",
+        source="verify021/cells.py",
+        inp=Sample(
+            forge="gitlab",
+            remote=f"git@{FAKE_HOST}:{FAKE_NS}/{FAKE_REPO}.git",
+            body=f"see https://{FAKE_HOST}/uploads/-/system/user/avatar/42/avatar.png and the uploads folder",
+        ),
+        outcome=Written(
+            text="see https://forge.example.com/uploads/-/system/user/avatar/42/avatar.png and the uploads folder"
+        ),
+        markers=(FAKE_HOST,),
+    ),
+    Row(
+        id="v22_gitea_reserved_word_repo_is_written",
+        source="verify021/cells.py",
+        inp=Sample(body="see https://gitea.kvncorp.net/repo/create and the repo page"),
+        outcome=Written(text="see https://forge.example.com/repo/create and the repo page"),
+        markers=("gitea.kvncorp.net",),
+    ),
+    Row(
+        id="v22_github_reserved_word_marketplace_is_written",
+        source="verify021/cells.py",
+        inp=Sample(body="see https://github.com/marketplace/actions/checkout and the marketplace"),
+        outcome=Written(
+            text="see https://forge.example.com/marketplace/actions/checkout and the marketplace"
+        ),
+    ),
+    Row(
+        id="v22_bitbucket_reserved_word_account_is_written",
+        source="verify021/cells.py",
+        inp=Sample(body="see https://bitbucket.org/account/signin/ and the account page"),
+        outcome=Written(text="see https://forge.example.com/account/signin/ and the account page"),
+    ),
+    Row(
+        id="v22_bitbucket_server_personal_repository_replaced",
+        source="verify021/cells.py",
+        inp=Sample(body="see https://bb.kvncorp.net/users/kvnperson/repos/kvnbilling/browse now"),
+        outcome=Written(text="see https://forge.example.com/users/org/repos/project/browse now"),
+        markers=("bb.kvncorp.net", "kvnperson", "kvnbilling"),
+    ),
+    Row(
+        id="v22_bitbucket_server_project_repository_replaced",
+        source="verify021/cells.py",
+        inp=Sample(
+            body="see https://bb.kvncorp.net/projects/KVNKEY/repos/kvnbilling/pull-requests/5/overview now"
+        ),
+        outcome=Written(
+            text="see https://forge.example.com/projects/org/repos/project/pull-requests/5/overview now"
+        ),
+        markers=("bb.kvncorp.net", "KVNKEY", "kvnbilling"),
+    ),
+    Row(
+        id="v22_github_team_slug_replaced_elsewhere",
+        source="verify021/cells.py",
+        inp=Sample(body="see https://ghe.kvncorp.net/orgs/kvnteam/teams/kvnsub and ping kvnsub"),
+        outcome=Written(text="see https://forge.example.com/orgs/org/teams/org and ping org"),
+        markers=("ghe.kvncorp.net", "kvnteam", "kvnsub"),
+    ),
+    Row(
+        id="v22_npm_tarball_on_the_yarn_registry_is_ordinary",
+        source="verify021/cells.py",
+        inp=Sample(
+            body='resolved "https://registry.yarnpkg.com/lodash/-/lodash-4.17.21.tgz#679591c564c3bffaae8454cf0b3df370c3d6911c" and lodash is fine'
+        ),
+        outcome=Written(
+            text='resolved "https://registry.yarnpkg.com/lodash/-/lodash-4.17.21.tgz#679591c564c3bffaae8454cf0b3df370c3d6911c" and lodash is fine'
+        ),
+    ),
+    Row(
+        id="v22_scoped_npm_tarball_on_npmmirror_is_ordinary",
+        source="verify021/cells.py",
+        inp=Sample(
+            body="resolved https://registry.npmmirror.com/@babel/core/-/core-7.24.0.tgz now"
+        ),
+        outcome=Written(
+            text="resolved https://registry.npmmirror.com/@babel/core/-/core-7.24.0.tgz now"
+        ),
+    ),
+    Row(
+        id="v22_npm_tarball_on_a_private_registry_names_no_one",
+        source="verify021/cells.py",
+        inp=Sample(
+            body="resolved https://npm.kvncorp.net/lodash/-/lodash-4.17.21.tgz and lodash is fine"
+        ),
+        outcome=Written(
+            text="resolved https://forge.example.com/lodash/-/lodash-4.17.21.tgz and lodash is fine"
+        ),
+        markers=("npm.kvncorp.net",),
+    ),
+    Row(
+        id="v22_nexus_tarball_in_a_yarn_lock_diff_names_no_one",
+        source="verify021/cells.py",
+        inp=Sample(
+            raw_text_stdout="diff --git a/yarn.lock b/yarn.lock\n--- a/yarn.lock\n+++ b/yarn.lock\n@@ -1 +1 @@\n"
+            '+  resolved "https://nexus.kvncorp.net/repository/npm-all/lodash/-/lodash-4.17.21.tgz#679591c564c3bffaae8454cf0b3df370c3d6911c"\n'
+            "+  lodash: ^4.17.21\n"
+        ),
+        outcome=Written(
+            text="diff --git a/yarn.lock b/yarn.lock\n--- a/yarn.lock\n+++ b/yarn.lock\n@@ -1 +1 @@\n"
+            '+  resolved "https://forge.example.com/repository/npm-all/lodash/-/lodash-4.17.21.tgz"\n'
+            "+  lodash: ^4.17.21\n"
+        ),
+        markers=("nexus.kvncorp.net",),
+    ),
 )
 
 
@@ -10142,9 +10284,9 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
     assert all(_is_planted(row) for row in residual)
     refused = [row for row in ROWS if isinstance(row.outcome, Refused)]
     assert (len(ROWS), len(planted), len(ordinary), len(refused), len(residual)) == (
-        815,
-        558,
-        257,
+        829,
+        568,
+        261,
         73,
         18,
     )
