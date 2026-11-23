@@ -10226,6 +10226,84 @@ ROWS: tuple[Row, ...] = (
         ),
         markers=(FAKE_HOST, "kvnteam", "kvnsub", "kvnbilling"),
     ),
+    Row(
+        id="v26_body_led_by_a_github_api_path_with_a_rest_route_is_replaced",
+        source="verify025/cells25.py",
+        inp=Sample(body="repos/kvnteam/kvnbilling/pulls/5/comments returns 404 since monday"),
+        outcome=Written(text="repos/org/project/pulls/5/comments returns 404 since monday"),
+        markers=("kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v26_method_kwargs_github_api_path_with_a_rest_route_is_replaced",
+        source="verify025/cells25.py",
+        inp=Sample(top_kwargs={"endpoint": "repos/zqother/kvnbilling/issues/3"}),
+        outcome=Written(text='{"endpoint": "repos/org/project/issues/3"}'),
+        markers=("zqother", "kvnbilling"),
+    ),
+    Row(
+        id="v26_stdin_ghe_api_v3_path_with_a_rest_route_is_replaced",
+        source="verify025/cells25.py",
+        inp=Sample(stdin="api/v3/repos/kvnteam/kvnbilling/hooks"),
+        outcome=Written(text="api/v3/repos/org/project/hooks"),
+        markers=("kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v26_json_string_in_a_body_with_a_leading_slash_api_path_is_replaced",
+        source="verify025/cells25.py",
+        inp=Sample(body='{"endpoint": "/repos/kvnteam/kvnbilling/branches/main/protection"}'),
+        outcome=Written(text='{"endpoint": "/repos/org/project/branches/main/protection"}'),
+        markers=("kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v26_review_path_field_github_api_path_with_a_rest_route_is_replaced",
+        source="verify025/cells25.py",
+        inp=Sample(
+            body="see the file",
+            extra_item={"path": "repos/kvnteam/kvnbilling/pulls/5/comments"},
+        ),
+        outcome=Written(text="see the file"),
+        markers=("kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v26_text_api_path_with_a_reserved_owner_learns_the_repository_only",
+        source="verify025/cells25.py",
+        inp=Sample(body="repos/settings/kvnbilling/pulls/5 returns 404 on the settings page"),
+        outcome=Written(text="repos/settings/project/pulls/5 returns 404 on the settings page"),
+        markers=("kvnbilling",),
+    ),
+    Row(
+        id="v26_text_api_path_with_a_file_after_the_repository_is_ordinary",
+        source="fix026/probe_rows.py",
+        inp=Sample(body="repos/kvnwork/kvnfiles/main.py stays where kvnwork keeps it"),
+        outcome=Written(text="repos/kvnwork/kvnfiles/main.py stays where kvnwork keeps it"),
+    ),
+    Row(
+        id="v26_bare_text_api_path_is_ordinary",
+        source="fix026/probe_rows.py",
+        inp=Sample(body="repos/kvnwork/kvnfiles is where kvnwork keeps it"),
+        outcome=Written(text="repos/kvnwork/kvnfiles is where kvnwork keeps it"),
+    ),
+    Row(
+        id="v26_second_exchange_argv_api_path_is_read_by_construction",
+        source="verify025/demo_two_calls.py",
+        inp=Sample(body="ok", second_api_path="repos/settings/kvnbilling/pulls/5/comments"),
+        outcome=Written(text='["api", "repos/org/project/pulls/5/comments"]'),
+        markers=("kvnbilling", "repos/settings"),
+    ),
+    Row(
+        id="v26_url_field_namespace_keeps_its_class_before_an_argv_repository",
+        source="verify025/demo_b19.py",
+        inp=Sample(
+            forge="gitlab",
+            remote=f"git@{FAKE_HOST}:{FAKE_NS}/{FAKE_REPO}.git",
+            url=f"https://{FAKE_HOST}/kvnbilling/kvnsub/-/merge_requests/1",
+            api_path="projects/kvnteam%2Fkvnbilling/merge_requests/1/notes",
+            body=f"see https://{FAKE_HOST}/kvnbilling/kvnsub/-/merge_requests/1 for the kvnbilling service",
+        ),
+        outcome=Written(text='["api", "projects/org%2Forg/merge_requests/1/notes"]'),
+        markers=(FAKE_HOST, "kvnteam", "kvnsub", "kvnbilling"),
+        url_field_class=True,
+    ),
 )
 
 
@@ -10651,14 +10729,16 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
     assert all(_is_planted(row) for row in residual)
     refused = [row for row in ROWS if isinstance(row.outcome, Refused)]
     assert (len(ROWS), len(planted), len(ordinary), len(refused), len(residual)) == (
-        861,
-        594,
-        267,
+        871,
+        602,
+        269,
         74,
         18,
     )
     assert all(not row.residual for row in refused)
-    assert [row.id for row in ROWS if row.url_field_class] == []
+    assert [row.id for row in ROWS if row.url_field_class] == [
+        "v26_url_field_namespace_keeps_its_class_before_an_argv_repository"
+    ]
     for row in residual:
         assert isinstance(row.outcome, Written) and not row.markers, row.id
         assert row.outcome.text == row.inp.body, row.id
