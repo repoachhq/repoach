@@ -1093,36 +1093,50 @@ ROUTES: list[tuple[str, str, str, tuple[str, ...], tuple[str, ...]]] = [
         "gitlab_npm_instance_scope",
         "resolved {lead}{host}/api/v4/packages/npm/@{ns}/kvnpkg/-/kvnpkg-1.0.0.tgz now",
         "ns",
-        ("ns",),
-        ("packages", "npm", "kvnpkg-1.0.0.tgz"),
+        (),
+        ("packages", "npm", "kvnpkg-1.0.0.tgz", f"@{NS}"),
     ),
     (
         "gitlab_npm_project_scope_file_name",
         "resolved {lead}{host}/api/v4/projects/123/packages/npm/@{ns}/kvnpkg/-/@{ns}/kvnpkg-1.0.0.tgz now",
         "ns",
-        ("ns",),
-        ("projects", "packages", "kvnpkg"),
+        (),
+        ("projects", "packages", "kvnpkg", f"@{NS}"),
     ),
     (
         "gitlab_npm_group_scope",
         "resolved {lead}{host}/api/v4/groups/{sub}/-/packages/npm/@{ns}/kvnpkg/-/kvnpkg-1.0.0.tgz now",
         "ns",
-        ("ns", "sub"),
-        ("groups", "packages", "kvnpkg"),
+        ("sub",),
+        ("groups", "packages", "kvnpkg", f"@{NS}"),
     ),
     (
         "gitlab_npm_metadata_scope",
         "GET {lead}{host}/api/v4/packages/npm/@{ns}%2Fkvnpkg now",
         "ns",
-        ("ns",),
-        ("packages", "kvnpkg"),
+        (),
+        ("packages", "kvnpkg", f"@{NS}"),
     ),
     (
         "gitlab_npm_dist_tags_scope",
         "PUT {lead}{host}/api/v4/projects/123/packages/npm/-/package/@{ns}%2Fkvnpkg/dist-tags/latest now",
         "ns",
-        ("ns",),
-        ("package", "dist-tags", "kvnpkg"),
+        (),
+        ("package", "dist-tags", "kvnpkg", f"@{NS}"),
+    ),
+    (
+        "gitlab_npm_forwarded_types",
+        "resolved {lead}{host}/api/v4/projects/123/packages/npm/@types/node/-/node-20.11.0.tgz now",
+        "ns",
+        (),
+        ("@types/node", "node-20.11.0.tgz"),
+    ),
+    (
+        "gitlab_npm_forwarded_babel",
+        "GET {lead}{host}/api/v4/groups/{sub}/-/packages/npm/@babel%2Fcore now",
+        "ns",
+        ("sub",),
+        ("@babel%2Fcore",),
     ),
 ]
 """Forge route grammars (0.21, B1; 0.22: the Web IDE and the owner-root identity slots): name, template, where it is met (``ns``: any host, the recorded instance included; ``third_party``: a Gitea or Bitbucket host, never the instance, which is GitHub or GitLab), the identity segments, the route words that must stay."""
@@ -1266,8 +1280,9 @@ def route_cells() -> list[Cell]:
     0.22 adds, on the same host classes, every forge's reserved words in
     two shapes (nothing is learnt, the word stays) and the npm tarball
     grammar on the route hosts and on five registry hosts; 0.23 adds the
-    five shapes of GitLab's npm registry, whose ``@<scope>`` is a root
-    group (the package name stays).
+    five shapes of GitLab's npm registry, and 0.24 two forwarded public
+    scopes: what follows ``packages/npm/`` names no one, its ``@<scope>``
+    included (NG4-15), while what stands before it reads as a route.
     """
     out: list[Cell] = []
     leads = (("https", "https://"), ("http", "http://"))
@@ -1305,13 +1320,29 @@ NEEDLE_MIN = 4
 """D7: the shortest value a structured source may hold; a shorter one is a configuration error."""
 
 
-def remote_cells() -> list[Cell]:
-    """A recorded remote whose namespace is a reserved word (0.23, B1): the remote names a repository by construction.
+NESTED_SHAPES: tuple[tuple[str, str], ...] = (
+    ("dash", "see https://{host}/{word}/kvnsub/zqmainrepo/-/merge_requests/1 and kvnsub"),
+    ("page", "see https://{host}/{word}/kvnsub/zqmainrepo and https://{host}/{word}/kvnsub now"),
+    ("scp", "clone git@{host}:{word}/kvnsub/zqmainrepo.git now"),
+)
+"""A nested remote under a reserved root word met in text (0.24, B1-a): a route after ``/-/``, the project and group pages, the clone address."""
 
-    The reserved-word rule is a URL path's; the remote's namespace and
-    repository are values on every word of the sweep's own table that an
-    account may carry, and one shorter than :data:`NEEDLE_MIN` is the D7
-    configuration error, refused by name.
+ARGV_SHAPES: tuple[tuple[str, str], ...] = (
+    ("github", "repos/{word}/kvnbilling/pulls/5/comments"),
+    ("gitlab", "projects/{word}%2Fkvnbilling/merge_requests/1/notes"),
+    ("gitlab_nested", "api/v4/projects/{word}%2Fkvnsub%2Fkvnbilling/issues"),
+)
+"""An argv API path naming a project whose namespace is a reserved word (0.24, B1-b): a structured source, read by construction."""
+
+
+def remote_cells() -> list[Cell]:
+    """A recorded remote or an argv API path whose namespace is a reserved word (0.23, B1; 0.24, B1-a and B1-b): both name a repository by construction.
+
+    The reserved-word rule is a URL path's; the namespace and repository of
+    a remote, flat or nested, and of an argv ``repos/<o>/<r>`` or
+    ``projects/<ns>%2F<r>`` path are values on every word of the sweep's own
+    table that an account may carry, and one shorter than
+    :data:`NEEDLE_MIN` is the D7 configuration error, refused by name.
     """
     out: list[Cell] = []
     words = sorted({w for forge in RESERVED_WORDS.values() for w in forge})
@@ -1319,6 +1350,36 @@ def remote_cells() -> list[Cell]:
         if not word[0].isalnum() or not all(c.isalnum() or c == "-" for c in word):
             continue
         short = len(word) < NEEDLE_MIN
+        for shape, template in NESTED_SHAPES:
+            out.append(
+                Cell(
+                    id=f"remote:nested:{word}:{shape}",
+                    rule="routes",
+                    text=template.format(host=KNOWN_HOST, word=word),
+                    category=REFUSED if short else PLANTED,
+                    markers=() if short else (KNOWN_HOST, "kvnsub", "zqmainrepo"),
+                    note="a short namespace is a configuration error (D7)"
+                    if short
+                    else "a nested remote names a repository by construction",
+                    prefix="needle segment" if short else "",
+                    remote=f"git@{KNOWN_HOST}:{word}/kvnsub/zqmainrepo.git",
+                )
+            )
+        for shape, template in ARGV_SHAPES:
+            out.append(
+                Cell(
+                    id=f"argv:{shape}:{word}",
+                    rule="routes",
+                    text=template.format(word=word),
+                    category=REFUSED if short else PLANTED,
+                    markers=() if short else ("kvnbilling", f"/{word}/", f"{word}%2f"),
+                    note="a short namespace is a configuration error (D7)"
+                    if short
+                    else "an argv API path names a repository by construction",
+                    prefix="needle segment" if short else "",
+                    position="argv",
+                )
+            )
         out.append(
             Cell(
                 id=f"remote:{word}",
@@ -1452,6 +1513,8 @@ def sample(cell: Cell) -> Sample:
         return Sample(extra_item={"notes": [text, "x"]}, **base)
     if position == "json_key":
         return Sample(top_kwargs={text: 1}, **base)
+    if position == "argv":
+        return Sample(api_path=text, body="ok", **base)
     if position == "ci_log":
         return Sample(
             raw_text_stdout=f"[2026-11-22T10:00:00Z] step 3/7\n{text}\nDone in 2.1s\n", **base

@@ -9944,7 +9944,7 @@ ROWS: tuple[Row, ...] = (
         markers=(FAKE_HOST, FAKE_REPO),
     ),
     Row(
-        id="v23_gitlab_npm_scope_on_the_instance_endpoint_is_the_root_group",
+        id="v23_gitlab_npm_scope_on_the_instance_endpoint_is_ordinary_text_NG4_15",
         source="verify022/cells22.py",
         inp=Sample(
             forge="gitlab",
@@ -9952,12 +9952,12 @@ ROWS: tuple[Row, ...] = (
             body=f"resolved https://{FAKE_HOST}/api/v4/packages/npm/@kvnteam/kvnpkg/-/kvnpkg-1.0.0.tgz and @kvnteam/kvnpkg",
         ),
         outcome=Written(
-            text="resolved https://forge.example.com/api/v4/packages/npm/@org/kvnpkg/-/kvnpkg-1.0.0.tgz and @org/kvnpkg"
+            text="resolved https://forge.example.com/api/v4/packages/npm/@kvnteam/kvnpkg/-/kvnpkg-1.0.0.tgz and @kvnteam/kvnpkg"
         ),
-        markers=(FAKE_HOST, "kvnteam"),
+        markers=(FAKE_HOST,),
     ),
     Row(
-        id="v23_gitlab_npm_scope_on_the_project_endpoint_file_name_carries_it",
+        id="v23_gitlab_npm_scope_in_the_project_endpoint_file_name_is_ordinary_text_NG4_15",
         source="fable023/probe1.py",
         inp=Sample(
             forge="gitlab",
@@ -9965,12 +9965,12 @@ ROWS: tuple[Row, ...] = (
             body=f"resolved https://{FAKE_HOST}/api/v4/projects/123/packages/npm/@kvnteam/kvnpkg/-/@kvnteam/kvnpkg-1.0.0.tgz now",
         ),
         outcome=Written(
-            text="resolved https://forge.example.com/api/v4/projects/123/packages/npm/@org/kvnpkg/-/@org/kvnpkg-1.0.0.tgz now"
+            text="resolved https://forge.example.com/api/v4/projects/123/packages/npm/@kvnteam/kvnpkg/-/@kvnteam/kvnpkg-1.0.0.tgz now"
         ),
-        markers=(FAKE_HOST, "kvnteam"),
+        markers=(FAKE_HOST,),
     ),
     Row(
-        id="v23_gitlab_npm_scope_on_the_group_endpoint_is_the_root_group",
+        id="v23_gitlab_npm_scope_on_the_group_endpoint_is_ordinary_text_NG4_15",
         source="verify022/cells22.py",
         inp=Sample(
             forge="gitlab",
@@ -9978,31 +9978,33 @@ ROWS: tuple[Row, ...] = (
             body=f"resolved https://{FAKE_HOST}/api/v4/groups/123/-/packages/npm/@kvnteam/kvnpkg/-/kvnpkg-1.0.0.tgz now",
         ),
         outcome=Written(
-            text="resolved https://forge.example.com/api/v4/groups/org/-/packages/npm/@org/kvnpkg/-/kvnpkg-1.0.0.tgz now"
+            text="resolved https://forge.example.com/api/v4/groups/org/-/packages/npm/@kvnteam/kvnpkg/-/kvnpkg-1.0.0.tgz now"
         ),
-        markers=(FAKE_HOST, "kvnteam"),
+        markers=(FAKE_HOST,),
     ),
     Row(
-        id="v23_gitlab_npm_scope_in_the_encoded_metadata_path",
+        id="v23_gitlab_npm_scope_in_the_encoded_metadata_path_is_ordinary_text_NG4_15",
         source="fable023/probe1.py",
         inp=Sample(
             forge="gitlab",
             remote=f"git@{FAKE_HOST}:{FAKE_NS}/{FAKE_REPO}.git",
             body=f"GET https://{FAKE_HOST}/api/v4/packages/npm/@kvnteam%2Fkvnpkg now",
         ),
-        outcome=Written(text="GET https://forge.example.com/api/v4/packages/npm/@org%2Fkvnpkg now"),
-        markers=(FAKE_HOST, "kvnteam"),
+        outcome=Written(
+            text="GET https://forge.example.com/api/v4/packages/npm/@kvnteam%2Fkvnpkg now"
+        ),
+        markers=(FAKE_HOST,),
     ),
     Row(
-        id="v23_gitlab_npm_scope_on_a_third_party_instance",
+        id="v23_gitlab_npm_scope_on_a_third_party_instance_is_ordinary_text_NG4_15",
         source="fable023/probe1.py",
         inp=Sample(
             body="resolved https://code.kvncloud.io/api/v4/packages/npm/@kvnteam/kvnpkg/-/kvnpkg-1.0.0.tgz now"
         ),
         outcome=Written(
-            text="resolved https://forge.example.com/api/v4/packages/npm/@org/kvnpkg/-/kvnpkg-1.0.0.tgz now"
+            text="resolved https://forge.example.com/api/v4/packages/npm/@kvnteam/kvnpkg/-/kvnpkg-1.0.0.tgz now"
         ),
-        markers=("code.kvncloud.io", "kvnteam"),
+        markers=("code.kvncloud.io",),
     ),
     Row(
         id="v23_gitlab_npm_unscoped_package_names_no_one",
@@ -10047,6 +10049,119 @@ ROWS: tuple[Row, ...] = (
         ),
         outcome=Written(text="see https://forge.example.com/API/V4/Repos/org/project and project"),
         markers=("code.kvncloud.io", "kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v24_nested_remote_under_reserved_root_marketplace_is_one_namespace",
+        source="verify023/cells23.py",
+        inp=Sample(
+            forge="gitlab",
+            remote=f"git@{FAKE_HOST}:marketplace/kvnsub/{FAKE_REPO}.git",
+            ns="marketplace/kvnsub",
+            body=f"see https://{FAKE_HOST}/marketplace/kvnsub/{FAKE_REPO}/-/merge_requests/1 and kvnsub",
+        ),
+        outcome=Written(
+            text="see https://forge.example.com/org/project/-/merge_requests/1 and org"
+        ),
+        markers=(FAKE_HOST, "kvnsub", FAKE_REPO),
+    ),
+    Row(
+        id="v24_nested_remote_under_reserved_root_uploads_project_and_group_pages",
+        source="verify023/cells23.py",
+        inp=Sample(
+            forge="gitlab",
+            remote=f"git@{FAKE_HOST}:uploads/kvnsub/{FAKE_REPO}.git",
+            ns="uploads/kvnsub",
+            body=f"see https://{FAKE_HOST}/uploads/kvnsub/{FAKE_REPO} and https://{FAKE_HOST}/uploads/kvnsub now",
+        ),
+        outcome=Written(
+            text="see https://forge.example.com/org/project and https://forge.example.com/org now"
+        ),
+        markers=(FAKE_HOST, "kvnsub", FAKE_REPO),
+    ),
+    Row(
+        id="v24_nested_remote_under_reserved_root_settings_clone_address",
+        source="verify023/cells23.py",
+        inp=Sample(
+            forge="gitlab",
+            remote=f"git@{FAKE_HOST}:settings/kvnsub/{FAKE_REPO}.git",
+            ns="settings/kvnsub",
+            body=f"clone git@{FAKE_HOST}:settings/kvnsub/{FAKE_REPO}.git now",
+        ),
+        outcome=Written(text="clone git@forge.example.com:org/project.git now"),
+        markers=(FAKE_HOST, "kvnsub", FAKE_REPO),
+    ),
+    Row(
+        id="v24_argv_github_repos_path_with_a_reserved_owner_is_read",
+        source="verify023/cells23.py",
+        inp=Sample(body="ok", api_path="repos/assets/kvnbilling/pulls/5/comments"),
+        outcome=Written(text='["api", "repos/org/project/pulls/5/comments"]'),
+        markers=("kvnbilling", "repos/assets"),
+    ),
+    Row(
+        id="v24_argv_gitlab_encoded_project_with_a_reserved_namespace_is_read",
+        source="verify023/cells23.py",
+        inp=Sample(
+            forge="gitlab",
+            remote=f"git@{FAKE_HOST}:{FAKE_NS}/{FAKE_REPO}.git",
+            body="ok",
+            api_path="projects/settings%2Fkvnbilling/merge_requests/1/notes",
+        ),
+        outcome=Written(text='["api", "projects/org%2Fproject/merge_requests/1/notes"]'),
+        markers=("kvnbilling", "settings%2f"),
+    ),
+    Row(
+        id="v24_forwarded_types_scope_next_to_a_gitlab_npm_url_stays_in_code",
+        source="verify023/cells23.py",
+        inp=Sample(
+            forge="gitlab",
+            remote=f"git@{FAKE_HOST}:{FAKE_NS}/{FAKE_REPO}.git",
+            raw_text_stdout="diff --git a/x.log b/x.log\n--- a/x.log\n+++ b/x.log\n@@ -1 +1,2 @@\n"
+            f"+npm http fetch GET 200 https://{FAKE_HOST}/api/v4/packages/npm/@types%2fnode\n"
+            '+import type { X } from "@types/node"\n',
+        ),
+        outcome=Written(
+            text="diff --git a/x.log b/x.log\n--- a/x.log\n+++ b/x.log\n@@ -1 +1,2 @@\n"
+            "+npm http fetch GET 200 https://forge.example.com/api/v4/packages/npm/@types%2fnode\n"
+            '+import type { X } from "@types/node"\n'
+        ),
+        markers=(FAKE_HOST,),
+    ),
+    Row(
+        id="v24_forwarded_babel_scope_on_a_gitlab_project_endpoint_stays_in_code",
+        source="verify023/cells23.py",
+        inp=Sample(
+            forge="gitlab",
+            remote=f"git@{FAKE_HOST}:{FAKE_NS}/{FAKE_REPO}.git",
+            body=f"resolved https://{FAKE_HOST}/api/v4/projects/123/packages/npm/@babel/core/-/core-7.24.0.tgz and import x from '@babel/core'",
+        ),
+        outcome=Written(
+            text="resolved https://forge.example.com/api/v4/projects/123/packages/npm/@babel/core/-/core-7.24.0.tgz and import x from '@babel/core'"
+        ),
+        markers=(FAKE_HOST,),
+    ),
+    Row(
+        id="v24_company_scope_on_its_own_registry_is_ordinary_text_NG4_15",
+        source="verify023/cells23.py",
+        inp=Sample(
+            body="resolved https://npm.kvncorp.net/@kvncorp/kvnpkg/-/kvnpkg-1.0.0.tgz and @kvncorp/kvnpkg"
+        ),
+        outcome=Written(
+            text="resolved https://forge.example.com/@kvncorp/kvnpkg/-/kvnpkg-1.0.0.tgz and @kvncorp/kvnpkg"
+        ),
+        markers=("npm.kvncorp.net",),
+    ),
+    Row(
+        id="v24_gitlab_npm_scope_equal_to_the_remote_namespace_is_replaced",
+        source="fix024/probe_cell.py",
+        inp=Sample(
+            forge="gitlab",
+            remote=f"git@{FAKE_HOST}:{FAKE_NS}/{FAKE_REPO}.git",
+            body=f"resolved https://{FAKE_HOST}/api/v4/packages/npm/@{FAKE_NS}/kvnpkg/-/kvnpkg-1.0.0.tgz and @{FAKE_NS}/kvnpkg",
+        ),
+        outcome=Written(
+            text="resolved https://forge.example.com/api/v4/packages/npm/@org/kvnpkg/-/kvnpkg-1.0.0.tgz and @org/kvnpkg"
+        ),
+        markers=(FAKE_HOST, FAKE_NS),
     ),
 )
 
@@ -10458,8 +10573,8 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
     assert all(_is_planted(row) for row in residual)
     refused = [row for row in ROWS if isinstance(row.outcome, Refused)]
     assert (len(ROWS), len(planted), len(ordinary), len(refused), len(residual)) == (
-        844,
-        583,
+        853,
+        592,
         261,
         74,
         18,
