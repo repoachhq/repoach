@@ -5517,6 +5517,23 @@ def test_an_owner_root_reads_the_identity_slots_of_its_grammar() -> None:
     )
 
 
+def test_the_owner_root_stops_at_the_first_dash() -> None:
+    """D1b (0.22, the 0.21 verifier's survivor N14): after an owner root the owner ends at the FIRST ``-``; a second ``-`` deeper in the route is part of the route."""
+    identity = recording.path_identity
+    assert identity(["groups", "zqg", "-", "epics", "-", "x"]) == recording.PathIdentity(
+        ["groups", "org", "-", "epics", "-", "x"], ("zqg",)
+    )
+    assert identity(["users", "zqu", "-", "snippets", "-", "raw"]) == recording.PathIdentity(
+        ["users", "org", "-", "snippets", "-", "raw"], ("zqu",)
+    )
+    assert identity(["groups", "zqg", "zqs", "-", "-", ""]) == recording.PathIdentity(
+        ["groups", "org", "-", "-", ""], ("zqg", "zqs")
+    )
+    assert redact_url("https://code.kvncloud.io/groups/zqg/-/epics/-/x") == (
+        "https://forge.example.com/groups/org/-/epics/-/x"
+    )
+
+
 def test_a_package_tarball_before_a_dash_names_no_one() -> None:
     """D1b, D7 source 3, D8 (0.22): ``<pkg>/-/<pkg>-<version>.tgz`` is a registry grammar on every host, the package neither namespace nor repository; yarnpkg.com and npmmirror.com join the allowlist."""
     identity = recording.path_identity
