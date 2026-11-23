@@ -1077,8 +1077,8 @@ class PathIdentity:
 _API_VERSION_RE = re.compile(r"^v[0-9]+$", re.I)
 """An API version path segment such as ``v3`` or ``v4`` (0.15 R8-D2)."""
 
-_API_RESOURCES: tuple[str, ...] = ("repos", "users", "orgs", "apps")
-"""First path segments of a GitHub API route that name an owner: ``repos/<o>/<r>``, ``users/<u>``."""
+_API_RESOURCES: tuple[str, ...] = ("repos", "users", "orgs", "apps", "groups")
+"""First path segments of a forge route that name an owner next: ``repos/<o>/<r>``, ``users/<u>``, GitLab's ``groups/<g>`` (0.21)."""
 
 
 def path_identity(segments: list[str]) -> PathIdentity:
@@ -1090,7 +1090,11 @@ def path_identity(segments: list[str]) -> PathIdentity:
     disagree on which segment named someone. Empty segments from double
     slashes (``org//repo``, ``repos//o/r``, ``users//u``) are collapsed
     so they never shift or leak a real segment (0.12, D4); a trailing
-    slash is preserved.
+    slash is preserved. Everything before a GitLab ``/-/`` separator is
+    an identity (0.21, B1): one segment is a namespace (``<group>/-/issues``,
+    ``<user>/-/snippets``), two or more are the namespace and the
+    repository, and after an owner root (``groups/<g>/<sub>/-/epics``)
+    every segment up to the separator is the namespace.
     """
     core = [s for s in segments if s]
     if not core:
@@ -1126,14 +1130,18 @@ def path_identity(segments: list[str]) -> PathIdentity:
             _bare(core[2]),
         )
     if core[0] in _API_RESOURCES and len(core) >= 2:
+        stop = core.index("-") if "-" in core else 2
+        owner = core[1:stop]
         return PathIdentity(
-            [core[0], PLACEHOLDER_NAMESPACE, *core[2:], *trailing],
-            (core[1],),
+            [core[0], *([PLACEHOLDER_NAMESPACE] if owner else []), *core[stop:], *trailing],
+            tuple(owner),
         )
     if core[0].casefold() == "projects" and len(core) >= 2 and core[1].isdigit():
         return PathIdentity([*core, *trailing])
     if "-" in core:
         dash = core.index("-")
+        if dash == 1:
+            return PathIdentity([PLACEHOLDER_NAMESPACE, *core[1:], *trailing], (core[0],))
         if dash >= 2:
             return PathIdentity(
                 [PLACEHOLDER_NAMESPACE, _project(core[dash - 1]), *core[dash:], *trailing],
@@ -2176,8 +2184,8 @@ _ENCODED_PROJECT_RE = re.compile(
 _PATH_END = "\"'<>()[]{}\\,`*|?# \t\r\n"
 """Characters that end the path read after a host (D7 source 3)."""
 
-_API_ROOTS: frozenset[str] = frozenset({"api", "repos", "users", "orgs", "apps"})
-"""First path segments whose identity needs more than two segments."""
+_API_ROOTS: frozenset[str] = frozenset({"api", "repos", "users", "orgs", "apps", "groups"})
+"""First path segments whose identity needs more than two segments (0.21: GitLab's ``groups``)."""
 
 
 def _literals() -> tuple[str, ...]:
@@ -2236,13 +2244,14 @@ def _api_route(path: Sequence[str]) -> bool:
     """Whether ``path`` names an owner through an API root (``users/<u>``, ``repos/<o>/<r>``, ``api/v<N>/…``).
 
     A text path names someone only with both a namespace and a
-    repository, or through such a root; a lone segment after a host
-    (``/docs``, ``/health``, ``/explore``) is a page, not an identity
-    (D7 source 3, NG4-11), so the word is not learnt and not replaced
-    wherever else it stands.
+    repository, or through such a root, or before a GitLab ``/-/``
+    separator (``<group>/-/issues``, 0.21 B1: everything before ``-`` is
+    an identity); a lone segment after a host (``/docs``, ``/health``,
+    ``/explore``) is a page, not an identity (D7 source 3, NG4-11), so
+    the word is not learnt and not replaced wherever else it stands.
     """
     named = [s for s in path if s]
-    return bool(named) and named[0].casefold() in _API_ROOTS
+    return bool(named) and (named[0].casefold() in _API_ROOTS or "-" in named[1:])
 
 
 def _path_after(text: str, end: int) -> list[str]:

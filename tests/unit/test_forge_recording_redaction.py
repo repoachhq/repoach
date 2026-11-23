@@ -176,9 +176,9 @@ def test_url_values_keep_their_shape_with_placeholder_host_and_namespace() -> No
         == "https://forge.example.com/org/project/-/merge_requests/7"
     )
     assert redact_url("https://b.example/-/jobs/5") == "https://forge.example.com/-/jobs/5"
-    assert redact_url("https://b.example/foo/-/jobs/5") == "https://forge.example.com/foo/-/jobs/5"
+    assert redact_url("https://b.example/foo/-/jobs/5") == "https://forge.example.com/org/-/jobs/5"
     assert recording.path_identity(["foo", "-", "jobs", "5"]) == recording.PathIdentity(
-        ["foo", "-", "jobs", "5"]
+        ["org", "-", "jobs", "5"], ("foo",)
     )
     assert redact_url("https://b.example/g/s/r") == "https://forge.example.com/org/project"
     assert (
@@ -4002,8 +4002,18 @@ def test_path_identity_names_the_namespace_and_the_repository_by_enumeration() -
     assert dashed.segments == ["org", "project", "-", "issues", "3", ""]
     assert (dashed.namespace, dashed.repository) == (("zqg", "zqs"), "zqr")
     assert identity(["zqg", "zqr", "-", "issues"]).segments == ["org", "project", "-", "issues"]
-    assert identity(["foo", "-", "jobs", "5"]) == recording.PathIdentity(["foo", "-", "jobs", "5"])
+    assert identity(["foo", "-", "jobs", "5"]) == recording.PathIdentity(
+        ["org", "-", "jobs", "5"], ("foo",)
+    )
     assert identity(["-", "jobs"]) == recording.PathIdentity(["-", "jobs"])
+    group = identity(["groups", "zqg", "zqs", "-", "epics", "3"])
+    assert group == recording.PathIdentity(["groups", "org", "-", "epics", "3"], ("zqg", "zqs"))
+    assert identity(["groups", "zqg"]) == recording.PathIdentity(["groups", "org"], ("zqg",))
+    assert identity(["groups", "-", "x"]) == recording.PathIdentity(["groups", "-", "x"])
+    user = identity(["users", "zqu", "-", "snippets"])
+    assert user == recording.PathIdentity(["users", "org", "-", "snippets"], ("zqu",))
+    assert identity(["api", "v4", "groups", "zqg", "projects"]).namespace == ("zqg",)
+    assert identity(["projects", "88442211", "-", "issues"]).namespace == ()
     assert identity(["zqo", "zqr"]).segments == ["org", "project"]
     assert identity(["zqo", "zqr.git"]).segments == ["org", "project.git"]
     assert identity(["zqo"]).segments == ["org"]
@@ -4583,12 +4593,12 @@ def test_remaining_edges_of_the_path_reader_the_roles_and_the_soft_names() -> No
         "123",
         "",
     ]
-    assert identity(["foo", "-", "jobs", ""]).segments == ["foo", "-", "jobs", ""]
+    assert identity(["foo", "-", "jobs", ""]).segments == ["org", "-", "jobs", ""]
     deep = identity(["zqa", "zqb", "zqc.git", "-", "x"])
     assert deep.segments == ["org", "project.git", "-", "x"]
     assert (deep.namespace, deep.repository) == (("zqa", "zqb"), "zqc")
-    assert {"api", "repos", "users", "orgs", "apps"} == recording._API_ROOTS
-    for root in ("api", "repos", "users", "orgs", "apps"):
+    assert {"api", "repos", "users", "orgs", "apps", "groups"} == recording._API_ROOTS
+    for root in ("api", "repos", "users", "orgs", "apps", "groups"):
         assert recording._follow_segments([root, "x", "y", "z"], full=False) == [
             root,
             "x",
@@ -5180,9 +5190,30 @@ def test_a_lone_path_segment_after_a_host_is_a_page_not_a_namespace() -> None:
         ("https://api.kvncloud.io/orgs/kvnteam/repos", ["kvnteam"]),
         ("https://api.kvncloud.io/repos/kvnteam/kvnbilling/pulls", ["kvnteam", "kvnbilling"]),
         ("https://api.kvncloud.io/api/v3/users/kvnperson", ["kvnperson"]),
+        ("see https://code.kvncloud.io/kvnteam/-/issues?label_name=bug now", ["kvnteam"]),
+        ("see https://code.kvncloud.io/kvnteam/-/merge_requests now", ["kvnteam"]),
+        ("see https://gitlab.com/kvnteam/-/merge_requests now", []),
+        ("see //code.kvncloud.io/kvnteam/-/epics/12 now", ["kvnteam"]),
+        ("see https://code.kvncloud.io/groups/kvnteam/-/issues now", ["kvnteam"]),
+        ("see https://code.kvncloud.io/groups/kvnteam/kvnsub/-/epics now", ["kvnteam", "kvnsub"]),
+        ("see https://code.kvncloud.io/users/kvnperson/-/snippets now", ["kvnperson"]),
+        (
+            "see https://code.kvncloud.io/kvnteam/kvnbilling/-/issues/1 now",
+            ["kvnteam", "kvnbilling"],
+        ),
+        ("see https://code.kvncloud.io/-/jobs/5 and https://code.kvncloud.io/-/snippets now", []),
     ):
         found = needles(_one_call({"body": body}), roles={})
         assert _kinds(found, "segment") == segments, body
+    assert recording._api_route(["kvnteam", "-", "issues"]) and recording._api_route(["x", "-"])
+    assert not recording._api_route(["-", "jobs", "5"]) and not recording._api_route(["-"])
+    dashed = needles(
+        _one_call({"body": "see https://code.kvncloud.io/kvnteam/-/issues and the kvnteam group"}),
+        roles={},
+    )
+    assert recording.replace_known(
+        "see https://code.kvncloud.io/kvnteam/-/issues and the kvnteam group", dashed
+    ) == ("see https://forge.example.com/org/-/issues and the org group")
     found = needles(
         _one_call({"body": "open https://code.kvncloud.io/docs and read the docs"}), roles={}
     )
@@ -5202,6 +5233,12 @@ def test_a_lone_path_segment_after_a_host_is_a_page_not_a_namespace() -> None:
     )
     assert "explore" not in _kinds(instance, "segment")
     assert {"zqgroup", "zqother"} <= set(_kinds(instance, "segment"))
+    group_route = needles(
+        _one_call({"body": "see https://git.zqcorp.io/zqother/-/issues now"}),
+        roles={},
+        remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git",
+    )
+    assert "zqother" in _kinds(group_route, "segment")
 
 
 def test_nothing_is_read_after_a_placeholder_class_host() -> None:
