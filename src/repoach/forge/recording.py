@@ -2416,6 +2416,19 @@ def _walk_dicts(node: object) -> list[dict[str, object]]:
     return []
 
 
+def _argv_strings(node: object) -> list[str]:
+    """Every argv string of the recorded calls: the ``args`` of an exchange (``args`` and ``stdout``), never a string's decoded JSON (0.25)."""
+    if isinstance(node, dict):
+        found = [d for v in node.values() for d in _argv_strings(v)]
+        argv = node.get("args")
+        if "stdout" in node and isinstance(argv, list):
+            found += [a for a in argv if isinstance(a, str)]
+        return found
+    if isinstance(node, list):
+        return [d for v in node for d in _argv_strings(v)]
+    return []
+
+
 def _follow_segments(segments: list[str], *, full: bool) -> list[str]:
     """The segments after a host that name its namespace and repository.
 
@@ -2498,7 +2511,11 @@ def known_values(
     their namespace is every segment but the last whatever the words, and
     a namespace of two segments or more is a value as each of its leading
     paths too (``<a>/<b>`` -> ``org``), so a text path the route grammar
-    keeps as it stands is written as the grammar writes any other.
+    keeps as it stands is written as the grammar writes any other. An
+    argv API path is an argv string of a recorded call
+    (:func:`_argv_strings`, 0.25) and nothing else: a body, a field or a
+    review comment's ``path`` led by ``repos/`` or ``projects/`` is text,
+    read by the text readers only.
 
     Args:
         raw: The exchanges as the forge printed them, the method's
@@ -2625,8 +2642,9 @@ def known_values(
                     if not is_public_forge_host(host):
                         _segments([s for s in parts.path.split("/") if s], hard=True)
 
-    for _path, text in strings:
+    for text in _argv_strings(raw):
         _segments(_api_project(text), hard=True, remote=True)
+    for _path, text in strings:
         for found in _ENCODED_PROJECT_RE.finditer(text):
             _segments(unquote(found.group("path")).split("/"), hard=False)
         for form in closure.decoded_forms(text):

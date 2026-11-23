@@ -5767,6 +5767,37 @@ def test_every_hard_identity_path_reads_a_repository_path_by_construction() -> N
     assert _kinds(found, "segment") == ["zqgroup", "zqmainrepo"]
 
 
+def test_only_an_argv_string_is_read_as_an_api_path() -> None:
+    """D7 source 1 (0.25): ``_api_project`` reads the argv of a recorded call and no other string; a body, a field or a review comment's ``path`` led by ``repos/<word>/…`` or ``projects/<word>%2F…`` is text, so neither a reserved word nor a plain directory name is learnt from it, while the same path in argv is still read by construction."""
+    texts = (
+        "repos/public/main.py should stay public",
+        "repos/settings/defaults.yaml holds the settings",
+        "projects/help%2Fwiki is where help lives",
+        "repos/frontend/main.py should stay frontend",
+    )
+    for text in texts:
+        found = needles(_one_call({"body": text}), roles={})
+        assert _kinds(found, "segment") == [], text
+        assert recording.replace_known(text, found) == text
+    field = needles(
+        _one_call({"body": "move the assets folder", "path": "repos/assets/logo.png"}), roles={}
+    )
+    assert _kinds(field, "segment") == []
+    assert recording._argv_strings(_one_call({"body": "x"}, ["api", "repos/a/b"])) == [
+        "api",
+        "repos/a/b",
+    ]
+    assert recording._argv_strings([{"args": ["api", "repos/a/b"]}, ["repos/c/d"]]) == []
+    stdout = json.dumps([{"args": ["repos/settings/kvnbilling"], "stdout": ""}])
+    assert recording._argv_strings(_one_call(stdout)) == ["api", "x"]
+    for args, segments in (
+        (["api", "repos/settings/kvnbilling/pulls/5/comments"], ["settings", "kvnbilling"]),
+        (["api", "projects/help%2Fkvnbilling/merge_requests/1/notes"], ["help", "kvnbilling"]),
+    ):
+        found = needles(_one_call({"body": "ok"}, args), roles={})
+        assert _kinds(found, "segment") == segments, args
+
+
 def test_an_npm_scope_is_never_learnt_on_any_registry() -> None:
     """D1b, D7 source 3 (0.24, B2-c; NG4-15): what follows ``packages/npm/`` of GitLab's npm registry names no one, its ``@<scope>`` included, on the instance, project and group endpoints and in the file name: package forwarding brings ``@types`` and ``@babel`` there and the project and group endpoints impose no scope naming, so a scope read from a URL is never learnt on any registry; a scope equal to a known namespace (the remote's) is replaced as that value; the prefix before ``packages/npm`` reads as at 0.22."""
     identity = recording.path_identity
