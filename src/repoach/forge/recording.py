@@ -2429,6 +2429,43 @@ def _argv_strings(node: object) -> list[str]:
     return []
 
 
+PROVENANCE: tuple[tuple[str, str], ...] = (
+    ("remote", "repository"),
+    ("url_field", "route"),
+    ("argv", "repository"),
+    ("text", "text"),
+)
+"""THE rule of which source names an identity, and how (0.26): ``(source, reading)``, in learning order.
+
+Every namespace and repository :func:`known_values` learns from a path
+comes from one row, and no reading runs outside it:
+
+- ``remote``: the checkout's ``origin`` remote. Reading ``repository``:
+  hard, by construction (``path_identity(remote=True)``): the namespace
+  is every segment but the last whatever the words, the last is the
+  repository, and a namespace of two segments or more is a value as each
+  of its leading paths too.
+- ``url_field``: a :data:`URL_KEYS` value of a decoded answer, on a host
+  that is not public. Reading ``route``: hard, through the route grammar
+  of :func:`path_identity` (reserved words apply), and no joined value
+  (0.25, V09).
+- ``argv``: an ``args`` string of a recorded exchange
+  (:func:`_argv_strings`, every exchange) naming an API project
+  (:func:`_api_project`). Reading ``repository``, as the remote.
+- ``text``: every string of the fixture (:func:`fixture_strings`), the
+  three sources above included. Reading ``text``: soft, never refusing
+  a recording: the hosts and the paths after them
+  (:func:`repoach.forge.closure.hosts`, :func:`_follow_segments`) and a
+  GitLab ``projects/<group>%2F<repo>`` token (:data:`_ENCODED_PROJECT_RE`).
+
+The order is the learning order: a value two rows name keeps the class
+of the first, so a value a URL field names as a namespace stays ``org``
+when an argv path names it as a repository. Logins, names, mailboxes and
+user and repository ids are structured fields read by their keys, not
+paths, and are outside this table.
+"""
+
+
 def _follow_segments(segments: list[str], *, full: bool) -> list[str]:
     """The segments after a host that name its namespace and repository.
 
@@ -2511,11 +2548,12 @@ def known_values(
     their namespace is every segment but the last whatever the words, and
     a namespace of two segments or more is a value as each of its leading
     paths too (``<a>/<b>`` -> ``org``), so a text path the route grammar
-    keeps as it stands is written as the grammar writes any other. An
-    argv API path is an argv string of a recorded call
-    (:func:`_argv_strings`, 0.25) and nothing else: a body, a field or a
-    review comment's ``path`` led by ``repos/`` or ``projects/`` is text,
-    read by the text readers only.
+    keeps as it stands is written as the grammar writes any other. Which
+    source names a namespace or a repository, and how, is
+    :data:`PROVENANCE` (0.26) and nothing else: an argv API path is an
+    argv string of a recorded call (:func:`_argv_strings`), and a body, a
+    field or a review comment's ``path`` led by ``repos/`` or
+    ``projects/`` is text, read by the text readers only.
 
     Args:
         raw: The exchanges as the forge printed them, the method's
@@ -2602,10 +2640,9 @@ def known_values(
     own = {remote_host} if remote_host and not closure.is_public_host(remote_host) else set()
     for host in sorted(FORGE_HOSTS | own):
         _host(host)
-    if remote_path:
-        _segments(remote_path, hard=True, remote=True)
 
     strings = fixture_strings(raw, "")
+    url_fields: list[str] = []
     for node in _walk_dicts(raw):
         if any(key in node for key in USER_KEYS) or (
             any(key in node for key in _NAME_KEYS) and any(key in node for key in _MAILBOX_KEYS)
@@ -2629,22 +2666,24 @@ def known_values(
                         domain
                     ):
                         _host(domain)
-        for key, item in node.items():
-            if key in URL_KEYS and isinstance(item, str):
-                try:
-                    parts = urlsplit(item.strip())
-                except ValueError as exc:
-                    _log.debug("forge.recording.not_a_url", error=type(exc).__name__)
-                    continue
-                host = parts.hostname or ""
-                if parts.scheme in URL_SCHEMES and host and not _is_allowed_host(host):
-                    _host(host)
-                    if not is_public_forge_host(host):
-                        _segments([s for s in parts.path.split("/") if s], hard=True)
+        url_fields += [v for k, v in node.items() if k in URL_KEYS and isinstance(v, str)]
 
-    for text in _argv_strings(raw):
-        _segments(_api_project(text), hard=True, remote=True)
-    for _path, text in strings:
+    def _repository(path: Sequence[str]) -> None:
+        _segments(path, hard=True, remote=True)
+
+    def _route(item: str) -> None:
+        try:
+            parts = urlsplit(item.strip())
+        except ValueError as exc:
+            _log.debug("forge.recording.not_a_url", error=type(exc).__name__)
+            return
+        host = parts.hostname or ""
+        if parts.scheme in URL_SCHEMES and host and not _is_allowed_host(host):
+            _host(host)
+            if not is_public_forge_host(host):
+                _segments([s for s in parts.path.split("/") if s], hard=True)
+
+    def _text(text: str) -> None:
         for found in _ENCODED_PROJECT_RE.finditer(text):
             _segments(unquote(found.group("path")).split("/"), hard=False)
         for form in closure.decoded_forms(text):
@@ -2665,6 +2704,21 @@ def known_values(
                 )
                 if follow:
                     _segments(follow, hard=False)
+
+    sources: dict[str, list[Any]] = {
+        "remote": [remote_path],
+        "url_field": url_fields,
+        "argv": [_api_project(t) for t in _argv_strings(raw)],
+        "text": [t for _p, t in strings],
+    }
+    readings: dict[str, Callable[[Any], None]] = {
+        "repository": _repository,
+        "route": _route,
+        "text": _text,
+    }
+    for source, reading in PROVENANCE:
+        for item in sources[source]:
+            readings[reading](item)
 
     for number in user_id_values(raw):
         _add_id(number, project=False)

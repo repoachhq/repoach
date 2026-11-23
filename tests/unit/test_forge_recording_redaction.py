@@ -12,6 +12,7 @@ redaction (``scripts/redact_forge_fixtures.py``).
 
 from __future__ import annotations
 
+import ast
 import base64
 import importlib.util
 import inspect
@@ -21,6 +22,7 @@ import re
 import string
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
@@ -5817,6 +5819,93 @@ def test_only_an_argv_string_is_read_as_an_api_path() -> None:
     ):
         found = needles(_one_call({"body": "ok"}, args), roles={})
         assert _kinds(found, "segment") == segments, args
+
+
+def test_the_provenance_table_is_the_one_rule_of_what_names_an_identity() -> None:
+    """D7 (0.26): :data:`recording.PROVENANCE` maps each source to one reading, in learning order, and :func:`known_values` learns a path's namespace and repository through it alone: every ``_segments`` call stands in a reader the table dispatches, and the argv API reader runs once, as a source of the table."""
+    assert recording.PROVENANCE == (
+        ("remote", "repository"),
+        ("url_field", "route"),
+        ("argv", "repository"),
+        ("text", "text"),
+    )
+    tree = ast.parse(textwrap.dedent(inspect.getsource(recording.known_values)))
+    function = tree.body[0]
+    assert isinstance(function, ast.FunctionDef)
+    readers = {
+        node.name: node
+        for node in function.body
+        if isinstance(node, ast.FunctionDef) and node.name in ("_repository", "_route", "_text")
+    }
+    assert set(readers) == {"_repository", "_route", "_text"}
+    inside = {
+        id(call)
+        for reader in readers.values()
+        for call in ast.walk(reader)
+        if isinstance(call, ast.Call)
+    }
+
+    def _calls(name: str) -> list[ast.Call]:
+        return [
+            node
+            for node in ast.walk(function)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == name
+        ]
+
+    segments = _calls("_segments")
+    assert segments and all(id(call) in inside for call in segments)
+    assert len(_calls("_api_project")) == 1 and id(_calls("_api_project")[0]) not in inside
+    dicts = [node for node in ast.walk(function) if isinstance(node, ast.Dict)]
+    keys = [
+        {k.value for k in node.keys if isinstance(k, ast.Constant)}
+        for node in dicts
+        if node.keys and all(isinstance(k, ast.Constant) for k in node.keys)
+    ]
+    assert {source for source, _ in recording.PROVENANCE} in keys
+    assert {reading for _, reading in recording.PROVENANCE} in keys
+
+
+def test_every_exchange_argv_is_read_by_construction() -> None:
+    """D7 source 1 (0.26, B09): ``_argv_strings`` walks every exchange of a recording, so an API path in the argv of a second call is read by construction as the first call's is (a reserved owner included)."""
+    first = _one_call({"body": "ok"}, ["api", "repos/:owner/:repo/issues/42/comments"])[0]
+    second = _one_call({"body": "ok"}, ["api", "repos/settings/kvnbilling/pulls/5"])[0]
+    assert recording._argv_strings([[first, second], [42], {}]) == [
+        "api",
+        "repos/:owner/:repo/issues/42/comments",
+        "api",
+        "repos/settings/kvnbilling/pulls/5",
+    ]
+    for calls in ([first, second], [second, first]):
+        found = needles([calls, [42], {}], roles={})
+        assert _kinds(found, "segment") == ["settings", "kvnbilling"]
+        assert recording.replace_known("repos/settings/kvnbilling/pulls/5", found) == (
+            "repos/org/project/pulls/5"
+        )
+    lone = needles(_one_call({"body": "ok"}, ["repos/settings/kvnbilling/pulls/5"]), roles={})
+    assert _kinds(lone, "segment") == ["settings", "kvnbilling"]
+    body = ["pr", "comment", "--body", " repos/zq/kvnbilling/pulls/1"]
+    assert _kinds(needles(_one_call({"body": "ok"}, body), roles={}), "segment") == []
+    spec = ["api", "repos/SP-RECORDER-REDACTS-BY-CLASS/kvnbilling/pulls/1"]
+    assert _kinds(needles(_one_call({"body": "ok"}, spec), roles={}), "segment") == []
+
+
+def test_a_value_a_url_field_names_as_a_namespace_keeps_its_class() -> None:
+    """D7 (0.26, B19): the URL fields are read before the argv (:data:`recording.PROVENANCE` order), so a value a ``web_url`` names as a namespace and an argv API path as a repository is written ``org``, the class of the first reading."""
+    raw = [
+        _one_call(
+            {"body": "ok", "web_url": "https://git.zqcorp.io/kvnbilling/kvnsub/-/merge_requests/1"},
+            ["api", "projects/kvnteam%2Fkvnbilling/merge_requests/1/notes"],
+        ),
+        [42],
+        {},
+    ]
+    found = needles(raw, roles={}, remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git")
+    assert recording.replace_known("the kvnbilling service", found) == "the org service"
+    assert recording.replace_known("projects/kvnteam%2Fkvnbilling/notes", found) == (
+        "projects/org%2Forg/notes"
+    )
 
 
 def test_an_npm_scope_is_never_learnt_on_any_registry() -> None:
