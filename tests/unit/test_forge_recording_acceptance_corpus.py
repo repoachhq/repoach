@@ -10163,6 +10163,64 @@ ROWS: tuple[Row, ...] = (
         ),
         markers=(FAKE_HOST, FAKE_NS),
     ),
+    Row(
+        id="v25_review_path_field_led_by_repos_and_a_reserved_word_is_ordinary",
+        source="verify024/cells24.py",
+        inp=Sample(body="move the assets folder", extra_item={"path": "repos/assets/logo.png"}),
+        outcome=Written(text="move the assets folder"),
+    ),
+    Row(
+        id="v25_review_path_field_led_by_repos_public_is_ordinary",
+        source="verify024/probe_one.py",
+        inp=Sample(body="make the page public", extra_item={"path": "repos/public/index.html"}),
+        outcome=Written(text="make the page public"),
+    ),
+    Row(
+        id="v25_body_led_by_repos_and_a_reserved_word_is_ordinary",
+        source="verify024/cells24.py",
+        inp=Sample(body="repos/settings/defaults.yaml holds the settings"),
+        outcome=Written(text="repos/settings/defaults.yaml holds the settings"),
+    ),
+    Row(
+        id="v25_body_led_by_an_encoded_project_and_a_reserved_word_is_ordinary",
+        source="verify024/cells24.py",
+        inp=Sample(body="projects/help%2Fwiki is where help lives"),
+        outcome=Written(text="projects/help%2Fwiki is where help lives"),
+    ),
+    Row(
+        id="v25_body_led_by_repos_and_a_plain_directory_is_ordinary",
+        source="verify024/cells24.py",
+        inp=Sample(body="repos/frontend/main.py should stay frontend"),
+        outcome=Written(text="repos/frontend/main.py should stay frontend"),
+    ),
+    Row(
+        id="v25_review_path_field_led_by_repos_and_a_plain_directory_is_ordinary",
+        source="verify024/probe_one.py",
+        inp=Sample(body="the frontend build", extra_item={"path": "repos/frontend/index.html"}),
+        outcome=Written(text="the frontend build"),
+    ),
+    Row(
+        id="v25_argv_repos_path_with_a_reserved_owner_is_still_read_by_construction",
+        source="verify024/probe_one.py",
+        inp=Sample(body="ok", api_path="repos/settings/kvnbilling/pulls/5/comments"),
+        outcome=Written(text='["api", "repos/org/project/pulls/5/comments"]'),
+        markers=("kvnbilling", "repos/settings"),
+    ),
+    Row(
+        id="v25_gitlab_url_field_nested_group_learns_no_joined_namespace",
+        source="verify024/probe_v09.py",
+        inp=Sample(
+            forge="gitlab",
+            remote=f"git@{FAKE_HOST}:{FAKE_NS}/{FAKE_REPO}.git",
+            url=f"https://{FAKE_HOST}/kvnteam/kvnsub/kvnbilling/-/merge_requests/42#note_1",
+            body=f"see https://{FAKE_HOST}/kvnteam/kvnsub/kvnbilling/-/merge_requests/42 "
+            "and kvnteam/kvnsub-old now",
+        ),
+        outcome=Written(
+            text="see https://forge.example.com/org/project/-/merge_requests/42 and org/org-old now"
+        ),
+        markers=(FAKE_HOST, "kvnteam", "kvnsub", "kvnbilling"),
+    ),
 )
 
 
@@ -10573,9 +10631,9 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
     assert all(_is_planted(row) for row in residual)
     refused = [row for row in ROWS if isinstance(row.outcome, Refused)]
     assert (len(ROWS), len(planted), len(ordinary), len(refused), len(residual)) == (
-        853,
-        592,
-        261,
+        861,
+        594,
+        267,
         74,
         18,
     )
