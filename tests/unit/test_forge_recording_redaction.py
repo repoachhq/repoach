@@ -5161,6 +5161,12 @@ def test_an_ipv6_url_in_text_is_rewritten_by_the_convenience_layer_and_is_a_fixe
     assert recording._URL_IN_TEXT_RE.search("http://[bad host]/x") is None
     assert text("see http://[1]/x now") == "see http://[1]/x now"
     assert text("see http:///x and https://:8080/y now") == "see http:///x and https://:8080/y now"
+    assert not recording._kept_host("FORGE.EXAMPLE.COM")
+    assert not recording._kept_host("Forge.Example.Com") and not recording._kept_host(
+        "forge.example.com"
+    )
+    assert recording._kept_host("Docs.GitHub.com") and recording._kept_host("pypi.org")
+    assert not recording._kept_host("code.kvncloud.io")
     for raw, expected in (
         ("x@users.noreply.FORGE.EXAMPLE.COM", "author@users.noreply.forge.example.com"),
         ("BOT@users.noreply.github.com", "bot@users.noreply.forge.example.com"),
@@ -5280,10 +5286,16 @@ def test_known_values_read_the_path_after_a_led_address_only() -> None:
         "see https://10.1.2.3/kvnteam/kvnbilling",
         "see //10.1.2.3/kvnteam/kvnbilling/x",
         "ssh deploy@10.1.2.3:kvnteam/kvnbilling",
+        "see http://10.1.2.3:65432/kvnteam/kvnbilling",
+        "see http://10.1.2.3:8/kvnteam/kvnbilling",
+        "see https://code.kvncloud.io:65535/kvnteam/kvnbilling",
     ):
         found = needles(_one_call({"body": body}), roles={})
         assert {"kvnteam", "kvnbilling"} <= set(_kinds(found, "segment")), body
         assert _kinds(found, "host"), body
+    assert recording._path_after("h.io:65535/a/b", 4) == ["a", "b"]
+    assert recording._path_after("h.io:12345/a/b", 4) == ["a", "b"]
+    assert recording._path_after("h.io:123456/a/b", 4) == []
     for body in (
         "see 104.16.0.1/kvnteam/kvnbilling",
         "see 10.1.2.3/kvnteam/kvnbilling",
@@ -5451,6 +5463,45 @@ def test_offline_roles_walk_the_keyword_arguments_and_refuse_positional_logins()
     positional = {**data, "args": [{"assignees": [{"login": "zqargone"}]}], "kwargs": {}}
     with pytest.raises(redact_fixtures.ResidualValueError, match=r"^residual login 1 at args"):
         redact_fixtures.redact_fixture(positional, forge="github")
+
+
+def test_a_mention_only_handle_equal_to_a_language_word_is_the_documented_residual() -> None:
+    """D2, NG4-13 (0.21, B2): ``@<word>`` of a non-participant whose login is a language word is written; a participant's is a known value."""
+    words = sorted(recording.LANGUAGE_AT_WORDS)
+    assert len(words) >= 400
+    for word in words:
+        assert recording.mentions({"body": f"cc @{word} please review"}) == [], word
+        assert recording.mentions({"title": f"fix: @{word} reported this"}) == [], word
+    none = closure.Known(())
+    for word in ("test", "main", "link", "todo", "state", "model", "param", "override"):
+        assert word in recording.LANGUAGE_AT_WORDS, word
+        body = f"cc @{word} please review, {word}"
+        roles = rec.build_roles(
+            [_exchange([{"user": {"login": word}, "body": body}])],
+            bot="repoach-bot",
+            maintainer=None,
+            author=None,
+        )
+        assert roles == {word: "author"}, word
+        assert recording.classify_text(body, roles) == "cc @author please review, author"
+        known = needles(_one_call([{"user": {"login": word}, "body": body}]), roles=roles)
+        assert word in _kinds(known, "login"), word
+        assert closure.judge(f"cc @{word}", known) == closure.Refusal("residual", "login", 1)
+        mention_only = needles(_one_call({"body": body}), roles={})
+        assert not _kinds(mention_only, "login"), word
+        assert closure.judge(body, mention_only) is None and closure.judge(body, none) is None
+        assert (
+            rec.build_roles(
+                [_exchange([{"body": body}])], bot="repoach-bot", maintainer=None, author=None
+            )
+            == {}
+        )
+    assert rec.build_roles(
+        [_exchange([{"body": "cc @zqxperson"}])], bot="repoach-bot", maintainer=None, author=None
+    ) == {"@zqxperson": "author"}
+    assert recording.redact_urls_in_text("see https://gitlab.com/kvnteam/-/merge_requests") == (
+        "see https://forge.example.com/org/-/merge_requests"
+    )
 
 
 def test_the_recorder_never_raises_on_a_recording_nested_past_the_readers(

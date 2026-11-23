@@ -1570,6 +1570,21 @@ def test_an_ipv6_zone_id_is_part_of_the_literal_and_an_ipv4_tail_is_read() -> No
     for text in ("[1.2.3.4]", "[::ffff:1.2.3]", "[::ffff:999.1.1.1]", "[1:2:3:4:5:6:7:1.2.3.4]"):
         assert closure._ipv6(text) is None, text
     assert closure.public_addresses("ssh [::ffff:51.15.20.30]") == ["[::ffff:51.15.20.30]"]
+    longest = "[0000:0000:0000:0000:0000:ffff:255.255.255.255]"
+    assert len(longest) - 2 == 45 and closure._BRACKETED.fullmatch(longest)
+    assert closure._ipv6(longest) == ipaddress.IPv6Address("::ffff:255.255.255.255")
+    for text in (
+        f"see http://{longest}/kvnteam/kvnbilling",
+        "see http://[2a00:1450:4001:0801:0000:0000:0000:200e]/x",
+        "see http://[0000:0000:0000:0000:0000:ffff:104.16.0.1]/x",
+    ):
+        assert [h.literal for h in closure.hosts(text)] == [True], text
+        assert closure.judge(text, closure.Known(())) == closure.Refusal("unknown host"), text
+    expanded_public = "[0000:0000:0000:0000:0000:ffff:104.16.0.1]"
+    assert closure.public_addresses(f"ssh {expanded_public}") == [expanded_public]
+    assert closure.judge(f"ssh {expanded_public}", closure.Known(())) == closure.Refusal(
+        "public address"
+    )
 
 
 def test_a_bare_or_un_led_ipv6_address_is_the_documented_residual() -> None:
