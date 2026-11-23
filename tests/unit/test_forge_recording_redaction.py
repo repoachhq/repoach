@@ -5767,8 +5767,8 @@ def test_every_hard_identity_path_reads_a_repository_path_by_construction() -> N
     assert _kinds(found, "segment") == ["zqgroup", "zqmainrepo"]
 
 
-def test_a_gitlab_npm_scope_is_a_root_group() -> None:
-    """D1b, D7 source 3 (0.23, B2): the ``@<scope>`` of GitLab's npm registry (``api/vN/…/packages/npm/``) is a root group by construction, on the instance, project and group endpoints and in the file name; the package names no one; a scoped tarball on another host is ordinary text (NG4-15)."""
+def test_an_npm_scope_is_never_learnt_on_any_registry() -> None:
+    """D1b, D7 source 3 (0.24, B2-c; NG4-15): what follows ``packages/npm/`` of GitLab's npm registry names no one, its ``@<scope>`` included, on the instance, project and group endpoints and in the file name: package forwarding brings ``@types`` and ``@babel`` there and the project and group endpoints impose no scope naming, so a scope read from a URL is never learnt on any registry; a scope equal to a known namespace (the remote's) is replaced as that value; the prefix before ``packages/npm`` reads as at 0.22."""
     identity = recording.path_identity
     registry = recording._npm_registry
     tgz = ["kvnpkg", "-", "kvnpkg-1.0.0.tgz"]
@@ -5792,69 +5792,77 @@ def test_a_gitlab_npm_scope_is_a_root_group() -> None:
     ):
         assert registry(path) is None, path
     for prefix, written in ((inst, inst), (proj, proj), (group, [*group[:3], "org", *group[4:]])):
-        for tail, kept in (
-            (["@kvnteam", *tgz], ["@org", *tgz]),
-            (["@kvnteam", *file], ["@org", "kvnpkg", "-", "@org", "kvnpkg-1.0.0.tgz"]),
-            (["@kvnteam%2Fkvnpkg"], ["@org%2Fkvnpkg"]),
-            (
-                ["-", "package", "@kvnteam%2fkvnpkg", "dist-tags"],
-                ["-", "package", "@org%2fkvnpkg", "dist-tags"],
-            ),
-            (["@kvnteam", "kvnpkg"], ["@org", "kvnpkg"]),
-            (["@kvnteam", "kvnpkg", ""], ["@org", "kvnpkg", ""]),
+        namespace = ("123",) if prefix is group else ()
+        for tail in (
+            ["@kvnteam", *tgz],
+            ["@kvnteam", *file],
+            ["@kvnteam%2Fkvnpkg"],
+            ["-", "package", "@kvnteam%2fkvnpkg", "dist-tags"],
+            ["@kvnteam", "kvnpkg"],
+            ["@kvnteam", "kvnpkg", ""],
+            ["@types", "node", "-", "node-20.11.0.tgz"],
+            ["kvnpkg"],
+            tgz,
+            ["@"],
+            ["-", "package", "kvnpkg", "dist-tags"],
+            [],
         ):
-            namespace = ("123", "kvnteam") if prefix is group else ("kvnteam",)
-            assert identity([*prefix, *tail]) == recording.PathIdentity(
-                [*written, *kept], namespace
-            ), tail
-        for tail in (["kvnpkg"], tgz, ["@"], ["-", "package", "kvnpkg", "dist-tags"], []):
             got = identity([*prefix, *tail])
-            assert got.segments == [*written, *tail] and got.repository is None, tail
-            assert got.namespace == (("123",) if prefix is group else ()), tail
-    encoded = identity(["api", "v4", "projects", "zqg%2Fzqr", "packages", "npm", "@zqg", *tgz])
+            assert got == recording.PathIdentity([*written, *tail], namespace), tail
+    encoded = identity(["api", "v4", "projects", "zqg%2Fzqr", "packages", "npm", "@zqs", *tgz])
     assert encoded == recording.PathIdentity(
-        ["api", "v4", "projects", "org%2Fproject", "packages", "npm", "@org", *tgz], ("zqg",), "zqr"
+        ["api", "v4", "projects", "org%2Fproject", "packages", "npm", "@zqs", *tgz], ("zqg",), "zqr"
     )
-    upper = identity(["api", "v4", "Projects", "zqg%2Fzqr", "packages", "npm", "@zqg", *tgz])
+    upper = identity(["api", "v4", "Projects", "zqg%2Fzqr", "packages", "npm", "@zqs", *tgz])
     assert upper == recording.PathIdentity(
-        ["api", "v4", "Projects", "org%2Fproject", "packages", "npm", "@org", *tgz], ("zqg",), "zqr"
+        ["api", "v4", "Projects", "org%2Fproject", "packages", "npm", "@zqs", *tgz], ("zqg",), "zqr"
     )
     text = recording.redact_urls_in_text
-    for body, expected in (
+    remote = "git@git.zqcorp.io:zqgroup/zqmainrepo.git"
+    for body, expected, segments in (
         (
             "resolved https://git.zqcorp.io/api/v4/packages/npm/@kvnteam/kvnpkg/-/kvnpkg-1.0.0.tgz and @kvnteam/kvnpkg",
+            "resolved https://forge.example.com/api/v4/packages/npm/@kvnteam/kvnpkg/-/kvnpkg-1.0.0.tgz and @kvnteam/kvnpkg",
+            set(),
+        ),
+        (
+            "resolved https://code.kvncloud.io/api/v4/projects/123/packages/npm/@types/node/-/node-20.11.0.tgz\nimport type { X } from '@types/node'",
+            "resolved https://forge.example.com/api/v4/projects/123/packages/npm/@types/node/-/node-20.11.0.tgz\nimport type { X } from '@types/node'",
+            set(),
+        ),
+        (
+            "GET https://10.1.2.3/api/v4/groups/kvngrp/-/packages/npm/@babel%2Fcore now; import x from '@babel/core'",
+            "GET https://forge.example.com/api/v4/groups/org/-/packages/npm/@babel%2Fcore now; import x from '@babel/core'",
+            {"kvngrp"},
+        ),
+        (
+            "resolved https://git.zqcorp.io/api/v4/packages/npm/@zqgroup/kvnpkg/-/kvnpkg-1.0.0.tgz and @zqgroup/kvnpkg",
             "resolved https://forge.example.com/api/v4/packages/npm/@org/kvnpkg/-/kvnpkg-1.0.0.tgz and @org/kvnpkg",
+            set(),
         ),
         (
-            "resolved https://code.kvncloud.io/api/v4/projects/123/packages/npm/@kvnteam/kvnpkg/-/@kvnteam/kvnpkg-1.0.0.tgz now",
-            "resolved https://forge.example.com/api/v4/projects/123/packages/npm/@org/kvnpkg/-/@org/kvnpkg-1.0.0.tgz now",
+            "resolved https://npm.kvncorp.net/@kvncorp/kvnpkg/-/kvnpkg-1.0.0.tgz and @kvncorp/kvnpkg",
+            "resolved https://forge.example.com/@kvncorp/kvnpkg/-/kvnpkg-1.0.0.tgz and @kvncorp/kvnpkg",
+            set(),
         ),
-        (
-            "GET https://10.1.2.3/api/v4/groups/zqg/-/packages/npm/@kvnteam%2Fkvnpkg now",
-            "GET https://forge.example.com/api/v4/groups/org/-/packages/npm/@org%2Fkvnpkg now",
-        ),
-    ):
-        found = needles(
-            _one_call({"body": body}), roles={}, remote="git@git.zqcorp.io:zqgroup/zqmainrepo.git"
-        )
-        assert "kvnteam" in _kinds(found, "segment") and "kvnpkg" not in _kinds(found, "segment")
-        assert recording.replace_known(text(body), found) == expected, body
-    for body, expected in (
         (
             "resolved https://npm.kvncorp.net/@kvnteam/kvnpkg/-/kvnpkg-1.0.0.tgz and @kvnteam/kvnpkg",
             "resolved https://forge.example.com/@kvnteam/kvnpkg/-/kvnpkg-1.0.0.tgz and @kvnteam/kvnpkg",
+            set(),
         ),
         (
             "resolved https://nexus.kvncorp.net/repository/npm-all/@babel/core/-/core-7.24.0.tgz now",
             "resolved https://forge.example.com/repository/npm-all/@babel/core/-/core-7.24.0.tgz now",
+            set(),
         ),
         (
             "resolved https://git.zqcorp.io/api/v4/projects/123/packages/npm/lodash/-/lodash-4.17.21.tgz and lodash",
             "resolved https://forge.example.com/api/v4/projects/123/packages/npm/lodash/-/lodash-4.17.21.tgz and lodash",
+            set(),
         ),
     ):
-        found = needles(_one_call({"body": body}), roles={})
-        assert _kinds(found, "segment") == [], body
+        found = needles(_one_call({"body": body}), roles={}, remote=remote)
+        assert set(_kinds(found, "segment")) - {"zqgroup", "zqmainrepo"} == segments, body
         assert recording.replace_known(text(body), found) == expected, body
 
 

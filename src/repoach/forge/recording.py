@@ -1150,17 +1150,16 @@ _IDE_ROUTES: frozenset[str] = frozenset({"edit", "blob", "tree", "merge_requests
 _TARBALL_VERSION_RE = re.compile(r"^[0-9][0-9a-z.+-]*$", re.I)
 """The version of an npm tarball name, ``<pkg>-<version>.tgz``: a digit first, then digits, letters, dots, ``+`` and ``-`` (0.22)."""
 
-_NPM_SCOPE_RE = re.compile(r"^@(?P<scope>[^%]+)", re.I)
-"""The scope of an npm package segment, ``@<scope>`` or the encoded ``@<scope>%2F<pkg>`` (0.23)."""
-
 
 def _npm_registry(core: list[str]) -> int | None:
     """The index of the first segment after ``packages/npm`` in a GitLab API path, else ``None`` (0.23).
 
     GitLab's npm registry is ``api/v<N>/packages/npm/…`` on the instance,
     ``api/v<N>/projects/<id>/packages/npm/…`` and
-    ``api/v<N>/groups/<id>/-/packages/npm/…``: by construction an
-    ``@<scope>`` there is a root group of the instance.
+    ``api/v<N>/groups/<id>/-/packages/npm/…``. What follows names a
+    package and no one (0.24): an ``@<scope>`` there is as often a
+    forwarded public one (``@types``, ``@babel``) as a group, so it is
+    ordinary text (NG4-15) and never learnt.
     """
     if len(core) < 4 or core[0].casefold() != "api" or not _API_VERSION_RE.match(core[1]):
         return None
@@ -1221,8 +1220,9 @@ def path_identity(segments: list[str], *, remote: bool = False) -> PathIdentity:
     identity slots of its grammar (:data:`_IDENTITY_SLOTS`:
     ``users/<u>/repos/<r>``, ``orgs/<o>/teams/<t>``), a package
     tarball before a ``-`` (``<pkg>/-/<pkg>-<version>.tgz``) names no one,
-    and the ``@<scope>`` of GitLab's npm registry (``api/v4/…/packages/npm/``,
-    :func:`_npm_registry`) is a root group (0.23). The route grammars are
+    and what follows ``packages/npm/`` of GitLab's npm registry
+    (``api/v4/…/packages/npm/``, :func:`_npm_registry`) names no one, its
+    ``@<scope>`` included (0.24: never learnt, NG4-15). The route grammars are
     those of a URL path; a ``remote`` path names a repository by
     construction (``<ns>/…/<repo>``, 0.23) and reads that way whatever its
     first word, so a recorded remote whose namespace is a reserved word
@@ -1256,11 +1256,9 @@ def path_identity(segments: list[str], *, remote: bool = False) -> PathIdentity:
             if head[2:3] and head[2].casefold() in ("projects", "groups")
             else PathIdentity(head)
         )
-        scopes = [m.group("scope") for s in core[npm:] if (m := _NPM_SCOPE_RE.match(s))]
-        rest = [_NPM_SCOPE_RE.sub(f"@{PLACEHOLDER_NAMESPACE}", s) for s in core[npm:]]
         return PathIdentity(
-            [*prefix.segments, *core[npm - 2 : npm], *rest, *trailing],
-            tuple(dict.fromkeys([*prefix.namespace, *scopes])),
+            [*prefix.segments, *core[npm - 2 :], *trailing],
+            prefix.namespace,
             prefix.repository,
         )
     if core[0].casefold() in _RESERVED_ROUTE_WORDS:
