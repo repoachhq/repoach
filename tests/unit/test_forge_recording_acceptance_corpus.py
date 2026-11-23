@@ -92,6 +92,7 @@ class Sample:
     argv_extra: tuple[str, ...] = ()
     api_path: str | None = None
     call_args: tuple[str, ...] | None = None
+    second_api_path: str | None = None
     stderr: str = ""
     stdin: str | None = None
     case: str = "sample"
@@ -127,7 +128,10 @@ class Row:
 
     A row is **planted** when it carries a marker that must not survive, when it is refused, or
     when it is a ``residual``: a planted shape that NG4 documents as accepted and that is
-    therefore written as it stands. Every other row is ordinary text.
+    therefore written as it stands. Every other row is ordinary text. ``url_field_class`` declares
+    a row whose class is decided by a value only a ``URL_KEYS`` field names: the offline transform
+    reads a committed fixture, where that field is already written, so the raw-text parity half
+    cannot hold and is not judged (the fixed-point half still is).
     """
 
     id: str
@@ -136,6 +140,7 @@ class Row:
     outcome: Written | Refused
     markers: tuple[str, ...] = ()
     residual: bool = False
+    url_field_class: bool = False
 
 
 ROWS: tuple[Row, ...] = (
@@ -10226,6 +10231,8 @@ ROWS: tuple[Row, ...] = (
 
 def _position(inp: Sample) -> str:
     """The position the row's ``Written.text`` describes."""
+    if inp.second_api_path is not None:
+        return "argv2"
     if inp.raw_text_stdout is not None:
         return "stdout"
     if inp.stderr:
@@ -10327,6 +10334,8 @@ def _fake_forge(inp: Sample, tmp_path: Path) -> Forge:
         class _FakeGitHub(GitHubForge):
             def conversation_comments(self, number: int, *extra: Any, **_k: Any) -> Any:
                 res = self._spawn([str(binary), *_issued(extra)], input_data=_k.get("stdin"))
+                if inp.second_api_path is not None:
+                    self._spawn([str(binary), "api", inp.second_api_path])
                 return [
                     comment_from_github(c) for c in json.loads(res.stdout) if isinstance(c, dict)
                 ]
@@ -10341,6 +10350,8 @@ def _fake_forge(inp: Sample, tmp_path: Path) -> Forge:
         class _FakeGitLab(GitLabForge):
             def conversation_comments(self, number: int, *extra: Any, **_k: Any) -> Any:
                 res = self._spawn([str(binary), *_issued(extra)], input_data=_k.get("stdin"))
+                if inp.second_api_path is not None:
+                    self._spawn([str(binary), "api", inp.second_api_path])
                 return [note_to_comment(n) for n in json.loads(res.stdout) if isinstance(n, dict)]
 
             def diff(self, number: int, *extra: Any, **_k: Any) -> Diff:
@@ -10413,6 +10424,8 @@ def _written_parts(row: Row, fixture: dict[str, Any]) -> tuple[str, str | None, 
         return json.dumps(fixture["kwargs"], ensure_ascii=False), title, fields
     if pos == "argv":
         return json.dumps(call["args"], ensure_ascii=False), title, fields
+    if pos == "argv2":
+        return json.dumps(fixture["calls"][1]["args"], ensure_ascii=False), title, fields
     return str(json.loads(call["stdout"])[0]["body"]), title, fields
 
 
@@ -10511,7 +10524,7 @@ def _raw_strings(inp: Sample) -> list[str]:
         inp.stdin or "",
     ]
     out += [inp.raw_text_stdout or "", json.dumps(list(inp.top_args)), json.dumps(inp.top_kwargs)]
-    out += [json.dumps(list(inp.call_args or ())), inp.api_path or ""]
+    out += [json.dumps(list(inp.call_args or ())), inp.api_path or "", inp.second_api_path or ""]
     for item in [inp.extra_item, *inp.extra_items]:
         out += [str(v) for k, v in item.items() if isinstance(v, str)]
     return out
@@ -10527,23 +10540,29 @@ def _restore_raw_text(row: Row, live: dict[str, Any]) -> dict[str, Any]:
     """The live fixture with every raw text position put back, structured fields kept in class form."""
     inp = row.inp
     out = copy.deepcopy(live)
-    call = out["calls"][0]
-    if inp.raw_text_stdout is not None:
-        call["stdout"] = inp.raw_text_stdout
-    else:
-        written = json.loads(call["stdout"])
-        raw = _items(inp)
-        for w_item, r_item in zip(written, raw, strict=True):
-            for key in _RAW_TEXT_KEYS:
-                if key in r_item:
-                    w_item[key] = r_item[key]
-        call["stdout"] = json.dumps(written, ensure_ascii=False)
-    call["stderr"] = inp.stderr
-    call["stdin"] = inp.stdin
-    call["args"] = _argv(inp)
+    for n, (call, argv) in enumerate(zip(out["calls"], _argvs(inp), strict=True)):
+        if inp.raw_text_stdout is not None:
+            call["stdout"] = inp.raw_text_stdout
+        else:
+            written = json.loads(call["stdout"])
+            raw = _items(inp)
+            for w_item, r_item in zip(written, raw, strict=True):
+                for key in _RAW_TEXT_KEYS:
+                    if key in r_item:
+                        w_item[key] = r_item[key]
+            call["stdout"] = json.dumps(written, ensure_ascii=False)
+        call["stderr"] = inp.stderr
+        call["stdin"] = inp.stdin if n == 0 else None
+        call["args"] = argv
     out["args"] = _top_args(inp)
     out["kwargs"] = _top_kwargs(inp)
     return out
+
+
+def _argvs(inp: Sample) -> list[list[str]]:
+    """The argv of each call the method issues: the row's, then its second API path when it has one."""
+    second = [] if inp.second_api_path is None else [["api", inp.second_api_path]]
+    return [_argv(inp), *second]
 
 
 def _judge_offline(row: Row, live: dict[str, Any]) -> list[str]:
@@ -10556,7 +10575,7 @@ def _judge_offline(row: Row, live: dict[str, Any]) -> list[str]:
     )
     if again != live:
         problems.append("offline: the written fixture is not a fixed point")
-    if _offline_parity_possible(row.inp):
+    if _offline_parity_possible(row.inp) and not row.url_field_class:
         restored = _restore_raw_text(row, live)
         offline = OFF.redact_fixture(restored, forge=forge, remote=row.inp.remote, denylist=deny)
         if offline != live:
@@ -10580,12 +10599,13 @@ def _judge_offline_refusal(row: Row, live_msg: str) -> list[str]:
         "calls": [
             {
                 "program": "gh" if inp.forge == "github" else "glab",
-                "args": _argv(inp),
-                "stdin": inp.stdin,
+                "args": argv,
+                "stdin": inp.stdin if n == 0 else None,
                 "returncode": 0,
                 "stdout": _stdout(inp),
                 "stderr": inp.stderr,
             }
+            for n, argv in enumerate(_argvs(inp))
         ],
         "result": None,
         "raises": None,
@@ -10638,6 +10658,7 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
         18,
     )
     assert all(not row.residual for row in refused)
+    assert [row.id for row in ROWS if row.url_field_class] == []
     for row in residual:
         assert isinstance(row.outcome, Written) and not row.markers, row.id
         assert row.outcome.text == row.inp.body, row.id
