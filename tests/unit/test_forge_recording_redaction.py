@@ -5807,6 +5807,8 @@ def test_only_an_argv_string_is_read_as_an_api_path() -> None:
         "repos/a/b",
     ]
     assert recording._argv_strings([{"args": ["api", "repos/a/b"]}, ["repos/c/d"]]) == []
+    assert recording._argv_strings({"calls": [{"args": ["api", 5], "stdout": ""}]}) == ["api"]
+    assert recording._argv_strings([{"args": "repos/a/b", "stdout": ""}]) == []
     stdout = json.dumps([{"args": ["repos/settings/kvnbilling"], "stdout": ""}])
     assert recording._argv_strings(_one_call(stdout)) == ["api", "x"]
     for args, segments in (
