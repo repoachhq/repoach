@@ -5822,7 +5822,7 @@ def test_only_an_argv_string_is_read_as_an_api_path() -> None:
 
 
 def test_the_provenance_table_is_the_one_rule_of_what_names_an_identity() -> None:
-    """D7 (0.26): :data:`recording.PROVENANCE` maps each source to one reading, in learning order, and :func:`known_values` learns a path's namespace and repository through it alone: every ``_segments`` call stands in a reader the table dispatches, and the argv API reader runs once, as a source of the table."""
+    """D7 (0.26): :data:`recording.PROVENANCE` maps each source to one reading, in learning order, and :func:`known_values` learns a path's namespace and repository through it alone: every ``_segments`` call stands in a reader the table dispatches, and the argv and text API readers run once, as sources of the table."""
     assert recording.PROVENANCE == (
         ("remote", "repository"),
         ("url_field", "route"),
@@ -5857,6 +5857,8 @@ def test_the_provenance_table_is_the_one_rule_of_what_names_an_identity() -> Non
     segments = _calls("_segments")
     assert segments and all(id(call) in inside for call in segments)
     assert len(_calls("_api_project")) == 1 and id(_calls("_api_project")[0]) not in inside
+    assert len(_calls("_text_api_projects")) == 1
+    assert id(_calls("_text_api_projects")[0]) in inside
     dicts = [node for node in ast.walk(function) if isinstance(node, ast.Dict)]
     keys = [
         {k.value for k in node.keys if isinstance(k, ast.Constant)}
@@ -5865,6 +5867,88 @@ def test_the_provenance_table_is_the_one_rule_of_what_names_an_identity() -> Non
     ]
     assert {source for source, _ in recording.PROVENANCE} in keys
     assert {reading for _, reading in recording.PROVENANCE} in keys
+
+
+def test_a_text_github_api_path_names_a_repository_only_through_a_rest_route() -> None:
+    """D7 source 3 (0.26): in text, ``[/][api/v<N>/]repos/<o>/<r>/<word>`` names a repository only when ``<word>`` is a sub-resource of GitHub's REST repository endpoints; a bare ``repos/<o>/<r>``, a file path or a directory under ``repos/`` is ordinary text, a reserved, literal or numeric owner is not learnt and its repository is, and a path inside a longer path or a URL is not this reader's."""
+    read = recording._text_api_projects
+    assert read("repos/kvnteam/kvnbilling/pulls/5/comments returns 404") == [
+        ("kvnteam", "kvnbilling")
+    ]
+    assert read("see /repos/kvnteam/kvnbilling/branches/main/protection.") == [
+        ("kvnteam", "kvnbilling")
+    ]
+    assert read('{"endpoint": "api/v3/repos/kvnteam/kvnbilling.git/hooks"}') == [
+        ("kvnteam", "kvnbilling")
+    ]
+    assert read("repos//kvnteam//kvnbilling//Issues?state=open") == [("kvnteam", "kvnbilling")]
+    assert read("repos/kvnteam/kvnbilling/pulls, then repos/zqother/kvnsub/hooks") == [
+        ("kvnteam", "kvnbilling"),
+        ("zqother", "kvnsub"),
+    ]
+    assert read("see repos/kvnteam/kvnbilling/pulls.") == [("kvnteam", "kvnbilling")]
+    assert read("gitea: /api/v1/repos/kvnteam/kvnbilling/pulls/3") == [("kvnteam", "kvnbilling")]
+    assert read("Repos/kvnteam/kvnbilling/Pulls and API/V3/REPOS/zqother/kvnsub/hooks") == [
+        ("kvnteam", "kvnbilling"),
+        ("zqother", "kvnsub"),
+    ]
+    assert read("repos/settings/kvnbilling/pulls/5") == [("", "kvnbilling")]
+    assert read("repos/12345/kvnbilling/issues") == [("", "kvnbilling")]
+    assert read("repos/org/kvnbilling/issues") == [("", "kvnbilling")]
+    assert read("repos/Docs.GitHub.com/kvnbilling/issues") == [("", "kvnbilling")]
+    for text in (
+        "repos/kvnteam/kvnbilling is the endpoint",
+        "repos/kvnteam/kvnbilling",
+        "repos/kvnteam/kvnbilling/",
+        "repos/frontend/main.py should stay frontend",
+        "repos/public/index.html",
+        "repos/kvnteam/kvnbilling/pullsx/5",
+        "repos/kvnteam/kvnbilling/pulls.py",
+        "repos/kvnteam/kvnbilling/readme.md",
+        "src/repos/kvnteam/kvnbilling/pulls",
+        "https://ghe.kvncorp.net/api/v3/repos/kvnteam/kvnbilling/pulls",
+        "xrepos/kvnteam/kvnbilling/pulls",
+        "repos/:owner/:repo/pulls",
+        "repos/{owner}/{repo}/pulls",
+        "repos/kvnteam/project/pulls",
+        "repos/kvnteam/1234/pulls",
+        "repos/kvnteam/Project/pulls",
+        "repos/kvnteam/.git/pulls",
+        "repos/kvnteam/kvnbilling:pulls",
+        "repos/kvnteam/kvnbilling%2Fpulls",
+    ):
+        assert read(text) == [], text
+    assert len(recording._GITHUB_REPO_API_ROUTES) == 74
+    assert {"pulls", "issues", "hooks", "branches", "commits", "contents", "git"} <= (
+        recording._GITHUB_REPO_API_ROUTES
+    )
+    assert all(word == word.casefold() for word in recording._GITHUB_REPO_API_ROUTES)
+    remote = "git@github.com:zqgroup/zqmainrepo.git"
+    for raw in (
+        _one_call({"body": "repos/kvnteam/kvnbilling/pulls/5/comments returns 404"}),
+        [_one_call({"body": "ok"}), [42], {"endpoint": "repos/kvnteam/kvnbilling/pulls/5"}],
+        [
+            {**_one_call({"body": "ok"})[0], "stdin": "repos/kvnteam/kvnbilling/pulls/5"},
+        ],
+    ):
+        found = needles(raw, roles={}, remote=remote)
+        assert _kinds(found, "segment") == ["zqgroup", "zqmainrepo", "kvnteam", "kvnbilling"]
+        written = recording.replace_known("see repos/kvnteam/kvnbilling/pulls/5 now", found)
+        assert written == "see repos/org/project/pulls/5 now"
+    found = needles(
+        _one_call({"body": "repos/settings/kvnbilling/pulls/5 and the settings page"}),
+        roles={},
+    )
+    assert _kinds(found, "segment") == ["kvnbilling"]
+    found = needles(_one_call({"body": "repos/zq/kvnbilling/pulls/1 is short"}), roles={})
+    assert _kinds(found, "segment") == ["kvnbilling"]
+    escaped = "see repos\\/kvnteam\\/kvnbilling\\/pulls\\/5"
+    found = needles(_one_call({"body": escaped}), roles={})
+    assert _kinds(found, "segment") == ["kvnteam", "kvnbilling"]
+    assert recording.replace_known(escaped, found) == "see repos\\/org\\/project\\/pulls\\/5"
+    for text in ("repos/kvnteam/kvnbilling/main.py stays", "repos/kvnteam/kvnbilling stays"):
+        found = needles(_one_call({"body": text}), roles={})
+        assert _kinds(found, "segment") == [], text
 
 
 def test_every_exchange_argv_is_read_by_construction() -> None:
@@ -5886,9 +5970,9 @@ def test_every_exchange_argv_is_read_by_construction() -> None:
     lone = needles(_one_call({"body": "ok"}, ["repos/settings/kvnbilling/pulls/5"]), roles={})
     assert _kinds(lone, "segment") == ["settings", "kvnbilling"]
     body = ["pr", "comment", "--body", " repos/zq/kvnbilling/pulls/1"]
-    assert _kinds(needles(_one_call({"body": "ok"}, body), roles={}), "segment") == []
+    assert _kinds(needles(_one_call({"body": "ok"}, body), roles={}), "segment") == ["kvnbilling"]
     spec = ["api", "repos/SP-RECORDER-REDACTS-BY-CLASS/kvnbilling/pulls/1"]
-    assert _kinds(needles(_one_call({"body": "ok"}, spec), roles={}), "segment") == []
+    assert _kinds(needles(_one_call({"body": "ok"}, spec), roles={}), "segment") == ["kvnbilling"]
 
 
 def test_a_value_a_url_field_names_as_a_namespace_keeps_its_class() -> None:

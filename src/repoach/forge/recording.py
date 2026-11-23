@@ -2429,6 +2429,146 @@ def _argv_strings(node: object) -> list[str]:
     return []
 
 
+_GITHUB_REPO_API_ROUTES: frozenset[str] = frozenset(
+    {
+        "actions",
+        "activity",
+        "agents",
+        "assignees",
+        "attestations",
+        "autolinks",
+        "automated-security-fixes",
+        "branches",
+        "check-runs",
+        "check-suites",
+        "code-quality",
+        "code-scanning",
+        "code-security-configuration",
+        "codeowners",
+        "codespaces",
+        "collaborators",
+        "comments",
+        "commits",
+        "community",
+        "compare",
+        "contents",
+        "contributors",
+        "copilot",
+        "dependabot",
+        "dependency-graph",
+        "deployments",
+        "dispatches",
+        "environments",
+        "events",
+        "forks",
+        "generate",
+        "git",
+        "hash-algorithm",
+        "hooks",
+        "immutable-releases",
+        "import",
+        "installation",
+        "interaction-limits",
+        "invitations",
+        "issue-types",
+        "issues",
+        "keys",
+        "labels",
+        "languages",
+        "license",
+        "merge-upstream",
+        "merges",
+        "milestones",
+        "notifications",
+        "pages",
+        "planning-statuses",
+        "private-vulnerability-reporting",
+        "properties",
+        "pulls",
+        "readme",
+        "releases",
+        "rules",
+        "rulesets",
+        "secret-scanning",
+        "security-advisories",
+        "stacks",
+        "stargazers",
+        "stats",
+        "statuses",
+        "subscribers",
+        "subscription",
+        "tags",
+        "tarball",
+        "teams",
+        "topics",
+        "traffic",
+        "transfer",
+        "vulnerability-alerts",
+        "zipball",
+    }
+)
+"""The sub-resources of GitHub's REST repository endpoints, ``repos/{owner}/{repo}/<word>`` (0.26).
+
+Transcribed from the ``paths`` of GitHub's REST OpenAPI description
+(``github/rest-api-description``, ``descriptions/api.github.com/api.github.com.json``,
+read 2026-11-23), whose endpoints https://docs.github.com/en/rest documents:
+every ``/repos/{owner}/{repo}/<word>`` path, with
+``/repos/{template_owner}/{template_repo}/generate``. A text path
+``repos/<o>/<r>/<word>/…`` names a repository only when ``<word>`` is one of
+them, so ``repos/frontend/main.py`` or ``repos/public/index.html`` stays a
+file path.
+"""
+
+_TEXT_API_PATH_RE = re.compile(
+    r"(?<![A-Za-z0-9_.~%/-])/?(?:api/v[0-9]+/+)?repos/+(?P<owner>[A-Za-z0-9_.-]+)/+(?P<repo>[A-Za-z0-9_.-]+)",
+    re.I,
+)
+"""A GitHub-form API path in text, ``[/][api/v<N>/]repos/<owner>/<repo>``, in any case, not inside a longer path or a URL (0.26).
+
+GitHub Enterprise serves it under ``api/v3/``, Gitea under ``api/v1/``.
+"""
+
+_TEXT_API_ROUTE_END = "/" + _PATH_END
+"""Characters that end the route word read after ``repos/<owner>/<repo>/`` in text (0.26)."""
+
+
+def _text_api_projects(text: str) -> list[tuple[str, str]]:
+    """The ``(owner, repository)`` each GitHub API path of ``text`` names, read as text (0.26).
+
+    ``[/][api/v<N>/]repos/<owner>/<repo>/<word>…`` names a repository only
+    when ``<word>`` is a sub-resource of GitHub's REST repository
+    endpoints (:data:`_GITHUB_REPO_API_ROUTES`); a bare
+    ``repos/<owner>/<repo>`` and any other word (``main.py``, ``src``) is
+    ordinary text. The route grammar of text applies: an owner that is a
+    reserved route word (:data:`_RESERVED_ROUTE_WORDS`), a tool literal,
+    a placeholder or a number is not learnt (``""``), its repository
+    still is. A path inside a URL is the host reader's.
+    """
+    found: list[tuple[str, str]] = []
+    for match in _TEXT_API_PATH_RE.finditer(text):
+        rest = text[match.end() :].lstrip("/")
+        stop = next((i for i, c in enumerate(rest) if c in _TEXT_API_ROUTE_END), len(rest))
+        route = rest[:stop].rstrip(_URL_TRIM_TAIL)
+        if route.casefold() not in _GITHUB_REPO_API_ROUTES:
+            continue
+        owner, repository = match.group("owner"), _bare(match.group("repo"))
+        if not _names_a_value(repository):
+            continue
+        reserved = owner.casefold() in _RESERVED_ROUTE_WORDS
+        found.append((owner if _names_a_value(owner) and not reserved else "", repository))
+    return found
+
+
+def _names_a_value(segment: str) -> bool:
+    """Whether a text API path segment may name someone: not empty, a tool literal, a number or a placeholder."""
+    return bool(
+        segment
+        and not CLI_PLACEHOLDER_RE.fullmatch(segment)
+        and not segment.isdigit()
+        and segment.casefold() not in _PLACEHOLDERS
+    )
+
+
 PROVENANCE: tuple[tuple[str, str], ...] = (
     ("remote", "repository"),
     ("url_field", "route"),
@@ -2455,8 +2595,10 @@ comes from one row, and no reading runs outside it:
 - ``text``: every string of the fixture (:func:`fixture_strings`), the
   three sources above included. Reading ``text``: soft, never refusing
   a recording: the hosts and the paths after them
-  (:func:`repoach.forge.closure.hosts`, :func:`_follow_segments`) and a
-  GitLab ``projects/<group>%2F<repo>`` token (:data:`_ENCODED_PROJECT_RE`).
+  (:func:`repoach.forge.closure.hosts`, :func:`_follow_segments`), a
+  GitLab ``projects/<group>%2F<repo>`` token (:data:`_ENCODED_PROJECT_RE`),
+  and a GitHub API path ``repos/<o>/<r>/<route>`` whose route word is a
+  REST repository sub-resource (:func:`_text_api_projects`).
 
 The order is the learning order: a value two rows name keeps the class
 of the first, so a value a URL field names as a namespace stays ``org``
@@ -2553,7 +2695,8 @@ def known_values(
     :data:`PROVENANCE` (0.26) and nothing else: an argv API path is an
     argv string of a recorded call (:func:`_argv_strings`), and a body, a
     field or a review comment's ``path`` led by ``repos/`` or
-    ``projects/`` is text, read by the text readers only.
+    ``projects/`` is text, read by the text readers only, a GitHub API
+    path through a REST route word (:func:`_text_api_projects`) among them.
 
     Args:
         raw: The exchanges as the forge printed them, the method's
@@ -2704,6 +2847,9 @@ def known_values(
                 )
                 if follow:
                     _segments(follow, hard=False)
+            for owner, repository in _text_api_projects(form):
+                _add("segment", owner, PLACEHOLDER_NAMESPACE, hard=False)
+                _add("segment", repository, PLACEHOLDER_PROJECT, hard=False)
 
     sources: dict[str, list[Any]] = {
         "remote": [remote_path],
