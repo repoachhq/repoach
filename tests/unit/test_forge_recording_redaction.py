@@ -5809,6 +5809,10 @@ def test_an_npm_scope_is_never_learnt_on_any_registry() -> None:
         ):
             got = identity([*prefix, *tail])
             assert got == recording.PathIdentity([*written, *tail], namespace), tail
+    dashless = ["api", "v4", "groups", "kvngrp", "packages", "npm", "@kvnteam", *tgz]
+    assert identity(dashless) == recording.PathIdentity(
+        ["api", "v4", "groups", "org", *dashless[4:]], ("kvngrp",)
+    )
     encoded = identity(["api", "v4", "projects", "zqg%2Fzqr", "packages", "npm", "@zqs", *tgz])
     assert encoded == recording.PathIdentity(
         ["api", "v4", "projects", "org%2Fproject", "packages", "npm", "@zqs", *tgz], ("zqg",), "zqr"
