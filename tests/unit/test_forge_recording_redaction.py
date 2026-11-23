@@ -5149,6 +5149,23 @@ def test_an_ipv6_url_in_text_is_rewritten_by_the_convenience_layer_and_is_a_fixe
     assert recording._URL_IN_TEXT_RE.search("x [2a00::1] y") is None
     assert recording._URL_IN_TEXT_RE.search("http://[2a00::1]").group(0) == "http://[2a00::1]"
     assert recording._URL_IN_TEXT_RE.search("http://[bad host]/x") is None
+    assert text("see http://[1]/x now") == "see http://[1]/x now"
+    assert text("see http:///x and https://:8080/y now") == "see http:///x and https://:8080/y now"
+    for raw, expected in (
+        ("x@users.noreply.FORGE.EXAMPLE.COM", "author@users.noreply.forge.example.com"),
+        ("BOT@users.noreply.github.com", "bot@users.noreply.forge.example.com"),
+        ("NOREPLY@GITHUB.COM", "noreply@forge.example.com"),
+        ("x@users.noreply.notforge.example.com", "x@users.noreply.notforge.example.com"),
+        (
+            "__https://code.kvncloud.io/kvnteam/kvnbilling#__init__",
+            "__https://forge.example.com/org/project__",
+        ),
+        (
+            "_https://code.kvncloud.io/kvnteam/kvnbilling#__init__",
+            "_https://forge.example.com/org/project_",
+        ),
+    ):
+        assert text(raw) == expected, raw
 
 
 def test_a_lone_path_segment_after_a_host_is_a_page_not_a_namespace() -> None:

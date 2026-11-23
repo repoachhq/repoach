@@ -1437,6 +1437,21 @@ def test_the_readers_are_linear_in_the_text() -> None:
     ):
         assert [h.host for h in closure.hosts(text)] == expected, text
     assert closure._scheme_before("http", 4) and not closure._scheme_before("1", 1)
+    for text, expected in (
+        ("a+://acme.zz", ["acme.zz"]),
+        ("s3://bucket.kvncloud.io/x", ["bucket.kvncloud.io"]),
+        ("s3://acme.zz", ["acme.zz"]),
+        ("h2c://acme.zz", ["acme.zz"]),
+        ("x9://acme.zz", ["acme.zz"]),
+        ("/8.8.8.8/x", []),
+        ("== 8.8.8.8:80", []),
+        ("//[fd00::1]/x", ["[fd00::1]"]),
+        ("//8.8.8.8/x", ["8.8.8.8"]),
+    ):
+        assert [h.host for h in closure.hosts(text)] == expected, text
+    assert closure.public_addresses("//[2a00:1450:4001::1]/x") == []
+    assert closure.public_addresses("[2a00:1450:4001::1]/x") == ["[2a00:1450:4001::1]"]
+    assert closure.Host("h.io", False, 0, 4).literal is False
     assert not closure._scheme_before("", 0) and closure._scheme_before("x", 1)
 
 
