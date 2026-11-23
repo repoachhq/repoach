@@ -1855,7 +1855,13 @@ def login_values(payload: object, path: str = "") -> list[tuple[str, str]]:
 
 
 def decode_json_values(text: str) -> list[object] | None:
-    """Decode every top-level JSON value of ``text``; ``None`` when it is not JSON (a diff, a log)."""
+    """Decode every top-level JSON value of ``text``; ``None`` when it is not JSON (a diff, a log).
+
+    A text nested deeper than the interpreter can decode (thousands of
+    ``[`` in a comment body) is not JSON either: the decoder's
+    ``RecursionError`` is caught with its decode error (0.21, B3), so the
+    text is read as text and nothing raises.
+    """
     decoder = json.JSONDecoder()
     stripped = text.strip()
     values: list[object] = []
@@ -1866,8 +1872,8 @@ def decode_json_values(text: str) -> list[object] | None:
             values.append(value)
             while pos < len(stripped) and stripped[pos].isspace():
                 pos += 1
-    except json.JSONDecodeError as exc:
-        _log.debug("forge.recording.not_json", error=str(exc)[:120])
+    except (json.JSONDecodeError, RecursionError) as exc:
+        _log.debug("forge.recording.not_json", error=type(exc).__name__)
         return None
     return values or None
 

@@ -467,14 +467,34 @@ def redact_fixture(
 ) -> dict[str, object]:
     """The class-redacted copy of one fixture: the live pipeline minus the forge (D4, 0.17).
 
-    ``ids`` and ``projects`` are shared across the corpus.
+    ``ids`` and ``projects`` are shared across the corpus. A fixture whose
+    JSON nests deeper than the readers can walk is refused like the live
+    recorder refuses it (0.21, B3), never crashed on.
 
     Raises:
         NeedleError: A structured value that is a class word or placeholder.
         ResidualValueError: The redacted fixture is refused by :func:`repoach.forge.recording`'s
             oracle: a known value, an unknown host, a public address, an unknown mailbox, a
-            deny-list entry, a home path or an unclassified login.
+            deny-list entry, a home path or an unclassified login; or ``nesting too deep``.
     """
+    try:
+        return _redact_fixture(
+            data, ids, forge=forge, projects=projects, remote=remote, denylist=denylist
+        )
+    except RecursionError as exc:
+        raise ResidualValueError("nesting too deep: the fixture cannot be walked") from exc
+
+
+def _redact_fixture(
+    data: dict[str, object],
+    ids: UserIdMap | None,
+    *,
+    forge: str,
+    projects: UserIdMap | None,
+    remote: str,
+    denylist: tuple[str, ...],
+) -> dict[str, object]:
+    """:func:`redact_fixture` without its nesting guard."""
     ids = ids if ids is not None else UserIdMap()
     projects = projects if projects is not None else UserIdMap.for_projects()
     keep = trusted_declaration(data.get(SYNTHETIC_IDS_KEY))

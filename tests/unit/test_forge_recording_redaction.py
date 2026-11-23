@@ -5451,3 +5451,53 @@ def test_offline_roles_walk_the_keyword_arguments_and_refuse_positional_logins()
     positional = {**data, "args": [{"assignees": [{"login": "zqargone"}]}], "kwargs": {}}
     with pytest.raises(redact_fixtures.ResidualValueError, match=r"^residual login 1 at args"):
         redact_fixtures.redact_fixture(positional, forge="github")
+
+
+def test_the_recorder_never_raises_on_a_recording_nested_past_the_readers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D3 (0.21, B3): a text the decoder cannot decode is text; a value the readers cannot walk is refused, never a crash."""
+    assert recording.decode_json_values("[" * 20000) is None
+    assert recording.decode_json_values("[" * 20000 + "]" * 20000) is None
+    assert recording.decode_json_values('{"a":' * 20000 + "1" + "}" * 20000) is None
+    assert recording.decode_json_values("[[1]] [2]") == [[[1]], [2]]
+    assert recording.redact_stdout("[" * 20000) == "[" * 20000
+    assert recording.replace_known_in_stdout("[" * 20000, closure.Known(())) == "[" * 20000
+    assert recording.fixture_strings("[" * 20000, "p") == [("p", "[" * 20000)]
+    assert recording.user_id_values("[" * 20000) == []
+    deep = "[" * 990 + "]" * 990
+    fixture = {
+        "forge": "github",
+        "case": "x",
+        "method": "diff",
+        "args": [1],
+        "kwargs": {},
+        "bot_username": "repoach-bot",
+        "source": "recorded 2026-11-23 from a live github change request",
+        "trimmed": None,
+        "calls": [{**_exchange([]), "stdout": deep}],
+        "result": None,
+        "raises": None,
+    }
+    with pytest.raises(redact_fixtures.ResidualValueError, match=r"^nesting too deep"):
+        redact_fixtures.redact_fixture(fixture, forge="github")
+    shallow = {**fixture, "calls": [{**_exchange([]), "stdout": "[" * 20000}]}
+    assert redact_fixtures.redact_fixture(shallow, forge="github")["calls"][0]["stdout"] == (
+        "[" * 20000
+    )
+
+    def _overflow(**_kw: Any) -> Path:
+        raise RecursionError("maximum recursion depth exceeded")
+
+    monkeypatch.setattr(rec, "_record", _overflow)
+    with pytest.raises(rec.UnclassifiedValueError, match=r"^nesting too deep"):
+        rec.record(
+            forge_name="github",
+            cwd=Path("."),
+            case="x",
+            method="diff",
+            args=[1],
+            kwargs={},
+            trim=None,
+            out_root=Path("."),
+        )

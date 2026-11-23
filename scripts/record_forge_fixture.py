@@ -560,11 +560,46 @@ def record(
     trim: int | None,
     out_root: Path,
 ) -> Path:
-    """Run one protocol method for real and write its fixture.
+    """Run one protocol method for real and write its fixture; raises on no input (0.21, B3).
+
+    A recording whose JSON nests deeper than the readers can walk (a
+    value nested hundreds of levels, which no forge answers) is refused
+    like any other value the recorder cannot classify: the readers'
+    ``RecursionError`` becomes a named refusal, nothing is written.
 
     Returns:
         The fixture path written.
+
+    Raises:
+        UnclassifiedValueError: ``nesting too deep`` for such a recording.
     """
+    try:
+        return _record(
+            forge_name=forge_name,
+            cwd=cwd,
+            case=case,
+            method=method,
+            args=args,
+            kwargs=kwargs,
+            trim=trim,
+            out_root=out_root,
+        )
+    except RecursionError as exc:
+        raise UnclassifiedValueError("nesting too deep: the recording cannot be walked") from exc
+
+
+def _record(
+    *,
+    forge_name: str,
+    cwd: Path,
+    case: str,
+    method: str,
+    args: list[Any],
+    kwargs: dict[str, Any],
+    trim: int | None,
+    out_root: Path,
+) -> Path:
+    """:func:`record` without its nesting guard."""
     if method in WRITE_METHODS:
         raise SystemExit(f"refusing to record write method {method!r}: fixtures never post")
     forge = select_forge(override=forge_name, cwd=cwd)
