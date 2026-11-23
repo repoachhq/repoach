@@ -4010,6 +4010,8 @@ def test_path_identity_names_the_namespace_and_the_repository_by_enumeration() -
     assert group == recording.PathIdentity(["groups", "org", "-", "epics", "3"], ("zqg", "zqs"))
     assert identity(["groups", "zqg"]) == recording.PathIdentity(["groups", "org"], ("zqg",))
     assert identity(["groups", "-", "x"]) == recording.PathIdentity(["groups", "-", "x"])
+    assert identity(["-", "jobs", "5", ""]) == recording.PathIdentity(["-", "jobs", "5", ""])
+    assert identity(["-", ""]) == recording.PathIdentity(["-", ""])
     user = identity(["users", "zqu", "-", "snippets"])
     assert user == recording.PathIdentity(["users", "org", "-", "snippets"], ("zqu",))
     assert identity(["api", "v4", "groups", "zqg", "projects"]).namespace == ("zqg",)
