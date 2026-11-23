@@ -6,7 +6,13 @@ and through the offline transform, and each cell is held to the owner's goal:
 a planted private value never survives (replaced or refused), ordinary text is
 written byte-identical, a documented residual is written or refused but never
 crashes. The expectation of a cell is computed by :func:`expect` from the rule
-set stated by construction in D8 and D7, never from the code under test.
+set stated by construction in D8 and D7, not from the judging code; the sweep
+is not independent of the module under test everywhere (0.23): the ``logins``
+dimension enumerates the code's own ``LANGUAGE_AT_WORDS``, ``CLASS_WORD_RE``
+and ``NEEDLE_MIN_LENGTH`` (D2 and D7 name those tables, so the sweep reads them
+rather than copying 425 words), and the string walker decodes JSON stdout with
+the code's ``decode_json_values``. The reserved words, route grammars and
+registry hosts of ``routes`` are the sweep's own tables.
 
 The whole sweep (``cells()``) is the phase-1 audit of 0.20 and is rerun by
 ``tmp/fable020/sweep.py``; the unit test runs a deterministic sample of it
@@ -1083,6 +1089,41 @@ ROUTES: list[tuple[str, str, str, tuple[str, ...], tuple[str, ...]]] = [
         ("ns", "sub"),
         ("orgs", "teams"),
     ),
+    (
+        "gitlab_npm_instance_scope",
+        "resolved {lead}{host}/api/v4/packages/npm/@{ns}/kvnpkg/-/kvnpkg-1.0.0.tgz now",
+        "ns",
+        ("ns",),
+        ("packages", "npm", "kvnpkg-1.0.0.tgz"),
+    ),
+    (
+        "gitlab_npm_project_scope_file_name",
+        "resolved {lead}{host}/api/v4/projects/123/packages/npm/@{ns}/kvnpkg/-/@{ns}/kvnpkg-1.0.0.tgz now",
+        "ns",
+        ("ns",),
+        ("projects", "packages", "kvnpkg"),
+    ),
+    (
+        "gitlab_npm_group_scope",
+        "resolved {lead}{host}/api/v4/groups/{sub}/-/packages/npm/@{ns}/kvnpkg/-/kvnpkg-1.0.0.tgz now",
+        "ns",
+        ("ns", "sub"),
+        ("groups", "packages", "kvnpkg"),
+    ),
+    (
+        "gitlab_npm_metadata_scope",
+        "GET {lead}{host}/api/v4/packages/npm/@{ns}%2Fkvnpkg now",
+        "ns",
+        ("ns",),
+        ("packages", "kvnpkg"),
+    ),
+    (
+        "gitlab_npm_dist_tags_scope",
+        "PUT {lead}{host}/api/v4/projects/123/packages/npm/-/package/@{ns}%2Fkvnpkg/dist-tags/latest now",
+        "ns",
+        ("ns",),
+        ("package", "dist-tags", "kvnpkg"),
+    ),
 ]
 """Forge route grammars (0.21, B1; 0.22: the Web IDE and the owner-root identity slots): name, template, where it is met (``ns``: any host, the recorded instance included; ``third_party``: a Gitea or Bitbucket host, never the instance, which is GitHub or GitLab), the identity segments, the route words that must stay."""
 
@@ -1224,7 +1265,9 @@ def route_cells() -> list[Cell]:
 
     0.22 adds, on the same host classes, every forge's reserved words in
     two shapes (nothing is learnt, the word stays) and the npm tarball
-    grammar on the route hosts and on five registry hosts.
+    grammar on the route hosts and on five registry hosts; 0.23 adds the
+    five shapes of GitLab's npm registry, whose ``@<scope>`` is a root
+    group (the package name stays).
     """
     out: list[Cell] = []
     leads = (("https", "https://"), ("http", "http://"))
@@ -1255,6 +1298,41 @@ def route_cells() -> list[Cell]:
             for lead_name, lead in leads:
                 text = template.format(lead=lead, host=host)
                 out.append(_route_cell(name, hname, host, cls, lead_name, text, (), kept, position))
+    return out
+
+
+NEEDLE_MIN = 4
+"""D7: the shortest value a structured source may hold; a shorter one is a configuration error."""
+
+
+def remote_cells() -> list[Cell]:
+    """A recorded remote whose namespace is a reserved word (0.23, B1): the remote names a repository by construction.
+
+    The reserved-word rule is a URL path's; the remote's namespace and
+    repository are values on every word of the sweep's own table that an
+    account may carry, and one shorter than :data:`NEEDLE_MIN` is the D7
+    configuration error, refused by name.
+    """
+    out: list[Cell] = []
+    words = sorted({w for forge in RESERVED_WORDS.values() for w in forge})
+    for word in words:
+        if not word[0].isalnum() or not all(c.isalnum() or c == "-" for c in word):
+            continue
+        short = len(word) < NEEDLE_MIN
+        out.append(
+            Cell(
+                id=f"remote:{word}",
+                rule="routes",
+                text=f"see https://{KNOWN_HOST}/{word}/zqmainrepo/pull/5 and zqmainrepo again",
+                category=REFUSED if short else PLANTED,
+                markers=() if short else (KNOWN_HOST, "zqmainrepo"),
+                note="a short namespace is a configuration error (D7)"
+                if short
+                else "the remote names a repository by construction",
+                prefix="needle segment" if short else "",
+                remote=f"git@{KNOWN_HOST}:{word}/zqmainrepo.git",
+            )
+        )
     return out
 
 
@@ -1333,6 +1411,7 @@ def cells() -> list[Cell]:
         *mention_cells(),
         *carrier_cells(),
         *route_cells(),
+        *remote_cells(),
         *language_word_cells(),
         *nesting_cells(),
     ]
