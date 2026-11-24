@@ -180,9 +180,22 @@ letter or digit (`josé@<host>`), or a URL's userinfo from `<scheme>://` to the
 `@` whatever it ends with (`https://u:p=@<host>`); a fixture is refused when
 any string it writes, the method's arguments and argv included, carries a
 token-shaped value, or a home path in any decoded form (`/home/<x>`,
-`/Users/<x>`, `/var/home/<x>`, `C:\Users\<x>`), live or offline; a host is also a
-one-label authority after `<scheme>://` (`https://gitlab/…`) or a name whose last
-label is an IDNA `xn--` label. The deny-list reader and the last judge before a write
+`/Users/<x>`, `/var/home/<x>`, `C:\Users\<x>`, `C:/Users/<x>`, and the Windows
+profile as a POSIX layer mounts it: WSL `/mnt/<drive>/Users/<x>`, Git-Bash
+`/<drive>/Users/<x>`, Cygwin `/cygdrive/<drive>/Users/<x>`), live or offline; a host
+is also a one-label authority after `<scheme>://` (`https://gitlab/…`) or a name
+whose last label is an IDNA `xn--` label. Every decoded form is read in NFC and
+NFKC as well and with its Unicode labels in IDNA A-labels, so a host or a mailbox
+on an internationalised domain (`<x>@müller.de`, `https://éclair.fr/…`, a
+fullwidth URL, an ideographic full stop) is read by the same grammar as an ASCII
+one and refused, while non-ASCII prose keeps no host it did not have. The first
+path segment of a container registry is an account, as `github.com/<owner>` is
+(`ACCOUNT_NAMESPACES`: `ghcr.io/<owner>`, `docker.io/<namespace>` after an OCI `v2/`,
+npm's `~<user>`; `docker.io/library`, the official images, holds none), and so is
+the segment after an account route of a listed registry (`TENANT_ROUTES`: PyPI
+`user`/`org`, crates.io `users`/`teams`, NuGet `profiles`, npm `org`/`settings`,
+jsDelivr `gh`): both are refused as a `tenant path` whatever leads the host, and a
+URL on one is rewritten to the placeholder. The deny-list reader and the last judge before a write
 live in `repoach.forge.denylist` and `repoach.forge.fixture_judge`, shared by
 the live recorder and the offline transform, as is the one role builder,
 `repoach.forge.recording.assign_roles`. The deny-list fails closed: an entry point
