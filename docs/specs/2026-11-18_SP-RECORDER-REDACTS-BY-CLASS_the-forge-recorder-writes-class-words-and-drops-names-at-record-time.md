@@ -1608,6 +1608,38 @@ What it could break, measured: a sentence written in a stderr, an
 undeclared stdin or a non-prose field (the 18 cells of (e)) is rewritten
 where it names a REST route under `repos/`; a prose value a forge sends
 through a flag or key outside the table above would be read.
+(g) **Interpreter-dependent pins corrected** (PR #319 CI, Python 3.11.15
+and 3.13.14). The bound of (c) of 0.21 is the interpreter's, so the
+outcome at depth 990 is too: Python 3.11's C decoder counts against the
+frame limit and its readers overflow from about depth 500, so the two
+990-deep rows decode to text and are written as they stand; 3.12 and 3.13
+decode them and refuse `nesting too deep`. Both are the BOUNDED outcome
+the sweep already names. The two corpus rows are now `Bounded`
+(`v21_nesting_decodable_not_walkable_in_{body,stdout}_bounded`): written
+byte-identical, or refused with that prefix, live and offline; the
+refusal itself is pinned on every interpreter by a reader that raises
+`RecursionError` (`_redact_fixture` offline, `_record` live). `str()` of
+an IPv4-mapped `IPv6Address` is `::ffff:51.15.20.30` on recent patch
+releases and `::ffff:330f:141e` on 3.12.3: the closure tests now compare
+addresses, not their text; no written string comes from `str()` of an
+address. No code change. Counts: 905 rows = 614 planted + 291 ordinary
+= 831 written + 72 refused + 2 bounded, 25 residuals.
+(h) **Review round 1 of PR #319.** The deny-list reader moves to
+`repoach.forge.denylist` and the last judge (`refuse_unclassified`,
+`generic_class`, `HOME_PATH_RE`, `UnclassifiedValueError`) to
+`repoach.forge.fixture_judge`; the offline transform imports them instead
+of loading the recorder script by its file path. The offline transform
+carries the opaque `Denylist` down to the refusal and `known_values`
+unwraps it, so no frame of a refused run binds the entries
+(`test_an_offline_refusal_binds_no_deny_list_entry_in_a_frame`). The live
+token scan reads every string the fixture writes (`scanned_strings`), the
+method's arguments, argv and stdin included, not stdout and stderr only
+(`test_a_secret_in_any_string_of_the_fixture_is_refused`). D8: a local part
+also holds any Unicode letter or digit (`josé@acme.io` is a mailbox), and a
+URL's userinfo leads its host whatever it ends with (`https://u:abc=@acme.io`);
+no ASCII symbol joins `LOCAL_CHARS`, since a local part decides whether a
+mailbox is a placeholder (`remote=git@…` stays `git`, measured on
+`val_ini_scp_private`) (`test_a_unicode_local_part_and_a_userinfo_lead_their_host`).
 
 ## Intent
 
@@ -2393,8 +2425,8 @@ login and a deny-list entry (`pos_*`, `deny_in_*`).
 | `::test_known_values_read_the_path_after_a_led_address_only` (0.20, rewrites the 0.19 test; 0.21) | D8 IPv4, D7 source 3: the namespace and repository after a led quad, a five-digit port included; a followed quad is never learnt and its path never read; a followed public quad is refused | read the path after a followed address (R10), read four port digits (R01) |
 | `::test_a_lone_path_segment_after_a_host_is_a_page_not_a_namespace` (0.20, 0.21) | C2, NG4-11: a lone segment is never a value, two segments and an API root are, on the instance too; 0.21 B1: the segments before a GitLab `/-/` (one, two, after `groups/` or `users/`) are, on the instance, gitlab.com (convenience layer only) and a third party, and `/-/jobs/5` names no one | learn a lone segment (R11), keep the segment before `/-/` |
 | `::test_a_mention_only_handle_equal_to_a_language_word_is_the_documented_residual` (0.21) | NG4-13, B2: every `LANGUAGE_AT_WORDS` word is no mention in a body or a title; a participant login equal to one is a role, replaced and refused when it survives; a mention-only one is no value | drop a word from the skip set, learn a mention-only word as a login |
-| `::test_the_recorder_never_raises_on_a_recording_nested_past_the_readers` (0.21) | D3, B3: 20 000 nested `[`, `[]` and `{}` decode to `None` and are text; a 990-deep value is refused `nesting too deep` offline; `record()` turns a reader's `RecursionError` into `UnclassifiedValueError` | catch the decode error only, drop the guard |
-| `tests/unit/test_forge_recording_acceptance_corpus.py` rows `v21_*` (0.21) | B1 (seven route rows), NG4-13 (two residual rows, two participant rows), B3 (two written, two refused `nesting too deep`) | any of the three rules reverted |
+| `::test_the_recorder_never_raises_on_a_recording_nested_past_the_readers` (0.21) | D3, B3: 20 000 nested `[`, `[]` and `{}` decode to `None` and are text; a 990-deep value is bounded (written as it stands, or refused `nesting too deep`, by interpreter, 0.28 (g)); a reader's `RecursionError` is refused offline; `record()` turns a reader's `RecursionError` into `UnclassifiedValueError` | catch the decode error only, drop the guard |
+| `tests/unit/test_forge_recording_acceptance_corpus.py` rows `v21_*` (0.21) | B1 (seven route rows), NG4-13 (two residual rows, two participant rows), B3 (two written, two bounded `nesting too deep`, 0.28 (g)) | any of the three rules reverted |
 | `::test_a_reserved_route_word_is_never_an_identity` (0.22) | D1b, D7 source 3, NG4-14: every word of `_RESERVED_ROUTE_WORDS` in two shapes, bare, with a trailing slash and in upper case names no one through `path_identity`, `redact_url` and `known_values`; the instance's own values still read beside one; `user` is not reserved; the five NG4-14 grammars | drop a word, compare case-sensitively, read the segment after a reserved word |
 | `::test_a_web_ide_route_reads_its_project_path` (0.22) | D1b, D7 source 3: `-/ide/project/<ns>/<repo>/<ide word>/…` on every host and lead, subgroups, `.git`, a trailing slash, every IDE word in any case, the bare and the lone shapes, `_api_route` counts the route, `known_values` learns the segments, gitlab.com rewritten by the convenience layer only | stop at the wrong segment, read a non-IDE dash route, drop `_ide_route` from `_api_route` |
 | `::test_an_owner_root_reads_the_identity_slots_of_its_grammar` (0.22) | D1b, D7 source 3: `_IDENTITY_SLOTS` by enumeration — `users/<u>/repos/<r>`, `projects/<KEY>/repos/<r>` (four and seven segments), `orgs/<o>/teams/<t>` and its API shape, a slot word of another root not read, the slot not read after a dash, `known_values` and `replace_known` through the route | empty the table, read a slot from the wrong root, write a team as a project |
