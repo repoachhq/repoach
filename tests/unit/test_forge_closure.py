@@ -83,7 +83,16 @@ def test_the_oracle_shares_no_code_object_with_the_redactor() -> None:
         assert not [
             v for v in vars(module).values() if getattr(v, "__module__", "") == recording.__name__
         ]
-    stdlib = {"__future__", "re", "ipaddress", "base64", "html", "urllib", "dataclasses"}
+    stdlib = {
+        "__future__",
+        "re",
+        "ipaddress",
+        "base64",
+        "functools",
+        "html",
+        "urllib",
+        "dataclasses",
+    }
     for name, allowed in (("closure", stdlib | {"closure_tables"}), ("closure_tables", stdlib)):
         tree = ast.parse((ROOT / "src" / "repoach" / "forge" / f"{name}.py").read_text())
         imported = {
@@ -1840,3 +1849,37 @@ def test_a_vendor_with_tenant_consoles_is_public_by_its_documentation_hosts_only
     assert not closure.is_tenant_path("stackoverflow.com", "/c")
     assert not closure.is_tenant_path("xstackoverflow.com", "/c/team")
     assert not closure.is_tenant_path("pypi.org", "/c/team")
+
+
+def test_a_url_userinfo_is_read_by_grammar_whatever_it_holds() -> None:
+    """D8 (PR #319 round 5, 4683464677): the userinfo is everything between ``//`` and the last ``@``.
+
+    No character allowlist decides whether a run is a userinfo, so a password holding a character
+    outside RFC 3986 fails closed on every host, a placeholder one included; only whitespace,
+    ``/``, ``<``, ``>`` and ``"`` end the authority.
+    """
+    none = closure.Known(())
+    hosts = ("localhost", "127.0.0.1", "pypi.org", "forge.example.com", "acme.io")
+    for ch in "^|\\[]#?@`~{}%!$&'()*+,;=":
+        for host in hosts:
+            for text in (
+                f"DATABASE_URL=postgres://app:zqpw{ch}x@{host}/db",
+                f"https://u:zqpw{ch}@{host}/simple",
+            ):
+                assert closure.judge(text, none) is not None, (ch, host)
+                (box,) = closure.userinfos(text)
+                assert box.local.endswith(f"zqpw{ch}x" if "postgres" in text else f"zqpw{ch}")
+                assert (box.host, closure.is_literal_mailbox(box)) == (host, False), (ch, host)
+    assert [(b.local, b.host) for b in closure.userinfos("postgres://app:p^w@localhost/db")] == [
+        ("app:p^w", "localhost")
+    ]
+    assert [b.local for b in closure.userinfos("redis://u:p@ss#x@localhost:6379")] == ["u:p@ss#x"]
+    assert [b.local for b in closure.userinfos("x://a:b\\c@h.io y://d|e@h.io")] == ["a:b\\c", "d|e"]
+    for text in (
+        "see <https://<host>><a@<host>> for it",
+        'url="https://pypi.org/simple" user@ x',
+        "https://pypi.org/simple/@scope/pkg",
+        "git clone ssh://git@forge.example.com/o/r.git",
+        "postgres://app@localhost:5432/db",
+    ):
+        assert closure.judge(text, none) is None, text

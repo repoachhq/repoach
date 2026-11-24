@@ -10738,6 +10738,48 @@ ROWS: tuple[Row, ...] = (
             text="docs https://developers.cloudflare.com/workers/ and https://docs.renovatebot.com/configuration-options/ and https://docs.mend.io/platform/latest/ and https://stackoverflow.com/questions/12/how"
         ),
     ),
+    Row(
+        id="r5_url_userinfo_holding_a_caret_on_localhost",
+        source="PR #319 review round 5 (4683464677)",
+        inp=Sample(body="DATABASE_URL=postgres://app:zqpw4471^x@localhost/db"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r5_url_userinfo_holding_a_pipe_on_localhost",
+        source="PR #319 review round 5 (4683464677)",
+        inp=Sample(body="DATABASE_URL=postgres://app:zqpw4471|x@localhost/db"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r5_url_userinfo_holding_a_backslash_on_localhost",
+        source="PR #319 review round 5 (4683464677)",
+        inp=Sample(body="DATABASE_URL=postgres://app:zqpw4471\\x@localhost/db"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r5_url_userinfo_holding_a_bracket_on_localhost",
+        source="PR #319 review round 5 (4683464677)",
+        inp=Sample(body="DATABASE_URL=postgres://app:zqpw4471[x@localhost/db"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r5_url_userinfo_holding_a_hash_on_localhost",
+        source="PR #319 review round 5 (4683464677)",
+        inp=Sample(body="DATABASE_URL=postgres://app:zqpw4471#x@localhost/db"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r5_url_userinfo_holding_a_question_mark_on_localhost",
+        source="PR #319 review round 5 (4683464677)",
+        inp=Sample(body="DATABASE_URL=postgres://app:zqpw4471?x@localhost/db"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r5_url_userinfo_holding_a_at_sign_on_localhost",
+        source="PR #319 review round 5 (4683464677)",
+        inp=Sample(body="DATABASE_URL=postgres://app:zqpw4471@x@localhost/db"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
 )
 
 
@@ -11190,10 +11232,10 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
     refused = [row for row in ROWS if isinstance(row.outcome, Refused)]
     bounded = [row for row in ROWS if isinstance(row.outcome, Bounded)]
     assert (len(ROWS), len(planted), len(ordinary), len(refused), len(bounded)) == (
-        920,
-        628,
+        927,
+        635,
         292,
-        81,
+        88,
         2,
     )
     assert len(residual) == 25

@@ -17,6 +17,7 @@ the known values as data (:class:`Known`).
 from __future__ import annotations
 
 import base64
+import functools
 import html
 import ipaddress
 import re
@@ -70,20 +71,14 @@ _SCHEME_CHARS = frozenset(
 )
 """The characters of a URL scheme (RFC 3986 ``ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )``)."""
 
-_USERINFO_CHARS = frozenset(
-    "abcdefghijklmnopqrstuvwxyz"
-    + "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    + "0123456789"
-    + "-._~"
-    + "%"
-    + "!$&'()*+,;="
-    + ":"
-    + "{}"
-)
-"""The ASCII characters of a URL userinfo (RFC 3986 unreserved, ``%``, sub-delims, ``:``) and ``{}``.
+_AUTHORITY_END = frozenset('/<>"')
+"""What ends a URL authority read for its userinfo, with any whitespace: ``/`` and the prose delimiters.
 
-``{}`` makes a ``${TOKEN}`` template one userinfo; any Unicode letter or digit is one as well (an
-IRI). A ``<``, a ``>``, a quote or a space is none, so ``<https://<host>><a@<host>>`` is prose.
+The userinfo is read by grammar, not by an allowlist of characters: everything between
+``<scheme>://`` and the last ``@`` before the authority ends is the userinfo, whatever it holds
+(``^ | # ? [ ] \\`` and the rest), so a character outside RFC 3986 fails closed. Only a ``<``, a
+``>``, a double quote or a space, which no recorded URL carries unescaped, ends it, so
+``<https://<host>><a@<host>>`` is prose.
 """
 
 _STRING_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})|\\x([0-9a-fA-F]{2})|\\(/)")
@@ -354,18 +349,14 @@ def _dotless_authority(text: str, start: int, host: str) -> bool:
     """Whether ``host`` at ``start`` is a one-label host: right after ``<scheme>://``, the whole authority.
 
     ``https://gitlab/ns/repo`` names a machine; ``ssh://git@<host>`` does not name ``git``, so an
-    authority holding an ``@`` (a userinfo) is never read here.
+    authority holding a userinfo (:func:`_url_userinfo_spans`, the one reader of it) is never
+    read here, whatever the userinfo holds (``postgres://app:p#x@<host>``).
     """
     if "." in host or not _LABEL.fullmatch(host):
         return False
     if not (text.endswith("://", 0, start) and _scheme_before(text, start - 3)):
         return False
-    end = start
-    while end < len(text) and not text[end].isspace() and text[end] not in "/?#":
-        if text[end] == "@":
-            return False
-        end += 1
-    return True
+    return start not in _userinfo_begins(text)
 
 
 def _local_before(text: str, at: int) -> str:
@@ -391,8 +382,8 @@ def _scheme_before(text: str, end: int) -> bool:
 def _led(text: str, start: int) -> bool:
     """Whether ``<scheme>://``, ``<local>@`` or a URL's userinfo stands right before offset ``start``.
 
-    A userinfo is whatever runs from ``<scheme>://`` to the ``@`` with no space and no ``/``, so
-    ``https://u:abc=@<host>`` leads its host whatever the password ends with. Reads back, never copies.
+    A userinfo is read by URL grammar (:func:`_url_userinfo_spans`), so ``https://u:abc=@<host>``
+    and ``postgres://u:p^w@<host>`` lead their host whatever the password holds.
     """
     if text.endswith("://", 0, start) and _scheme_before(text, start - 3):
         return True
@@ -401,11 +392,45 @@ def _led(text: str, start: int) -> bool:
     return _local_before(text, start - 1) != "" or _userinfo_before(text, start - 1)
 
 
-def _userinfo_start(text: str, at: int) -> int | None:
-    """Where the URL userinfo the ``@`` at ``at`` ends begins: ``<scheme>://`` then no space, ``/`` or ``@``.
+@functools.lru_cache(maxsize=64)
+def _url_userinfo_spans(text: str) -> dict[int, int]:
+    """The offset of the ``@`` that ends each URL userinfo of ``text``, mapped to where it begins.
 
-    A userinfo holds no unescaped ``@`` (RFC 3986), so the scan back stops at the previous one:
-    each character is read back once over all the ``@`` of a text, and the reader stays linear.
+    Read by URL grammar: after each ``<scheme>://`` the authority runs to the first whitespace or
+    :data:`_AUTHORITY_END` character, and its LAST ``@`` ends the userinfo, whatever characters
+    stand before it (an unescaped ``@`` in a password included). The authorities of a text are
+    disjoint, so each character is read once and the reader stays linear.
+
+    Args:
+        text: The text read.
+
+    Returns:
+        ``{offset of the "@": offset right after "<scheme>://"}``, one entry per URL with a userinfo.
+    """
+    spans: dict[int, int] = {}
+    colon = text.find("://")
+    while colon != -1:
+        begin = end = colon + 3
+        if _scheme_before(text, colon):
+            last = -1
+            while end < len(text) and not text[end].isspace() and text[end] not in _AUTHORITY_END:
+                if text[end] == "@":
+                    last = end
+                end += 1
+            if last != -1:
+                spans[last] = begin
+        colon = text.find("://", end)
+    return spans
+
+
+@functools.lru_cache(maxsize=64)
+def _userinfo_begins(text: str) -> frozenset[int]:
+    """Every offset right after a ``<scheme>://`` whose authority holds a userinfo (:func:`_url_userinfo_spans`)."""
+    return frozenset(_url_userinfo_spans(text).values())
+
+
+def _userinfo_start(text: str, at: int) -> int | None:
+    """Where the URL userinfo the ``@`` at ``at`` ends begins (:func:`_url_userinfo_spans`).
 
     Args:
         text: The text read.
@@ -414,12 +439,7 @@ def _userinfo_start(text: str, at: int) -> int | None:
     Returns:
         The offset right after ``<scheme>://``, or ``None`` when no URL userinfo ends at ``at``.
     """
-    begin = at
-    while begin > 0 and not text[begin - 1].isspace() and text[begin - 1] not in "/@":
-        begin -= 1
-    if text.endswith("://", 0, begin) and _scheme_before(text, begin - 3):
-        return begin
-    return None
+    return _url_userinfo_spans(text).get(at)
 
 
 def _userinfo_before(text: str, at: int) -> bool:
@@ -430,11 +450,12 @@ def _userinfo_before(text: str, at: int) -> bool:
 def userinfos(text: str) -> list[Mailbox]:
     """Every URL userinfo of ``text`` with the host after it, in order, as a :class:`Mailbox`.
 
-    The userinfo is what stands between ``<scheme>://`` and its ``@``, read whatever it ends with
-    and whatever the host is: ``https://u:abc=@pypi.org/`` holds ``u:abc=``, which no mailbox
-    reader sees (``=`` ends no local part) on a public host, and ``postgres://app:pw@localhost``
-    holds ``app:pw`` on a one-label host, which is no mailbox host. A run holding a character
-    outside :data:`_USERINFO_CHARS` is no userinfo. The host is the label run or the bracketed
+    The userinfo is read by URL grammar (:func:`_url_userinfo_spans`): everything between
+    ``<scheme>://`` and the last ``@`` of the authority, whatever characters it holds and
+    whatever the host is: ``https://u:abc=@pypi.org/`` holds ``u:abc=``, which no mailbox
+    reader sees (``=`` ends no local part) on a public host, ``postgres://app:pw@localhost``
+    holds ``app:pw`` on a one-label host, which is no mailbox host, and
+    ``postgres://app:p^w@localhost`` holds ``app:p^w``. The host is the label run or the bracketed
     literal right after the ``@``, ``""`` when none stands there.
 
     Args:
@@ -445,13 +466,8 @@ def userinfos(text: str) -> list[Mailbox]:
         (:func:`judge` reads every decoded form).
     """
     found = []
-    for at in (i for i, c in enumerate(text) if c == "@"):
-        begin = _userinfo_start(text, at)
-        if begin is None:
-            continue
+    for at, begin in sorted(_url_userinfo_spans(text).items()):
         userinfo = text[begin:at]
-        if not all(c in _USERINFO_CHARS or c.isalnum() for c in userinfo):
-            continue
         bracket = _BRACKETED.match(text, at + 1)
         run = bracket or _RUN.match(text, at + 1)
         host = run.group(0).rstrip(".-") if run is not None else ""
@@ -759,15 +775,16 @@ def residual(text: str, known: Known) -> tuple[str, int] | None:
 
 
 def judge(text: str, known: Known) -> Refusal | None:
-    """What the oracle refuses in ``text``: a known value, a tenant path, an unknown host, a public address, an unknown mailbox or a URL userinfo.
+    r"""What the oracle refuses in ``text``: a known value, a tenant path, an unknown host, a public address, an unknown mailbox or a URL userinfo.
 
     A public host followed by a tenant route (:func:`is_tenant_path`) is refused as a
     ``tenant path``: the host is public, the customer's surface after it is not.
 
-    A URL userinfo (:func:`userinfos`) is judged as the mailbox it spells, ``<userinfo>@<host>``
-    (:func:`is_literal_mailbox`): ``git`` on a placeholder-class host and a password-less user on a
-    documentation host (``postgres://app@localhost``) name no one; a credential (a ``:``) and any
-    userinfo on a public or an unknown host are refused, whatever character ends them.
+    A URL userinfo (:func:`userinfos`, read by URL grammar) is judged as the mailbox it spells,
+    ``<userinfo>@<host>`` (:func:`is_literal_mailbox`): ``git`` on a placeholder-class host and a
+    password-less user on a documentation host (``postgres://app@localhost``) name no one; a
+    credential (a ``:``) and any userinfo on a public or an unknown host are refused, whatever
+    characters they hold (``^``, ``|``, ``\``, ``[``, ``#``, ``?``, an ``@`` included).
 
     Args:
         text: One string of the built fixture.
