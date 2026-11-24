@@ -1744,6 +1744,44 @@ script reaches the text rewriting through `rename_logins_in_text`,
 the fixtures in its own step only; the main step has no list and skips it
 naming the reason. Counts: 934 rows = 642 planted + 292 ordinary = 837
 written + 95 refused + 2 bounded, 25 residuals.
+(m) **Review round 6 of PR #319: the same readers, closed on three more
+shapes.** D8: every decoded form is also read in NFC and NFKC (each peeled
+again) and with its Unicode label runs in IDNA A-labels
+(`closure.ascii_labels`, punycode of the casefolded label, the ideographic,
+fullwidth and halfwidth full stops read as dots), inside the one decoder
+`closure.decoded_forms`; an ASCII text keeps exactly its former forms. A
+mailbox or a host on an internationalised domain (`<x>@müller.de`, its NFD
+form, `https://éclair.fr/…`, a fullwidth `https：／／`, `<x>@müller。de`)
+reaches the ASCII grammar of `hosts` and `mailboxes` and is refused, and the
+pipeline fails closed: the redactor rewrites a scheme URL on such a host, the
+recorder learns the A-label host from every form, and the judge refuses what
+is left (`residual host`). A two-label protocol-relative IDN host behaves as
+its ASCII twin (NG4-3). NFKC also makes a fullwidth known value a residual;
+`Cf` removal and confusables stay NG4-4. D3: `HOME_PATH_RE` reads the Windows
+profile as a POSIX layer mounts it, WSL `/mnt/<drive>/Users/<x>`, Git-Bash and
+MSYS2 `/<drive>/Users/<x>`, Cygwin `/cygdrive/<drive>/Users/<x>`, and
+`C:/Users/<x>`, `users` in either case; the SP-NO-PERSONAL-DATA-GATE D1 copy
+is the same pattern, held equal by a gate-suite test. A single-letter directory
+before `users` (`/v/users/<x>`) is therefore refused too. D8: the first path
+segment of `ghcr.io`, `docker.io` (after an OCI `v2/`) and npm's `~<user>` is an
+identity slot (`closure_tables.ACCOUNT_NAMESPACES`; `docker.io/library` holds
+no account; `k8s.io` is not listed, every path under it being a Kubernetes
+project), and `TENANT_ROUTES` gains the account routes of the other listed
+registries (PyPI `user`/`org`, crates.io `users`/`teams`, NuGet `profiles`,
+npm `org`/`settings`, jsDelivr `gh`); both are a `tenant path` whatever leads
+the host, and the redactor rewrites a URL on one to the placeholder. A bare
+`ghcr.io/<public org>/<image>` is refused like any other namespace, so two
+ordinary rows that cited `ghcr.io/astral-sh/uv` are refused rows now. A
+Stack Overflow profile (`users/<id>/<name>`) is not listed: the redactor's
+`users/<u>` slot would keep the name after it. D4: the offline transform
+(`redact_fixture`, `redact_corpus`, formerly the script's `run`,
+`fixture_known`, `fixture_roles` and their helpers) lives in
+`repoach.forge.fixture_pipeline`; `scripts/redact_forge_fixtures.py` is its
+command line, and neither script exports a name it imports. Every refusal
+class names all its reasons in its docstring. CI collects the deny-list test
+in its own step only: the main unit step deselects it by node id. Counts: 955
+rows = 661 planted + 294 ordinary = 844 written + 109 refused + 2 bounded, 25
+residuals.
 
 ## Intent
 
@@ -2090,8 +2128,9 @@ whole behaviour row by row.
        `MDQ6VXNl…` prefix anywhere in a base64 run, a `U_` run decoding
        to MessagePack `[0, n]`), the one 0.11 reader this oracle keeps
        because an embedded node id is a real accidental shape (a GraphQL
-       error pasted in a comment); NFKC, `Cf` removal and the
-       `CONFUSABLES` table are **not** carried over (NG4-4);
+       error pasted in a comment); NFC, NFKC and IDNA A-labels are
+       read since 0.28 (m), `Cf` removal and the `CONFUSABLES` table are
+       **not** carried over (NG4-4);
      - `unknown host at <path>`: `closure.hosts(text)` finds a host
        (D8) that is neither a placeholder-class host nor public;
      - `public address at <path>`: a public IPv4 that is followed and not led, or an un-led global IPv6 literal (D8, 0.19);
@@ -2299,7 +2338,7 @@ commit that makes it (one commit per class):
 | `glab api` tokeniser | `_GLAB_API_CMD_RE`, `_GLAB_API_FALLBACK_ID_RE`, `_GLAB_API_VALUE_FLAGS`, `_GLAB_API_ARG_PROJECT_ID_RE`, `_is_glab_api_argv`, `_glab_api_endpoint`, `_glab_api_text_id_spans`, `_API_PROJECT_ID_RE`, `_API_VERSION_RE`'s role in ids, `_api_project_id_spans`, `_kept_url_spans`, `_is_real_api_project_id`, `shlex` | R10 WF5, Preference 2: one rule, D9 (`_PROJECT_ID_RE`) |
 | host reader | `locations`, `Location`, `remote_location` (*demote*: a parser of the `origin` remote only, D7 source 1), `_HOST_TOKEN_RE`, `_AFTER_HOST_DELIMITERS`, `_AFTER_HOST_CHAR`, `_AFTER_HOST_NOSLASH`, `_AFTER_HOST_SEG`, `_AFTER_HOST_RE`, `_URL_USERINFO_BEFORE_RE`, `_USERINFO_AHEAD_RE`, `_USER_BEFORE_RE`, `_has_user_before`, `_IPV4_AFTER_BLOCK_CLASS`, `_IPV4_LED_HOST_RE`, `_is_ipv4_host`, `_raw_url_host` | superseded by `closure.hosts` (D8), the one reader for `K` source 3 and for the oracle |
 | needle builder | `needles`, `Needles`, `NEEDLE_KINDS`, `is_public_forge_host` (*demote*: used by D7 source 1), `PUBLIC_FORGE_DOMAINS` (*keep*) | renamed and rebuilt as `known_values` / `Known` (D7) |
-| oracle forms | `oracle_forms`, `_plain`, `_decoded_once`, `CONFUSABLES`, `_JSON_U_ESCAPE_RE`, `_DECODE_ROUNDS`, `residual`, `embedded_id_numbers`, `_NEW_NODE_IN_TEXT_RE`, `_LEGACY_NODE_IN_TEXT_RE`, `_LEGACY_USER_NODE_PREFIX_RE`, `_legacy_node_number`, `_NODE_SUFFIX_MAX`, `_LEGACY_NODE_MAX` | re-implemented in `closure.py` (decoders, `node_id_numbers`, `residual`) without NFKC/`Cf`/confusables (NG4-4) |
+| oracle forms | `oracle_forms`, `_plain`, `_decoded_once`, `CONFUSABLES`, `_JSON_U_ESCAPE_RE`, `_DECODE_ROUNDS`, `residual`, `embedded_id_numbers`, `_NEW_NODE_IN_TEXT_RE`, `_LEGACY_NODE_IN_TEXT_RE`, `_LEGACY_USER_NODE_PREFIX_RE`, `_legacy_node_number`, `_NODE_SUFFIX_MAX`, `_LEGACY_NODE_MAX` | re-implemented in `closure.py` (decoders, `node_id_numbers`, `residual`) with NFC/NFKC and A-labels since 0.28 (m), without `Cf`/confusables (NG4-4) |
 | refusal helpers | `unredacted_host`, `_SYSTEM_NOREPLY_RE` (*demote*: convenience) | D3 judges hosts through the oracle |
 | recorder script | `IPV4_RE`, `IPV4_RESERVED`, `IPV4_VERSION_BEFORE_RE`, `IPV4_VERSION_AFTER`, `_public_ipv4`, `MAILBOX_RE`, `MAILBOX_DOC_DOMAIN_RE`, `_SCP_AFTER_MAILBOX_RE`, `_personal_mailbox`, `URL_USERINFO_RE`, the `mailbox` and `public_ipv4` branches of `generic_class`; `find_secrets`'s use in `record()` | moved to `closure.py` as `IPV4_RESERVED`, `is_doc_mailbox_host` and the mailbox rule (D8); `find_secret_tokens` (D3) |
 | kept-host exceptions | the kept-URL span exemption and the `< 4 digits` rule of project ids | D9: one threshold, five digits |
@@ -2435,9 +2474,9 @@ ids declared) stand.
 ## Interface
 
 Inputs (0.17; the 0.6–0.16 names not listed here are deleted or demoted per **What 0.17 removes or demotes**):
-- `src/repoach/forge/closure.py`: `LOCAL_CHARS`, and from `closure_tables.py` (0.28 (k)) `HOST_TLDS`, `EXTENSION_TLDS`, `REVERSE_DNS_HEADS`, `IPV4_RESERVED`, `PUBLIC_SUFFIXES` (the 25 registrable suffixes), `PUBLIC_HOSTS`, `TENANT_ROUTES`; `is_placeholder_host(host)`, `is_public_host(host)`, `is_tenant_path(host, path)`, `has_tenant_path(text)` (0.28 (l)), `userinfos(text) -> list[Mailbox]`, `is_doc_mailbox_host(host)`, `Host(host, led, start, end, literal=False)`, `hosts(text) -> list[Host]`, `Mailbox(local, host, start, end)`, `mailboxes(text) -> list[Mailbox]`, `public_addresses(text) -> list[str]`, `token_pattern(word)`, `decoded_forms(text) -> list[str]`, `forms_of(text, *, literals=())`, `node_id_numbers(text) -> list[str]`, `is_literal_mailbox(box)`, `JUDGED_KINDS`, `Known` (an opaque, count-only repr; `values(kind)`), `residual(text, known) -> tuple[kind, n] | None`, `judge(text, known) -> Refusal | None` with `Refusal(reason, kind, n)` and reasons `residual`, `tenant path`, `unknown host`, `public address`, `unknown mailbox`, `url userinfo`.
+- `src/repoach/forge/closure.py`: `LOCAL_CHARS`, and from `closure_tables.py` (0.28 (k)) `HOST_TLDS`, `EXTENSION_TLDS`, `REVERSE_DNS_HEADS`, `IPV4_RESERVED`, `PUBLIC_SUFFIXES` (the 25 registrable suffixes), `PUBLIC_HOSTS`, `TENANT_ROUTES`, `ACCOUNT_NAMESPACES` (0.28 (m)); `is_placeholder_host(host)`, `is_public_host(host)`, `is_tenant_path(host, path)`, `has_tenant_path(text)` (0.28 (l)), `userinfos(text) -> list[Mailbox]`, `is_doc_mailbox_host(host)`, `Host(host, led, start, end, literal=False)`, `hosts(text) -> list[Host]`, `Mailbox(local, host, start, end)`, `mailboxes(text) -> list[Mailbox]`, `public_addresses(text) -> list[str]`, `token_pattern(word)`, `decoded_forms(text) -> list[str]`, `ascii_labels(text) -> str` (0.28 (m)), `forms_of(text, *, literals=())`, `node_id_numbers(text) -> list[str]`, `is_literal_mailbox(box)`, `JUDGED_KINDS`, `Known` (an opaque, count-only repr; `values(kind)`), `residual(text, known) -> tuple[kind, n] | None`, `judge(text, known) -> Refusal | None` with `Refusal(reason, kind, n)` and reasons `residual`, `tenant path`, `unknown host`, `public address`, `unknown mailbox`, `url userinfo`.
 - `src/repoach/forge/recording.py`: `rename_logins_in_text(text, roles)`, `rename_logins_in_argument(arg, roles)`, `rewrite_recorded_source(source, forge)`, `replace_known_in_source(source, known)` (0.28 (l)), `login_sightings(values)`, `assign_roles(sightings, *, bot="", maintainer=None, author=None, held=...)` (0.28 (k)), `known_values(raw, *, roles, remote="", denylist=None, min_length=4, ids=None, projects=None, forge="github", keep_users=frozenset(), keep_projects=frozenset()) -> Known`, `replace_known(text, known, mapping=None) -> str`, `replace_known_in_value`, `replace_known_in_stdout`, `Known.mapping()`, `ReplaySpawn(exchanges, normalize=None)`, `find_secret_tokens(text)`, `SECRET_TOKEN_PATTERNS`, `_PROJECT_ID_RE`, `project_id_values` (D9), `_api_route(path)`, `LANGUAGE_AT_WORDS` with its parts `PYTHON_DECORATORS`, `CSS_AT_RULES`, `DOC_TAGS`, `LANGUAGE_ANNOTATIONS` (in `recording_tables.py` since 0.28 (k)), `_URL_IPV6_HOST` and `_URL_BODY` of `_URL_IN_TEXT_RE` (0.20), plus the unchanged 0.16 names of D1, D1b (demoted), D1c and D2.
-- `src/repoach/forge/fixture_pipeline.py` (0.28 (l)): `classify_calls`, `synthesize_user_ids`, `replace_known_in_calls`, `redact_recording(calls, args, kwargs, *, raw, roles, remote, denylist, forge, method) -> RedactedRecording`, `seal_fixture(fixture, *, denylist, known, users_in=None, sort_keys=False)`; `repoach.forge.fixture_judge.has_secret_token(text)`; `repoach.forge.denylist.Denylist.judged_with(known)`.
+- `src/repoach/forge/fixture_pipeline.py` (0.28 (l)): `classify_calls`, `synthesize_user_ids`, `replace_known_in_calls`, `redact_recording(calls, args, kwargs, *, raw, roles, remote, denylist, forge, method) -> RedactedRecording`, `seal_fixture(fixture, *, denylist, known, users_in=None, sort_keys=False)`, and since 0.28 (m) the offline transform: `redact_fixture(data, ids=None, *, forge, projects=None, remote="", denylist=None)`, `redact_corpus(root, *, check, denylist=None)`, `fixture_known`, `fixture_roles`, `fixture_forge`, `redact_output`, `corpus_start`, `render`, `ResidualValueError`, `UnknownForgeError`; `repoach.forge.fixture_judge.has_secret_token(text)`; `repoach.forge.denylist.Denylist.judged_with(known)`.
 - `scripts/record_forge_fixture.py`: `refuse_unclassified(fixture, denylist, known)`, `generic_class` (home path only), `build_roles` (through `assign_roles`), `Denylist`, `read_denylist`, `GIT_ENV_KEYS`, `git_env()`, `origin_url`, `record`, the CLI unchanged.
 - `scripts/redact_forge_fixtures.py`: `redact_fixture(data, ids=None, *, forge, projects=None, remote="", denylist=None)`, `fixture_known(data, *, roles=None, remote="", denylist=None, ids=None, projects=None, forge="github")` (`None` is the maintainer's deny-list since 0.28 (k)), `fixture_roles(data, also=())`, `ResidualValueError`, `run`, the CLI unchanged.
 
