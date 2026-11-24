@@ -99,6 +99,7 @@ def select_forge(
     *,
     override: str | None = None,
     cwd: Path | None = None,
+    bot_username: str | None = None,
 ) -> Forge:
     """Build the forge for the repository at ``cwd``.
 
@@ -106,6 +107,8 @@ def select_forge(
         resolved: Pre-resolved configuration; resolved for ``cwd`` when ``None``.
         override: The ``--forge`` flag value, highest precedence.
         cwd: The clone the forge operates in (default: the process cwd).
+        bot_username: The bot login the forge trusts, overriding the configured one
+            (the fixture recorder replays under the recording's class word).
 
     Returns:
         A :class:`~repoach.forge.github.GitHubForge` or
@@ -119,7 +122,7 @@ def select_forge(
     resolved_cwd = (cwd or Path.cwd()).resolve()
     config = resolved if resolved is not None else _resolved(resolved_cwd)
     name, source = resolve_forge_name(config, override=override)
-    bot = effective_bot_username(config, name)
+    bot = bot_username if bot_username is not None else effective_bot_username(config, name)
     forge: Forge
     if name == "gitlab":
         forge = GitLabForge(cwd=resolved_cwd, bot_username=bot)

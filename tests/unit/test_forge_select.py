@@ -125,6 +125,17 @@ def test_bot_username_defaults_per_forge(tmp_path: Path, monkeypatch: pytest.Mon
     assert select_forge(override="gitlab", cwd=root).bot_username == ""
 
 
+def test_an_explicit_bot_username_overrides_the_configured_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fixture recorder replays under the recording's class word through the constructor."""
+    _fake_binaries(monkeypatch, tmp_path, "gh", "glab")
+    root = _repo(tmp_path, "https://github.com/o/r.git")
+    assert select_forge(cwd=root, bot_username="bot").bot_username == "bot"
+    assert select_forge(override="gitlab", cwd=root, bot_username="bot").bot_username == "bot"
+    assert select_forge(cwd=root, bot_username=None).bot_username == "github-actions[bot]"
+
+
 def test_bot_username_from_toml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _fake_binaries(monkeypatch, tmp_path, "gh", "glab")
     root = _repo(
