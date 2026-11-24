@@ -292,7 +292,9 @@ def expect(kind: str, lead: str, follow: str) -> tuple[str, tuple[str, ...], str
     if cls == "reverse_dns":
         if lead in ("scheme", "scheme_at", "at", "scp"):
             return PLANTED, (token,), "H1: any run after a scheme or @ is a host", ""
-        return ORDINARY, (), "a reverse-DNS head is never a host un-led", ""
+        if lead == "slashes" or follow in ("port", "portpath"):
+            return PLANTED, (token,), "no package name takes // or a port (PR #319)", ""
+        return ORDINARY, (), "a reverse-DNS head is never a host after a path only", ""
     raise AssertionError(kind)
 
 

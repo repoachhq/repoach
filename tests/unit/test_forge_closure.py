@@ -1650,6 +1650,20 @@ def test_a_unicode_local_part_and_a_userinfo_lead_their_host() -> None:
         assert closure.judge(text, none) is None, text
 
 
+def test_a_reverse_dns_head_is_a_host_after_slashes_or_before_a_port() -> None:
+    """D8 (0.28, PR #319): no package name takes ``//`` or a port; after a path only, the head is code."""
+    none = closure.Known(())
+    for text in (
+        "ssh dev.acme.internal:8443 now",
+        "src=//dev.acme.io/ns now",
+        "src=//com.example.app now",
+        "see io.acme.dev:22/x",
+    ):
+        assert closure.judge(text, none) == closure.Refusal("unknown host"), text
+    for text in ("see com.example.app/Main.java", "see dev.acme.io/ns now"):
+        assert closure.judge(text, none) is None, text
+
+
 def test_the_userinfo_scan_stops_at_the_previous_at_and_stays_linear() -> None:
     """D8 (0.28, PR #319): a run of ``=@a`` reads each character back once, not once per ``@``."""
     started = time.perf_counter()

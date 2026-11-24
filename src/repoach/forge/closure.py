@@ -399,7 +399,12 @@ HOST_TLDS: frozenset[str] = (
 REVERSE_DNS_HEADS: frozenset[str] = frozenset(
     {"com", "org", "net", "io", "dev", "me", "co", "edu", "gov"}
 )
-"""First labels of Java, Android and Maven names (``com.example.app``): never a host un-led."""
+"""First labels of Java, Android and Maven names (``com.example.app``).
+
+A name with such a head is never a host when only a ``/<segment>`` follows it (a source path,
+``com/example/app``'s dotted form); led by ``//`` or followed by ``:<port digits>`` it is a host
+like any other, since no package name takes a port or a network-path lead.
+"""
 
 LOCAL_CHARS = (
     "._%+-:${}" + "abcdefghijklmnopqrstuvwxyz" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ" + "0123456789"
@@ -801,6 +806,11 @@ def _version_context(text: str, start: int, end: int) -> bool:
     return labelled or text[end : end + 1] in ("-", "+")
 
 
+def _port_after(text: str, end: int) -> bool:
+    """Whether ``:<port digits>`` stands right after offset ``end``."""
+    return text[end : end + 1] == ":" and text[end + 1 : end + 2] in _DIGITS
+
+
 def _followed(text: str, end: int) -> bool:
     """Whether ``/<segment>`` or ``:<port digits>`` stands right after offset ``end``."""
     mark, after = text[end : end + 1], text[end + 1 : end + 2]
@@ -814,8 +824,9 @@ def hosts(text: str) -> list[Host]:
     never otherwise, whatever its last label. Led by a scheme ``://`` or
     by ``<local>@``, a label run of two or more labels is a host. Led by
     ``//`` or followed by ``/<segment>`` or ``:<port digits>``, it is a
-    host when it has three labels or more, a last label of
-    :data:`HOST_TLDS` and a first label that is not a reverse-DNS head.
+    host when it has three labels or more and a last label of
+    :data:`HOST_TLDS`; followed by ``/<segment>`` only, its first label must
+    also not be a reverse-DNS head (:data:`REVERSE_DNS_HEADS`).
     A dotted IPv4 address follows the same rule whatever its octets: it is
     a host when it is led by a scheme, a ``<local>@`` or ``//``, or followed
     by ``/<segment>`` or ``:<port digits>``, outside a version context
@@ -845,8 +856,8 @@ def hosts(text: str) -> list[Host]:
         elif (
             len(labels) >= 3
             and labels[-1].casefold() in HOST_TLDS
-            and labels[0].casefold() not in REVERSE_DNS_HEADS
             and (slashes or _followed(text, end))
+            and (slashes or _port_after(text, end) or labels[0].casefold() not in REVERSE_DNS_HEADS)
         ):
             found.append(Host(host, False, start, end))
     for start, end, _address in _bracketed(text):
