@@ -93,6 +93,7 @@ def test_the_oracle_shares_no_code_object_with_the_redactor() -> None:
         "html",
         "urllib",
         "dataclasses",
+        "unicodedata",
     }
     for name, allowed in (("closure", stdlib | {"closure_tables"}), ("closure_tables", stdlib)):
         tree = ast.parse((ROOT / "src" / "repoach" / "forge" / f"{name}.py").read_text())
@@ -1917,3 +1918,63 @@ def test_a_tenant_route_is_refused_whatever_leads_its_host() -> None:
     started = time.perf_counter()
     assert not closure.has_tenant_path("a." * 20000 + "stackoverflow.com/q")
     assert time.perf_counter() - started < 2.0
+
+
+def test_a_host_on_an_internationalised_domain_is_read_by_the_ascii_grammar() -> None:
+    """D8 (PR #319 round 6, 4684965361): a U-label host is read in NFC, NFKC and its A-labels, failing closed.
+
+    ``hans@müller.de`` and ``https://éclair.fr/…`` were passed: the ASCII reader stopped at the
+    first non-ASCII letter. Every decoded form is now also read in NFC and NFKC and with its
+    Unicode label runs in IDNA A-labels (:func:`repoach.forge.closure.ascii_labels`), so the one
+    grammar of :func:`repoach.forge.closure.hosts` and :func:`repoach.forge.closure.mailboxes`
+    reads them; ordinary non-ASCII prose keeps no host it did not have.
+    """
+    none = closure.Known(())
+    assert closure.ascii_labels("hans@m\u00fcller.de") == "hans@xn--mller-kva.de"
+    assert closure.ascii_labels("https://\u00e9clair.fr/x") == "https://xn--clair-9ra.fr/x"
+    assert (
+        closure.ascii_labels("a@\u4f8b\u3048\u3002\u30c6\u30b9\u30c8") == "a@xn--r8jz45g.xn--zckzah"
+    )
+    assert closure.ascii_labels("M\u00dcLLER.de") == "xn--mller-kva.de"
+    assert closure.ascii_labels("plain ascii.text") == "plain ascii.text"
+    assert closure.ascii_labels("\u212a.example.com") == "k.example.com"
+    assert closure.decoded_forms("plain") == ["plain"]
+    nfd = "hans@mu\u0308ller.de"
+    forms = closure.decoded_forms(nfd)
+    assert forms[0] == nfd and "hans@xn--mller-kva.de" in forms
+    assert "https://zqcorp.io/x" in closure.decoded_forms(
+        "\uff48\uff54\uff54\uff50\uff53\uff1a\uff0f\uff0f\uff5a\uff51\uff43\uff4f\uff52\uff50\uff0e\uff49\uff4f\uff0fx"
+    )
+    refused = {
+        "mail hans@m\u00fcller.de now": "unknown host",
+        "mail " + nfd: "unknown host",
+        "mail hans@m%C3%BCller.de": "unknown host",
+        "mail hans@m&#252;ller.de": "unknown host",
+        "mail hans@m\u00fcller\u3002de": "unknown host",
+        "mail hans@m\u00fcller\uff0ede": "unknown host",
+        "mail MAX@M\u00dcLLER.DE": "unknown host",
+        "see https://\u00e9clair.fr/ns/repo": "unknown host",
+        "see https://e\u0301clair.fr/ns/repo": "unknown host",
+        "see https://xn--clair-9ra.fr/ns/repo": "unknown host",
+        "see https://\u00e9clair/ns": "unknown host",
+        "see //git.\u00e9clair.fr/ns": "unknown host",
+        "see ssh://git@g\u00eft.zqcorp.io/x": "unknown host",
+        "see \uff48\uff54\uff54\uff50\uff53\uff1a\uff0f\uff0f\uff5a\uff51\uff43\uff4f\uff52\uff50\uff0e\uff49\uff4f\uff0fx": "unknown host",
+        "see https://\u0431\u0430\u043d\u043a.\u0440\u0444/x": "unknown host",
+    }
+    for text, reason in refused.items():
+        refusal = closure.judge(text, none)
+        assert refusal is not None and refusal.reason == reason, ascii(text)
+    for text in (
+        "Le caf\u00e9 est pr\u00eat. Voil\u00e0.C'est fini",
+        "na\u00efve r\u00e9sum\u00e9 co\u00f6perate",
+        "Gr\u00f6\u00dfe: 1.2.3 und Ma\u00dfe.Ende",
+        "\u65e5\u672c\u8a9e\u306e\u30c6\u30ad\u30b9\u30c8\u3002\u7d42\u308f\u308a",
+        "@m\u00fcller said hi",
+        "voir https://fr.wikipedia.org/wiki/Caf\u00e9",
+        "jos\u00e9@example.com",
+        "Stra\u00dfe.Weg/abc",
+        "\u00fcber 3.5 \u00b5s",
+        "\u2460 \uff11\uff12\uff13 \u00bd",
+    ):
+        assert closure.judge(text, none) is None, ascii(text)

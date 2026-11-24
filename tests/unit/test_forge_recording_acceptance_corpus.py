@@ -10853,6 +10853,59 @@ ROWS: tuple[Row, ...] = (
         inp=Sample(body="copied to /mnt/c/Windows/Temp/build and /c/Program Files/tool"),
         outcome=Written(text="copied to /mnt/c/Windows/Temp/build and /c/Program Files/tool"),
     ),
+    Row(
+        id="r6_idn_mailbox_is_refused",
+        source="PR #319 review round 6 (4684965361)",
+        inp=Sample(body="write to zqhans@müllerzq.de for access"),
+        outcome=Refused("residual host 4 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r6_idn_mailbox_decomposed_is_refused",
+        source="PR #319 review round 6 (4684965361)",
+        inp=Sample(body="write to zqhans@müllerzq.de for access"),
+        outcome=Refused("residual host 4 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r6_idn_mailbox_with_an_ideographic_full_stop_is_refused",
+        source="PR #319 review round 6 (4684965361)",
+        inp=Sample(body="write to zqhans@müllerzq。de for access"),
+        outcome=Refused("residual host 4 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r6_idn_url_is_rewritten",
+        source="PR #319 review round 6 (4684965361)",
+        inp=Sample(body="see https://éclairzq.fr/zqns/zqrepo/pull/3 now"),
+        outcome=Written(text="see https://forge.example.com/org/project/pull/3 now"),
+        markers=("éclairzq", "zqns", "zqrepo"),
+    ),
+    Row(
+        id="r6_idn_url_protocol_relative_is_refused",
+        source="PR #319 review round 6 (4684965361)",
+        inp=Sample(body="see //git.éclairzq.fr/zqns/x now"),
+        outcome=Refused("residual host 4 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r6_fullwidth_url_is_refused",
+        source="PR #319 review round 6 (4684965361)",
+        inp=Sample(body="see ｈｔｔｐｓ：／／ｚｑｃｏｒｐ．ｉｏ／x"),
+        outcome=Refused("residual host 4 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r6_non_ascii_prose_is_ordinary",
+        source="PR #319 review round 6 (4684965361)",
+        inp=Sample(
+            body="Le café est prêt. Voilà.C'est fini, naïve résumé; Größe 1.2.3 und Maße.Ende; 日本語のテキスト。終わり"
+        ),
+        outcome=Written(
+            text="Le café est prêt. Voilà.C'est fini, naïve résumé; Größe 1.2.3 und Maße.Ende; 日本語のテキスト。終わり"
+        ),
+    ),
+    Row(
+        id="r6_non_ascii_path_on_a_public_host_is_ordinary",
+        source="PR #319 review round 6 (4684965361)",
+        inp=Sample(body="voir https://fr.wikipedia.org/wiki/Café et josé@example.com"),
+        outcome=Written(text="voir https://fr.wikipedia.org/wiki/Café et josé@example.com"),
+    ),
 )
 
 
@@ -11305,10 +11358,10 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
     refused = [row for row in ROWS if isinstance(row.outcome, Refused)]
     bounded = [row for row in ROWS if isinstance(row.outcome, Bounded)]
     assert (len(ROWS), len(planted), len(ordinary), len(refused), len(bounded)) == (
-        939,
-        646,
-        293,
-        99,
+        947,
+        652,
+        295,
+        104,
         2,
     )
     assert len(residual) == 25

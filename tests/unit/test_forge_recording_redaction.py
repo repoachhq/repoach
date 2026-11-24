@@ -2267,7 +2267,7 @@ def test_non_person_logins_are_no_needles() -> None:
 
 
 def test_the_oracle_judges_encoded_forms() -> None:
-    """I2, I3 (0.11, 0.17): percent (up to 4 rounds), entities and ``\\u`` escapes; lookalike letters are NG4-4."""
+    """I2, I3 (0.11, 0.17, round 6): percent (up to 4 rounds), entities, ``\\u`` escapes and NFKC; lookalikes are NG4-4."""
     found = needles([], roles={"qhandle": "author"})
     for text in (
         "qhandle%41",
@@ -2277,13 +2277,14 @@ def test_the_oracle_judges_encoded_forms() -> None:
         "&#113;handle",
         "&#x71;handle",
         "\\u0071handle",
+        "\uff51handle",
     ):
         assert residual(_placed(text, "prose"), found) == (
             "login",
             1,
             "exchanges[0].stdout.body",
         ), text
-    for text in ("qha\u200bndle", "qh\u0430ndle", "\uff51handle"):
+    for text in ("qha\u200bndle", "qh\u0430ndle"):
         assert residual(_placed(text, "prose"), found) is None, text
 
 

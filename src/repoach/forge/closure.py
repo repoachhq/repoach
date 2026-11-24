@@ -21,6 +21,7 @@ import functools
 import html
 import ipaddress
 import re
+import unicodedata
 from dataclasses import dataclass
 from urllib.parse import unquote
 
@@ -676,13 +677,56 @@ def _unescape_once(text: str) -> str:
     return unquote(html.unescape(_STRING_ESCAPE.sub(_escaped_char, text)))
 
 
-def decoded_forms(text: str) -> list[str]:
-    r"""``text`` and each layer of string-escape, HTML-entity and percent encoding peeled off, up to four.
+_LABEL_RUN_UNICODE = re.compile(r"(?:[^\W_]|[-.。．｡])+", re.I)
+"""A run of Unicode letters, digits, ``-`` and dots: the grammar of a host name before IDNA (RFC 5890).
 
-    The string-escape layer is ``\uXXXX``, ``\xHH`` and ``\/``: the JSON
-    and C-family escapes a pasted payload carries (PHP and Go encode ``/``
-    as ``\/``), so ``http:\/\/<host>\/<ns>`` is judged as its plain form.
+``。``, ``．`` and ``｡`` are the ideographic, fullwidth and halfwidth full stops,
+which IDNA reads as label separators (RFC 3490 3.1).
+"""
+
+_IDNA_DOTS = str.maketrans({"。": ".", "．": ".", "｡": "."})
+
+
+def _a_label(label: str) -> str:
+    """``label`` as IDNA writes it on the wire: itself when ASCII, else ``xn--`` and its punycode, casefolded."""
+    if label.isascii():
+        return label
+    folded = label.casefold()
+    if folded.isascii():
+        return folded
+    return "xn--" + folded.encode("punycode").decode("ascii")
+
+
+def ascii_labels(text: str) -> str:
+    """``text`` with every Unicode label run written in IDNA A-labels, so the ASCII readers read its hosts.
+
+    A run of Unicode letters, digits, ``-`` and dots (:data:`_LABEL_RUN_UNICODE`) that holds a
+    non-ASCII character is split on its dots, each non-ASCII label becoming ``xn--<punycode>``:
+    ``hans@müller.de`` is ``hans@xn--mller-kva.de`` and ``https://éclair.fr/x`` is
+    ``https://xn--clair-9ra.fr/x``, a mailbox and a host like any other. ASCII text is returned
+    as it is; ordinary prose keeps no host-shaped token it did not have, since a label run
+    names a host only where :func:`hosts` and :func:`mailboxes` would read its ASCII twin.
+
+    Args:
+        text: The text read, one decoded form of it.
+
+    Returns:
+        ``text`` with its Unicode label runs in A-labels; never raises.
     """
+    if text.isascii():
+        return text
+
+    def _run(match: re.Match[str]) -> str:
+        run = match.group(0)
+        if run.isascii():
+            return run
+        return ".".join(_a_label(label) for label in run.translate(_IDNA_DOTS).split("."))
+
+    return _LABEL_RUN_UNICODE.sub(_run, text)
+
+
+def _peeled(text: str) -> list[str]:
+    """``text`` and each layer of string-escape, HTML-entity and percent encoding peeled off, up to four."""
     forms = [text]
     current = text
     for _ in range(_DECODE_ROUNDS):
@@ -691,6 +735,40 @@ def decoded_forms(text: str) -> list[str]:
             break
         forms.append(peeled)
         current = peeled
+    return forms
+
+
+def decoded_forms(text: str) -> list[str]:
+    r"""Every form ``text`` is read in: each encoding layer peeled off, its Unicode normal forms, its A-labels.
+
+    The layers are string-escape, HTML-entity and percent encoding, up to four. The
+    string-escape layer is ``\uXXXX``, ``\xHH`` and ``\/``: the JSON and C-family escapes a
+    pasted payload carries (PHP and Go encode ``/`` as ``\/``), so ``http:\/\/<host>\/<ns>`` is
+    judged as its plain form. Then every form is read in NFC and in NFKC (a fullwidth
+    ``ｈｔｔｐｓ：／／`` is ``https://``), each of those peeled again, and every form with its
+    Unicode label runs in IDNA A-labels (:func:`ascii_labels`), so a host or a mailbox on an
+    internationalised domain is read by the same grammar as an ASCII one. An ASCII text has
+    no other form than its layers, in their order.
+    """
+    seeds = [text]
+    for normal in ("NFC", "NFKC"):
+        seed = unicodedata.normalize(normal, text)
+        if seed not in seeds:
+            seeds.append(seed)
+    forms: list[str] = []
+    for seed in seeds:
+        for form in _peeled(seed):
+            if form not in forms:
+                forms.append(form)
+    for form in list(forms):
+        for normal in ("NFC", "NFKC"):
+            extra = unicodedata.normalize(normal, form)
+            if extra not in forms:
+                forms.append(extra)
+    for form in list(forms):
+        extra = ascii_labels(form)
+        if extra not in forms:
+            forms.append(extra)
     return forms
 
 
