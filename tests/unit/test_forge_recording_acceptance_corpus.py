@@ -9587,7 +9587,7 @@ ROWS: tuple[Row, ...] = (
         id="v20_credential_before_at_is_no_mention",
         source="fable020/sweep.py",
         inp=Sample(body="DATABASE_URL=postgres://app:${DB_PASSWORD}@localhost:5432/db"),
-        outcome=Written(text="DATABASE_URL=postgres://app:${DB_PASSWORD}@localhost:5432/db"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
     ),
     Row(
         id="v20_framework_annotation_is_a_mention_residual",
@@ -10634,6 +10634,48 @@ ROWS: tuple[Row, ...] = (
         markers=(FAKE_HOST, "kvnteam", "kvnsub", "kvnbilling"),
         url_field_class=True,
     ),
+    Row(
+        id="r4_url_userinfo_padded_credential_on_a_public_host",
+        source="PR #319 review round 4 (4681867281)",
+        inp=Sample(body="redis://u:abc=@pypi.org:6379"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r4_url_userinfo_on_a_public_cdn_host",
+        source="PR #319 review round 4 (4681867281)",
+        inp=Sample(body="mount webdav://u:abc=@cdnjs.cloudflare.com/x"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r4_url_userinfo_on_the_placeholder_host",
+        source="PR #319 review round 4 (4681867281)",
+        inp=Sample(body="REDIS=redis://:abc=@forge.example.com:6379/0"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r4_url_userinfo_on_a_loopback_address",
+        source="PR #319 review round 4 (4681867281)",
+        inp=Sample(body="amqp://u:abc=@127.0.0.1:5672/"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r4_url_userinfo_on_a_one_label_host",
+        source="PR #319 review round 4 (4681867281)",
+        inp=Sample(body="DATABASE_URL=postgres://u:abc=@localhost:5432/db"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r4_url_userinfo_symbol_password_on_a_documentation_host",
+        source="PR #319 review round 4 (4681867281)",
+        inp=Sample(body="ldap://u:pw!@example.com/x"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r4_credential_template_before_at_is_no_mention",
+        source="PR #319 review round 4 (4681867281)",
+        inp=Sample(body="DATABASE_URL=app:${DB_PASSWORD}@localhost:5432/db"),
+        outcome=Written(text="DATABASE_URL=app:${DB_PASSWORD}@localhost:5432/db"),
+    ),
 )
 
 
@@ -11086,10 +11128,10 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
     refused = [row for row in ROWS if isinstance(row.outcome, Refused)]
     bounded = [row for row in ROWS if isinstance(row.outcome, Bounded)]
     assert (len(ROWS), len(planted), len(ordinary), len(refused), len(bounded)) == (
-        905,
-        614,
+        912,
+        621,
         291,
-        73,
+        80,
         2,
     )
     assert len(residual) == 25

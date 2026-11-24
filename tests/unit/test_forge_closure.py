@@ -1686,7 +1686,10 @@ def test_a_reverse_dns_head_is_a_host_after_slashes_or_before_a_port() -> None:
 def test_the_userinfo_scan_stops_at_the_previous_at_and_stays_linear() -> None:
     """D8 (0.28, PR #319): a run of ``=@a`` reads each character back once, not once per ``@``."""
     started = time.perf_counter()
-    assert closure.judge("x://" + "=@a" * 20000, closure.Known(())) is None
+    assert closure.judge("x://" + "=@a" * 20000, closure.Known(())) == (
+        closure.Refusal("url userinfo")
+    )
+    assert len(closure.userinfos("x://" + "=@a" * 20000)) == 1
     assert time.perf_counter() - started < 2.0
     assert closure.judge("clone https://u:p@ss@acme.io/x now", closure.Known(())) == (
         closure.Refusal("unknown host")
@@ -1714,3 +1717,69 @@ def test_a_one_label_authority_and_an_idna_last_label_are_hosts() -> None:
         "x@y",
     ):
         assert closure.judge(text, none) is None, text
+
+
+def test_a_url_userinfo_is_refused_on_every_allowlisted_and_placeholder_host() -> None:
+    """D8 (PR #319 round 4): a userinfo no mailbox reader sees is refused wherever its host stands.
+
+    ``https://u:abc=@pypi.org/`` ends its userinfo with ``=``, so no local part leads the ``@``,
+    and its host is public: before, the oracle refused nothing. Every host the oracle lets
+    through, the public hosts, the placeholder-class hosts and addresses and a one-label host,
+    is enumerated with every userinfo ending a mailbox reader cannot read.
+    """
+    none = closure.Known(())
+    public = sorted(closure_tables.PUBLIC_SUFFIXES)
+    hosts = [
+        *public,
+        *(f"www.{s}" for s in public),
+        "forge.example.com",
+        "example.org",
+        "x.test",
+        "localhost",
+        "127.0.0.1",
+        "203.0.113.7",
+        "[::1]",
+        "[2001:db8::1]",
+        "intranet",
+    ]
+    tails = ["=", "!", "~", "*", "'", "(", ")", ",", ";", "&", "$", "", ":", "{x}", "%3D"]
+    for host in hosts:
+        for scheme in ("https", "redis", "postgres"):
+            for tail in tails:
+                text = f"see {scheme}://u:abc{tail}@{host}:6379/x now"
+                assert closure.judge(text, none) is not None, text
+            empty = f"{scheme}://:{tail or 'p'}@{host}/x"
+            assert closure.judge(empty, none) is not None, empty
+    assert closure.judge("redis://u:abc=@pypi.org:6379", none) == closure.Refusal("url userinfo")
+    assert closure.judge("see https%3A%2F%2Fu%3Aabc%3D%40pypi.org%2Fx", none) == (
+        closure.Refusal("url userinfo")
+    )
+    for text in (
+        "ssh://git@forge.example.com/org/project.git",
+        "git://GIT@forge.example.com/org/project.git",
+        "See <https://forge.example.com><a@example.com> (host forge.example.com)",
+        "DATABASE_URL=app:${DB_PASSWORD}@localhost:5432/db",
+        "image ghcr.io/o/r@sha256:abc and https://pypi.org/@scope",
+    ):
+        assert closure.judge(text, none) is None, text
+    for text in (
+        "DATABASE_URL=postgres://app@localhost:5432/db",
+        "redis://root@127.0.0.1:6379/0",
+        "ftp://anonymous@example.org/pub",
+    ):
+        assert closure.judge(text, none) is None, text
+    for text in (
+        "redis://app@pypi.org:6379/0",
+        "postgres://app@forge.example.com:5432/db",
+        "postgres://app@[::1]:5432/db",
+        "https://@pypi.org/x",
+        "postgres://app:${DB_PASSWORD}@localhost:5432/db",
+    ):
+        assert closure.judge(text, none) is not None, text
+    boxes = closure.userinfos("a https://u:p=@h.io b ssh://git@x c https://<a>@h.io d s://v@[::1]")
+    assert [(b.local, b.host) for b in boxes] == [("u:p=", "h.io"), ("git", "x"), ("v", "[::1]")]
+    assert [(b.local, b.host) for b in closure.userinfos("https://@pypi.org./x")] == [
+        ("", "pypi.org")
+    ]
+    assert [b.local for b in closure.userinfos("https://josé:pw@pypi.org/x")] == ["josé:pw"]
+    assert [b.host for b in closure.userinfos("https://u:p@/x")] == [""]

@@ -68,6 +68,22 @@ _SCHEME_CHARS = frozenset(
 )
 """The characters of a URL scheme (RFC 3986 ``ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )``)."""
 
+_USERINFO_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyz"
+    + "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    + "0123456789"
+    + "-._~"
+    + "%"
+    + "!$&'()*+,;="
+    + ":"
+    + "{}"
+)
+"""The ASCII characters of a URL userinfo (RFC 3986 unreserved, ``%``, sub-delims, ``:``) and ``{}``.
+
+``{}`` makes a ``${TOKEN}`` template one userinfo; any Unicode letter or digit is one as well (an
+IRI). A ``<``, a ``>``, a quote or a space is none, so ``<https://<host>><a@<host>>`` is prose.
+"""
+
 _STRING_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})|\\x([0-9a-fA-F]{2})|\\(/)")
 """The string-literal escapes of JSON and the C family that hide a delimiter: ``\\uXXXX``, ``\\xHH`` and ``\\/``."""
 
@@ -149,7 +165,8 @@ class Refusal:
     """What the oracle found, never a value.
 
     Attributes:
-        reason: ``residual``, ``unknown host``, ``public address`` or ``unknown mailbox``.
+        reason: ``residual``, ``unknown host``, ``public address``, ``unknown mailbox`` or
+            ``url userinfo``.
         kind: The kind of the known value for a ``residual``, else ``""``.
         n: The ordinal of the known value within its kind, else ``0``.
     """
@@ -342,16 +359,62 @@ def _led(text: str, start: int) -> bool:
     return _local_before(text, start - 1) != "" or _userinfo_before(text, start - 1)
 
 
-def _userinfo_before(text: str, at: int) -> bool:
-    """Whether the ``@`` at ``at`` ends a URL's userinfo: ``<scheme>://`` then no space, ``/`` or ``@``.
+def _userinfo_start(text: str, at: int) -> int | None:
+    """Where the URL userinfo the ``@`` at ``at`` ends begins: ``<scheme>://`` then no space, ``/`` or ``@``.
 
     A userinfo holds no unescaped ``@`` (RFC 3986), so the scan back stops at the previous one:
     each character is read back once over all the ``@`` of a text, and the reader stays linear.
+
+    Args:
+        text: The text read.
+        at: The offset of an ``@`` of ``text``.
+
+    Returns:
+        The offset right after ``<scheme>://``, or ``None`` when no URL userinfo ends at ``at``.
     """
     begin = at
     while begin > 0 and not text[begin - 1].isspace() and text[begin - 1] not in "/@":
         begin -= 1
-    return text.endswith("://", 0, begin) and _scheme_before(text, begin - 3)
+    if text.endswith("://", 0, begin) and _scheme_before(text, begin - 3):
+        return begin
+    return None
+
+
+def _userinfo_before(text: str, at: int) -> bool:
+    """Whether the ``@`` at ``at`` ends a URL's userinfo (:func:`_userinfo_start`)."""
+    return _userinfo_start(text, at) is not None
+
+
+def userinfos(text: str) -> list[Mailbox]:
+    """Every URL userinfo of ``text`` with the host after it, in order, as a :class:`Mailbox`.
+
+    The userinfo is what stands between ``<scheme>://`` and its ``@``, read whatever it ends with
+    and whatever the host is: ``https://u:abc=@pypi.org/`` holds ``u:abc=``, which no mailbox
+    reader sees (``=`` ends no local part) on a public host, and ``postgres://app:pw@localhost``
+    holds ``app:pw`` on a one-label host, which is no mailbox host. A run holding a character
+    outside :data:`_USERINFO_CHARS` is no userinfo. The host is the label run or the bracketed
+    literal right after the ``@``, ``""`` when none stands there.
+
+    Args:
+        text: The text read.
+
+    Returns:
+        Each userinfo as ``Mailbox(local=<userinfo>, host=<host>)``, never decoded here
+        (:func:`judge` reads every decoded form).
+    """
+    found = []
+    for at in (i for i, c in enumerate(text) if c == "@"):
+        begin = _userinfo_start(text, at)
+        if begin is None:
+            continue
+        userinfo = text[begin:at]
+        if not all(c in _USERINFO_CHARS or c.isalnum() for c in userinfo):
+            continue
+        bracket = _BRACKETED.match(text, at + 1)
+        run = bracket or _RUN.match(text, at + 1)
+        host = run.group(0).rstrip(".-") if run is not None else ""
+        found.append(Mailbox(userinfo, host, begin, at + 1 + len(host)))
+    return found
 
 
 def _runs(text: str) -> list[tuple[int, int, str]]:
@@ -637,7 +700,20 @@ def residual(text: str, known: Known) -> tuple[str, int] | None:
 
 
 def judge(text: str, known: Known) -> Refusal | None:
-    """What the oracle refuses in ``text``: a known value, an unknown host, a public address or an unknown mailbox."""
+    """What the oracle refuses in ``text``: a known value, an unknown host, a public address, an unknown mailbox or a URL userinfo.
+
+    A URL userinfo (:func:`userinfos`) is judged as the mailbox it spells, ``<userinfo>@<host>``
+    (:func:`is_literal_mailbox`): ``git`` on a placeholder-class host and a password-less user on a
+    documentation host (``postgres://app@localhost``) name no one; a credential (a ``:``) and any
+    userinfo on a public or an unknown host are refused, whatever character ends them.
+
+    Args:
+        text: One string of the built fixture.
+        known: The recording's known values and literals.
+
+    Returns:
+        The first refusal, in the order above, or ``None`` when the oracle refuses nothing.
+    """
     left = residual(text, known)
     if left is not None:
         return Refusal("residual", left[0], left[1])
@@ -653,4 +729,6 @@ def judge(text: str, known: Known) -> Refusal | None:
         return Refusal("public address")
     if any(not is_literal_mailbox(b) for form in forms for b in mailboxes(form)):
         return Refusal("unknown mailbox")
+    if any(not is_literal_mailbox(u) for form in forms for u in userinfos(form)):
+        return Refusal("url userinfo")
     return None
