@@ -24,8 +24,16 @@ from repoach.forge.recording import (
     scanned_strings,
 )
 
-HOME_PATH_RE = re.compile(r"(?<![A-Za-z0-9_$.-])/(home|Users)/[A-Za-z0-9_.-]+(?![A-Za-z0-9_.-])")
-"""Copy of SP-NO-PERSONAL-DATA-GATE D1 ``home_path`` (that lint lands later; not imported)."""
+HOME_PATH_RE = re.compile(
+    r"(?<![A-Za-z0-9_$.-])"
+    r"(?:(?:/var)?/(?:home|Users)/|[A-Za-z]:\\{1,2}[Uu]sers\\{1,2})"
+    r"[A-Za-z0-9_.-]+(?![A-Za-z0-9_.-])"
+)
+"""Copy of SP-NO-PERSONAL-DATA-GATE D1 ``home_path`` (that lint lands later; not imported).
+
+A POSIX home (``/home/<x>``, ``/Users/<x>``, ``/var/home/<x>``) or a Windows profile
+(``C:\\Users\\<x>``, its backslashes single or JSON-escaped), with a user segment.
+"""
 
 
 class UnclassifiedValueError(Exception):
@@ -36,8 +44,19 @@ class UnclassifiedValueError(Exception):
 
 
 def generic_class(text: str) -> str | None:
-    """``home_path`` when ``text`` holds a home directory path, else ``None``."""
-    return "home_path" if HOME_PATH_RE.search(text) else None
+    r"""``home_path`` when ``text`` holds a home directory path, else ``None``.
+
+    Judged in every decoded form of ``text`` (:func:`repoach.forge.closure.decoded_forms`), as the
+    deny-list and the closure oracle judge it, so ``%2Fhome%2F<x>`` and ``\/home\/<x>`` count.
+
+    Args:
+        text: One string of the fixture.
+
+    Returns:
+        The rule's name, or ``None``.
+    """
+    forms = closure.decoded_forms(text)
+    return "home_path" if any(HOME_PATH_RE.search(form) for form in forms) else None
 
 
 def decoded_answers(calls: list[dict[str, Any]]) -> list[tuple[str, object]]:

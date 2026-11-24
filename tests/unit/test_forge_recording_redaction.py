@@ -517,6 +517,29 @@ def test_recorder_refuses_an_unclassified_or_generic_value_without_printing_it(
     assert fixture_judge.generic_class(f"ip {address} here") is None
 
 
+def test_a_home_path_is_judged_decoded_on_posix_and_windows() -> None:
+    """D3 (0.28, PR #319): a home path is read in every decoded form, ``/var/home`` and a Windows profile included."""
+    for text in (
+        "log %2Fhome%2Fsomeone-x%2Fwork",
+        r"path \/home\/someone-x\/work",
+        "cwd=/var/home/someone-x/src",
+        r"at C:\Users\someone-x\AppData",
+        r'{"cwd": "C:\\Users\\someone-x\\src"}',
+        r"at d:\users\someone-x",
+        "see &#47;home&#47;someone-x&#47;y",
+    ):
+        assert fixture_judge.generic_class(text) == "home_path", text
+    for text in (
+        "foo/var/home/x",
+        "$work/home/.local",
+        r"C:\Users\<x>",
+        r"C:\Program Files\x",
+        "/home/",
+        "~/x",
+    ):
+        assert fixture_judge.generic_class(text) is None, text
+
+
 def test_recorder_writes_class_words_and_a_replayed_result(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

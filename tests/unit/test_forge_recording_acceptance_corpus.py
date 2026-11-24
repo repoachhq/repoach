@@ -1280,11 +1280,10 @@ ROWS: tuple[Row, ...] = (
         outcome=Refused("generic class home_path at exchanges[0].stdout[0].body"),
     ),
     Row(
-        id="reg_path_windows_users_known_login_redacted",
+        id="reg_path_windows_users_known_login_refused",
         source="tests/unit/test_forge_recording_regression_corpus.py PLANTED",
         inp=Sample(body='File "C:\\Users\\zqxjdoe7\\work\\zqmainrepo\\app.py", line 12'),
-        outcome=Written(text='File "C:\\Users\\author\\work\\project\\app.py", line 12'),
-        markers=("zqxjdoe7", "zqmainrepo"),
+        outcome=Refused("generic class home_path at exchanges[0].stdout[0].body"),
     ),
     Row(
         id="reg_path_tilde_repo_denylist_refused",
@@ -11085,7 +11084,7 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
         905,
         614,
         291,
-        72,
+        73,
         2,
     )
     assert len(residual) == 25
