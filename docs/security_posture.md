@@ -175,6 +175,13 @@ address cited bare, wherever it stands, or as a path segment of a URL (`resolver
 (`[fd00::1]/ns/repo`; named test `test_a_bare_or_un_led_ipv6_address_is_the_documented_residual`), a project id of fewer than five digits in text, Unicode confusables and invisible characters, Markdown-split or
 escaped values, non-node-id base64 and JSON-in-a-string escapes are out of
 scope (SP-RECORDER-REDACTS-BY-CLASS Threat model & NG4).
+A `<user>@` lead is a local part of ASCII mailbox characters or any Unicode
+letter or digit (`josé@<host>`), or a URL's userinfo from `<scheme>://` to the
+`@` whatever it ends with (`https://u:p=@<host>`); a fixture is refused when
+any string it writes, the method's arguments and argv included, carries a
+token-shaped value. The deny-list reader and the last judge before a write
+live in `repoach.forge.denylist` and `repoach.forge.fixture_judge`, shared by
+the live recorder and the offline transform.
 
 Public attribution is not personal data: the copyright holder in `LICENSE`,
 the `authors` of `pyproject.toml`, the security contact in `SECURITY.md`, the
