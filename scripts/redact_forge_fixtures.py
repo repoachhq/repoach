@@ -24,7 +24,7 @@ top-level ``args``, ``kwargs`` and ``result`` have their URLs redacted.
 
 Logins follow the real-account rule the recorder applies: every login
 that is not a class word or one of
-:data:`repoach.forge.recording.NON_PERSON_LOGINS` — a hand-written
+:data:`repoach.forge.fixture_reading.NON_PERSON_LOGINS` — a hand-written
 placeholder such as ``alice`` or ``owner`` included, since each is a real
 account — becomes the next free ``author-<n>`` (a ``[bot]`` login
 ``bot-<n>``, a GitLab project bot ``service``), under login keys, as whole
@@ -32,7 +32,7 @@ arguments, as path segments and as ``@<handle>`` mentions in free text; a
 login known only from a mention is replaced in its ``@<handle>`` form only.
 
 Every user id the fixture does not declare under
-:data:`repoach.forge.recording.SYNTHETIC_IDS_KEY`, or declares outside
+:data:`repoach.forge.fixture_reading.SYNTHETIC_IDS_KEY`, or declares outside
 ``1001..1999`` (:func:`repoach.forge.recording.trusted_declaration`),
 becomes a synthetic one, from one sequence shared by the whole corpus and
 keyed by ``(forge, id)`` (:class:`repoach.forge.recording.UserIdMap`), so

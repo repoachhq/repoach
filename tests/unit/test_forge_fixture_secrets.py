@@ -2,7 +2,7 @@
 
 A recorded ``projects/:id`` answer once carried GitLab's
 ``runners_token``; push protection refused the branch. Fixtures are now
-redacted at record time to :data:`~repoach.forge.recording.RECORDED_FIELDS`
+redacted at record time to :data:`~repoach.forge.fixture_reading.RECORDED_FIELDS`
 and this test pins it for every file under ``tests/fixtures/forge``.
 """
 
@@ -13,9 +13,11 @@ from pathlib import Path
 
 import pytest
 
-from repoach.forge.recording import (
+from repoach.forge.fixture_reading import (
     RECORDED_FIELDS,
     decode_json_values,
+)
+from repoach.forge.recording import (
     find_secrets,
     redact_stdout,
 )

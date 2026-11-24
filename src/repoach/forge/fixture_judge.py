@@ -13,18 +13,31 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from repoach.core.redaction import SECRET_VALUE_PATTERNS
 from repoach.forge import closure
 from repoach.forge.denylist import Denylist, read_denylist
-from repoach.forge.recording import (
-    CONSTANT_FIELDS,
+from repoach.forge.fixture_reading import (
     RECORDED_SOURCE_HEAD_RE,
-    SECRET_TOKEN_PATTERNS,
     decode_json_values,
-    find_secret_tokens,
     is_classified_login,
     login_values,
     scanned_strings,
+    secret_keys,
 )
+
+SECRET_TOKEN_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    pattern for pattern in SECRET_VALUE_PATTERNS if "@" not in pattern.pattern
+)
+"""The forge-token shapes of :data:`repoach.core.redaction.SECRET_VALUE_PATTERNS`; a mailbox is the closure oracle's to judge (D3, 0.17)."""
+
+CONSTANT_FIELDS: frozenset[str] = frozenset({"forge", "method"})
+"""Top-level fields the recorder writes from closed enumerations (0.11 R6, 0.12 D3), judged by the deny-list only.
+
+``forge`` is ``github`` or ``gitlab`` and ``method`` is a protocol
+method's name; a segment needle that happens to spell one (a project
+named ``github``) is no leak there. ``case`` is free-form user input and
+is judged by every needle (0.12, D3).
+"""
 
 HOME_PATH_RE = re.compile(
     r"(?<![A-Za-z0-9_$.-])"
@@ -71,7 +84,7 @@ def generic_class(text: str) -> str | None:
 
 
 def has_secret_token(text: str) -> bool:
-    r"""Whether a forge token shape (:data:`repoach.forge.recording.SECRET_TOKEN_PATTERNS`) is in ``text``.
+    r"""Whether a forge token shape (:data:`SECRET_TOKEN_PATTERNS`) is in ``text``.
 
     Judged in every decoded form of ``text`` (:func:`repoach.forge.closure.decoded_forms`, the one
     decoder the home-path rule and the deny-list read), so a token whose prefix or delimiter is
@@ -88,6 +101,22 @@ def has_secret_token(text: str) -> bool:
         for form in closure.decoded_forms(text)
         for pattern in SECRET_TOKEN_PATTERNS
     )
+
+
+def find_secret_tokens(text: str) -> list[str]:
+    """Every forge token shape and secret-shaped key found in ``text`` (and its JSON), mailboxes aside.
+
+    Args:
+        text: A recorded stdout or any other string.
+
+    Returns:
+        Each token-shaped match of :data:`SECRET_TOKEN_PATTERNS`, then each secret-shaped key of
+        every JSON value ``text`` decodes to.
+    """
+    found = [m.group(0) for pattern in SECRET_TOKEN_PATTERNS for m in pattern.finditer(text)]
+    for value in decode_json_values(text) or []:
+        found += secret_keys(value)
+    return found
 
 
 def decoded_answers(calls: list[dict[str, Any]]) -> list[tuple[str, object]]:
@@ -115,11 +144,11 @@ def refuse_unclassified(
     """Raise :class:`UnclassifiedValueError` on any value of the fixture that may name someone (D3, 0.17).
 
     Every login under a login key must be a class word or a
-    :data:`repoach.forge.recording.NON_PERSON_LOGINS` entry. Then each
+    :data:`repoach.forge.fixture_reading.NON_PERSON_LOGINS` entry. Then each
     string of the fixture, in this order, may hold no home path, no
     deny-list entry, no token-shaped value
-    (:data:`repoach.forge.recording.SECRET_TOKEN_PATTERNS`; a JSON stdout
-    holds no secret-shaped key either, :func:`repoach.forge.recording.find_secret_tokens`)
+    (:data:`SECRET_TOKEN_PATTERNS`; a JSON stdout
+    holds no secret-shaped key either, :func:`find_secret_tokens`)
     and nothing the closure oracle
     (:func:`repoach.forge.closure.judge`) refuses: a known value, a host
     that is neither a placeholder nor public, a public address or a mailbox

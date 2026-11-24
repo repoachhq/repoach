@@ -30,20 +30,22 @@ from typing import Any
 from repoach.forge import closure
 from repoach.forge.denylist import Denylist, read_denylist
 from repoach.forge.fixture_judge import UnclassifiedValueError, refuse_unclassified
-from repoach.forge.recording import (
+from repoach.forge.fixture_reading import (
     LOGIN_KEYS,
+    SYNTHETIC_IDS_KEY,
+    SYNTHETIC_PROJECT_IDS_KEY,
+    decode_json_values,
+)
+from repoach.forge.recording import (
     SYNTHETIC_ID_END,
     SYNTHETIC_ID_START,
-    SYNTHETIC_IDS_KEY,
     SYNTHETIC_PROJECT_ID_END,
     SYNTHETIC_PROJECT_ID_START,
-    SYNTHETIC_PROJECT_IDS_KEY,
     UserIdMap,
     assign_roles,
     classify_logins,
     declared_project_ids,
     declared_user_ids,
-    decode_json_values,
     known_values,
     login_sightings,
     raw_logins,
@@ -281,8 +283,8 @@ def seal_fixture(
             was sorted stays so).
 
     Returns:
-        The fixture with :data:`repoach.forge.recording.SYNTHETIC_IDS_KEY` and
-        :data:`repoach.forge.recording.SYNTHETIC_PROJECT_IDS_KEY` declared when it holds any.
+        The fixture with :data:`repoach.forge.fixture_reading.SYNTHETIC_IDS_KEY` and
+        :data:`repoach.forge.fixture_reading.SYNTHETIC_PROJECT_IDS_KEY` declared when it holds any.
 
     Raises:
         UnclassifiedValueError: The judge refuses it (:func:`repoach.forge.fixture_judge.refuse_unclassified`).

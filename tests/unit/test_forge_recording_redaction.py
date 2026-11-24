@@ -38,18 +38,23 @@ from repoach.forge import (
     closure_tables,
     fixture_judge,
     fixture_pipeline,
+    fixture_reading,
     recording,
     recording_tables,
 )
 from repoach.forge import denylist as deny_list
+from repoach.forge.fixture_reading import (
+    NON_PERSON_LOGINS,
+    SYNTHETIC_IDS_KEY,
+    SYNTHETIC_PROJECT_IDS_KEY,
+    decode_json_values,
+    fixture_strings,
+)
 from repoach.forge.github import GitHubForge
 from repoach.forge.gitlab import GitLabForge
 from repoach.forge.protocol import Forge, ForgeError
 from repoach.forge.recording import (
-    NON_PERSON_LOGINS,
     PERSONAL_KEY_RE,
-    SYNTHETIC_IDS_KEY,
-    SYNTHETIC_PROJECT_IDS_KEY,
     TOKEN_CHARS,
     Exchange,
     NeedleError,
@@ -60,8 +65,6 @@ from repoach.forge.recording import (
     classify_text,
     declared_project_ids,
     declared_user_ids,
-    decode_json_values,
-    fixture_strings,
     is_synthetic_number,
     load_fixture,
     mention_pattern,
@@ -1754,12 +1757,11 @@ ALLOWED_CASE_SENSITIVE: dict[str, frozenset[str]] = {
             "RECORDED_SOURCE_RE",
             "_SPEC_FILE_ID_RE",
             "CLI_PLACEHOLDER_RE",
-            "CLASS_WORD_RE",
             "_API_PROJECT_RE",
-            "RECORDED_SOURCE_HEAD_RE",
             "_NAME_WORD_RE",
         }
     ),
+    "fixture_reading": frozenset({"CLASS_WORD_RE", "RECORDED_SOURCE_HEAD_RE"}),
     "record_forge_fixture": frozenset(),
     "fixture_judge": frozenset({"HOME_PATH_RE"}),
     "denylist": frozenset(),
@@ -1783,7 +1785,9 @@ ALLOWED_CASE_SENSITIVE: dict[str, frozenset[str]] = {
 
 def test_case_insensitive_patterns_are_flagged() -> None:
     """I2 (0.10): every module-level recogniser of a scheme, host or login is ``re.I``; the exceptions are named."""
+    owners = (fixture_reading, recording)
     for module in (
+        fixture_reading,
         recording,
         rec,
         redact_fixtures,
@@ -1793,7 +1797,9 @@ def test_case_insensitive_patterns_are_flagged() -> None:
         deny_list,
     ):
         name = module.__name__.rsplit(".", 1)[-1]
-        imported = {id(v) for v in vars(recording).values()} if module is not recording else set()
+        imported = {id(v) for owner in owners if owner is not module for v in vars(owner).values()}
+        if module is fixture_reading:
+            imported = set()
         patterns = {
             k: v
             for k, v in vars(module).items()
@@ -2139,7 +2145,7 @@ def test_dict_keys_are_judged_and_never_named() -> None:
     keyed = _placed("ok", "prose")
     keyed["result"] = {"state": "open"}
     assert residual(keyed, code) is None
-    assert "body" in recording.CODE_KEYS and "head_ref" in recording.CODE_KEYS
+    assert "body" in fixture_reading.CODE_KEYS and "head_ref" in fixture_reading.CODE_KEYS
 
 
 def test_the_recorders_constant_fields_are_judged_by_the_denylist_only() -> None:
@@ -2151,7 +2157,7 @@ def test_the_recorders_constant_fields_are_judged_by_the_denylist_only() -> None
         denylist=("conv-case",),
     )
     assert "github" in _kinds(found, "segment")
-    assert frozenset({"forge", "method"}) == recording.CONSTANT_FIELDS
+    assert frozenset({"forge", "method"}) == fixture_judge.CONSTANT_FIELDS
     fixture = _placed("ok", "prose")
     fixture.update(
         forge="github",
@@ -2682,7 +2688,7 @@ def test_gitlab_api_numeric_project_ids_and_offline_kwargs_and_system_noreply() 
         "note": "https://forge.example.com/org/project/pull/1",
         "api": "https://forge.example.com/api/v4/projects/2001/merge_requests/42",
     }
-    assert recording.SYNTHETIC_PROJECT_IDS_KEY not in red_off
+    assert fixture_reading.SYNTHETIC_PROJECT_IDS_KEY not in red_off
     assert json.loads(red_off["calls"][0]["stdout"])[0]["body"] == (
         "Committer: GitHub <noreply@forge.example.com>; keep noreply@example.com"
     )
@@ -3333,7 +3339,7 @@ def test_offline_transform_redacts_all_six_positions_and_non_json_project_ids() 
         "+curl https://forge.example.com/api/v4/projects/2001/jobs\n"
         "+glab api /projects/2001/pipelines\n"
     )
-    assert recording.SYNTHETIC_PROJECT_IDS_KEY not in redacted
+    assert fixture_reading.SYNTHETIC_PROJECT_IDS_KEY not in redacted
     assert residual(redacted, fixture_pipeline.fixture_known(fixture, denylist=NO_DENYLIST)) is None
     assert (
         fixture_pipeline.redact_fixture(redacted, forge="gitlab", denylist=NO_DENYLIST) == redacted
@@ -4079,17 +4085,19 @@ def test_record_refuses_in_the_fixed_order_and_keeps_only_the_token_secret_gate(
             known,
         )
     assert (
-        recording.find_secret_tokens("git@forge.example.com:org/p.git noreply@forge.example.com")
+        fixture_judge.find_secret_tokens(
+            "git@forge.example.com:org/p.git noreply@forge.example.com"
+        )
         == []
     )
-    assert recording.find_secret_tokens("support@example.com") == []
-    assert recording.find_secret_tokens("a ghp_" + "A1" * 12 + " b")
-    assert recording.find_secret_tokens("glpat-" + "x" * 12)
-    assert recording.find_secret_tokens(json.dumps({"runners_token": "x"}))
-    assert recording.find_secret_tokens(json.dumps({"ok": "x"})) == []
+    assert fixture_judge.find_secret_tokens("support@example.com") == []
+    assert fixture_judge.find_secret_tokens("a ghp_" + "A1" * 12 + " b")
+    assert fixture_judge.find_secret_tokens("glpat-" + "x" * 12)
+    assert fixture_judge.find_secret_tokens(json.dumps({"runners_token": "x"}))
+    assert fixture_judge.find_secret_tokens(json.dumps({"ok": "x"})) == []
     assert recording.find_secrets("ab@mail-provider.org")
-    assert all("@" not in p.pattern for p in recording.SECRET_TOKEN_PATTERNS)
-    assert len(recording.SECRET_TOKEN_PATTERNS) == len(recording.SECRET_VALUE_PATTERNS) - 1
+    assert all("@" not in p.pattern for p in fixture_judge.SECRET_TOKEN_PATTERNS)
+    assert len(fixture_judge.SECRET_TOKEN_PATTERNS) == len(recording.SECRET_VALUE_PATTERNS) - 1
 
 
 def test_userinfo_class_accepts_shell_variables() -> None:
@@ -7076,13 +7084,13 @@ def test_the_recorder_never_raises_on_a_recording_nested_past_the_readers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """D3 (0.21, B3; 0.28 g): undecodable text is text; a reader's overflow is refused; 990 deep is bounded, never a crash."""
-    assert recording.decode_json_values("[" * 20000) is None
-    assert recording.decode_json_values("[" * 20000 + "]" * 20000) is None
-    assert recording.decode_json_values('{"a":' * 20000 + "1" + "}" * 20000) is None
-    assert recording.decode_json_values("[[1]] [2]") == [[[1]], [2]]
+    assert fixture_reading.decode_json_values("[" * 20000) is None
+    assert fixture_reading.decode_json_values("[" * 20000 + "]" * 20000) is None
+    assert fixture_reading.decode_json_values('{"a":' * 20000 + "1" + "}" * 20000) is None
+    assert fixture_reading.decode_json_values("[[1]] [2]") == [[[1]], [2]]
     assert recording.redact_stdout("[" * 20000) == "[" * 20000
     assert recording.replace_known_in_stdout("[" * 20000, closure.Known(())) == "[" * 20000
-    assert recording.fixture_strings("[" * 20000, "p") == [("p", "[" * 20000)]
+    assert fixture_reading.fixture_strings("[" * 20000, "p") == [("p", "[" * 20000)]
     assert recording.user_id_values("[" * 20000) == []
     deep = "[" * 990 + "]" * 990
     fixture = {
@@ -7831,3 +7839,57 @@ def test_a_refusal_class_names_every_reason_it_is_raised_for() -> None:
         "nesting too deep",
     ):
         assert phrase in residual, phrase
+
+
+def _top_level_names(tree: ast.Module) -> set[str]:
+    """The names a module defines itself: its functions, classes and assigned names."""
+    names: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.Assign):
+            names |= {t.id for t in node.targets if isinstance(t, ast.Name)}
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names.add(node.target.id)
+    return names
+
+
+def test_a_forge_module_takes_each_name_from_the_module_that_defines_it() -> None:
+    """D3 (PR #319 round 7, 4687852547): the judge reads a fixture through a public module, never the recorder's internals.
+
+    :mod:`repoach.forge.fixture_judge` imports nothing from :mod:`repoach.forge.recording`: what
+    both read (the recorded fields, the login keys, the JSON decoder, the string walk) lives in
+    :mod:`repoach.forge.fixture_reading`. Across the forge package and the scripts, no import
+    names a private name of another module, and every name imported from a forge module is one
+    that module defines itself, so no internal reaches a caller through a re-export.
+    """
+    forge = ROOT / "src" / "repoach" / "forge"
+    defined = {
+        f"repoach.forge.{path.stem}": _top_level_names(ast.parse(path.read_text(encoding="utf-8")))
+        for path in sorted(forge.glob("*.py"))
+        if path.stem != "__init__"
+    }
+    judge = ast.parse((forge / "fixture_judge.py").read_text(encoding="utf-8"))
+    sources = {
+        node.module
+        for node in ast.walk(judge)
+        if isinstance(node, ast.ImportFrom) and node.module is not None
+    }
+    assert "repoach.forge.recording" not in sources
+    assert "repoach.forge.fixture_reading" in sources
+    checked = 0
+    for path in [*sorted(forge.glob("*.py")), *sorted((ROOT / "scripts").glob("*.py"))]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            module = node.module or ""
+            if node.level == 1:
+                module = f"repoach.forge.{module}"
+            if module not in defined:
+                continue
+            for alias in node.names:
+                checked += 1
+                assert not alias.name.startswith("_"), (path.name, module, alias.name)
+                assert alias.name in defined[module], (path.name, module, alias.name)
+    assert checked > 100

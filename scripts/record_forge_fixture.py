@@ -16,7 +16,7 @@ anything. Their fixtures are written by hand from the forge's documented
 payloads and say so in their ``source`` field.
 
 Every JSON answer is redacted at record time: only the keys the
-forges read (:data:`repoach.forge.recording.RECORDED_FIELDS`) are kept,
+forges read (:data:`repoach.forge.fixture_reading.RECORDED_FIELDS`) are kept,
 and a fixture in which a token- or email-shaped value survives is refused.
 
 SP-RECORDER-REDACTS-BY-CLASS: personal keys, a user object's ``name``
@@ -30,7 +30,7 @@ request's author ``author``, any other ``[bot]`` login ``bot-<n>``, a
 GitLab project bot ``service`` and any other login ``author-<n>``; a
 login known only from an ``@<handle>`` in free text is ``author-<n>`` in
 that form only, and a decorator or a dotted name is no handle; the
-:data:`repoach.forge.recording.NON_PERSON_LOGINS` are kept. Every user
+:data:`repoach.forge.fixture_reading.NON_PERSON_LOGINS` are kept. Every user
 id becomes a synthetic one in ``1001..1999``
 (:class:`repoach.forge.recording.UserIdMap`), declared under
 ``synthetic_user_ids``.
