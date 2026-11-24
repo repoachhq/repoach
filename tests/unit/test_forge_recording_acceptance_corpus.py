@@ -10676,6 +10676,68 @@ ROWS: tuple[Row, ...] = (
         inp=Sample(body="DATABASE_URL=app:${DB_PASSWORD}@localhost:5432/db"),
         outcome=Written(text="DATABASE_URL=app:${DB_PASSWORD}@localhost:5432/db"),
     ),
+    Row(
+        id="r4_cloudflare_dashboard_is_a_tenant_surface",
+        source="PR #319 review round 4 (4681867318)",
+        inp=Sample(
+            body="see https://dash.cloudflare.com/0a1b2c3d4e5f60718293a4b5c6d7e8f9/kvnshop.io/dns"
+        ),
+        outcome=Written(text="see https://forge.example.com/org/project"),
+        markers=("0a1b2c3d4e5f60718293a4b5c6d7e8f9", "kvnshop.io", "dash.cloudflare.com"),
+    ),
+    Row(
+        id="r4_cloudflare_api_account_path_is_a_tenant_surface",
+        source="PR #319 review round 4 (4681867318)",
+        inp=Sample(
+            body="curl https://api.cloudflare.com/client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/workers"
+        ),
+        outcome=Written(text="curl https://forge.example.com/org/project"),
+        markers=("0a1b2c3d4e5f60718293a4b5c6d7e8f9", "api.cloudflare.com"),
+    ),
+    Row(
+        id="r4_cloudflare_dashboard_unled_is_a_host",
+        source="PR #319 review round 4 (4681867318)",
+        inp=Sample(body="dash.cloudflare.com/0a1b2c3d4e5f60718293a4b5c6d7e8f9/kvnshop.io/dns"),
+        outcome=Written(text="forge.example.com/org/project/dns"),
+        markers=("0a1b2c3d4e5f60718293a4b5c6d7e8f9", "kvnshop.io", "dash.cloudflare.com"),
+    ),
+    Row(
+        id="r4_mend_console_is_a_tenant_surface",
+        source="PR #319 review round 4 (4681867318)",
+        inp=Sample(body="login https://saas.mend.io/app/orgs/kvnteam"),
+        outcome=Written(text="login https://forge.example.com/org/project"),
+        markers=("kvnteam", "saas.mend.io"),
+    ),
+    Row(
+        id="r4_renovate_app_dashboard_is_a_tenant_surface",
+        source="PR #319 review round 4 (4681867318)",
+        inp=Sample(body="open https://app.renovatebot.com/dashboard#github/kvnteam/kvnbilling"),
+        outcome=Written(text="open https://forge.example.com/dashboard"),
+        markers=("kvnteam", "kvnbilling", "app.renovatebot.com"),
+    ),
+    Row(
+        id="r4_stackoverflow_teams_route_is_a_tenant_path",
+        source="PR #319 review round 4 (4681867318)",
+        inp=Sample(body="ask https://stackoverflow.com/c/kvnteam/questions/12"),
+        outcome=Written(text="ask https://forge.example.com/org/project"),
+        markers=("kvnteam",),
+    ),
+    Row(
+        id="r4_stackoverflow_teams_route_protocol_relative_is_refused",
+        source="PR #319 review round 4 (4681867318)",
+        inp=Sample(body="ask //www.stackoverflow.com/c/kvnteam/questions/12"),
+        outcome=Refused("tenant path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r4_vendor_documentation_hosts_stay_public",
+        source="PR #319 review round 4 (4681867318)",
+        inp=Sample(
+            body="docs https://developers.cloudflare.com/workers/ and https://docs.renovatebot.com/configuration-options/ and https://docs.mend.io/platform/latest/ and https://stackoverflow.com/questions/12/how"
+        ),
+        outcome=Written(
+            text="docs https://developers.cloudflare.com/workers/ and https://docs.renovatebot.com/configuration-options/ and https://docs.mend.io/platform/latest/ and https://stackoverflow.com/questions/12/how"
+        ),
+    ),
 )
 
 
@@ -11128,10 +11190,10 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
     refused = [row for row in ROWS if isinstance(row.outcome, Refused)]
     bounded = [row for row in ROWS if isinstance(row.outcome, Bounded)]
     assert (len(ROWS), len(planted), len(ordinary), len(refused), len(bounded)) == (
-        912,
-        621,
-        291,
-        80,
+        920,
+        628,
+        292,
+        81,
         2,
     )
     assert len(residual) == 25

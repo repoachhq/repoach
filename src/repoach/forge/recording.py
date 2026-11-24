@@ -986,7 +986,7 @@ def redact_urls_in_text(text: str) -> str:
             return match.group(0)
         if "@" in parts.netloc:
             return (redact_url(url) or url) + tail
-        if _kept_host(host):
+        if _kept_host(host) and not closure.is_tenant_path(host, parts.path):
             return _normalize_kept_url(parts) + tail
         return (redact_url(url) or url) + tail
 

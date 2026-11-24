@@ -719,7 +719,7 @@ def test_mailbox_rule_literals_credentials_and_doc_domains_by_enumeration() -> N
 
 
 def test_public_allowlist_and_placeholder_class_by_enumeration() -> None:
-    """D8: the 28 suffixes exact and as ``.<suffix>``, trailing dot, case, forge hosts never public (0.22: the yarn and npmmirror registries)."""
+    """D8: the 25 suffixes exact and as ``.<suffix>``, trailing dot, case, forge hosts never public (0.22: the yarn and npmmirror registries)."""
     suffixes = {
         "yarnpkg.com",
         "npmmirror.com",
@@ -743,15 +743,12 @@ def test_public_allowlist_and_placeholder_class_by_enumeration() -> None:
         "stackoverflow.com",
         "wikipedia.org",
         "pythonhosted.org",
-        "cloudflare.com",
         "jsdelivr.net",
         "unpkg.com",
-        "renovatebot.com",
-        "mend.io",
         "apache.org",
     }
     assert suffixes == closure_tables.PUBLIC_SUFFIXES
-    assert len(closure_tables.PUBLIC_SUFFIXES) == 28
+    assert len(closure_tables.PUBLIC_SUFFIXES) == 25
     assert closure.is_public_host("api.nuget.org") and not closure.is_public_host("nuget.com")
     for suffix in suffixes:
         assert closure.is_public_host(suffix)
@@ -1783,3 +1780,63 @@ def test_a_url_userinfo_is_refused_on_every_allowlisted_and_placeholder_host() -
     ]
     assert [b.local for b in closure.userinfos("https://josé:pw@pypi.org/x")] == ["josé:pw"]
     assert [b.host for b in closure.userinfos("https://u:p@/x")] == [""]
+
+
+def test_a_vendor_with_tenant_consoles_is_public_by_its_documentation_hosts_only() -> None:
+    """D8 (PR #319 round 4): a console or an API whose path names a customer's account is no public host.
+
+    ``cloudflare.com``, ``mend.io`` and ``renovatebot.com`` hold such surfaces under the same
+    registrable suffix (``dash.``, ``api.``, ``saas.``, ``app.``), so only their documentation and
+    CDN hosts are public; a Stack Overflow for Teams route (``/c/<team>``) on a public host is a
+    tenant path.
+    """
+    none = closure.Known(())
+    assert {
+        "cdnjs.cloudflare.com",
+        "cloudflare.com",
+        "developers.cloudflare.com",
+        "docs.mend.io",
+        "docs.renovatebot.com",
+        "mend.io",
+        "renovatebot.com",
+        "www.cloudflare.com",
+        "www.mend.io",
+        "www.renovatebot.com",
+    } == closure_tables.PUBLIC_HOSTS
+    assert {"stackoverflow.com": frozenset({"c"})} == closure_tables.TENANT_ROUTES
+    assert not closure_tables.PUBLIC_HOSTS & closure_tables.PUBLIC_SUFFIXES
+    for host in closure_tables.PUBLIC_HOSTS:
+        assert closure.is_public_host(host) and closure.is_public_host(host.upper() + ".")
+        assert not closure.is_public_host(f"tenant.{host}"), host
+        assert closure.judge(f"see https://{host}/docs/x now", none) is None, host
+    for vendor in ("cloudflare.com", "mend.io", "renovatebot.com"):
+        assert vendor not in closure_tables.PUBLIC_SUFFIXES, vendor
+    for text in (
+        "see https://dash.cloudflare.com/0a1b2c3d4e5f60718293a4b5c6d7e8f9/kvnshop.io/dns",
+        "curl https://api.cloudflare.com/client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+        "see https://one.dash.cloudflare.com/0a1b2c3d4e5f/access",
+        "login https://saas.mend.io/app/orgs/kvnteam",
+        "open https://app.renovatebot.com/dashboard#github/kvnteam/kvnbilling",
+        "dash.cloudflare.com/0a1b2c3d4e5f60718293a4b5c6d7e8f9/kvnshop.io/dns",
+    ):
+        assert closure.judge(text, none) == closure.Refusal("unknown host"), text
+    for text in (
+        "ask https://stackoverflow.com/c/kvnteam/questions/12",
+        "ask //www.stackoverflow.com/c/kvnteam/questions/12",
+        "ask https://STACKOVERFLOW.com/C/kvnteam",
+        "ask https%3A%2F%2Fstackoverflow.com%2Fc%2Fkvnteam",
+    ):
+        assert closure.judge(text, none) == closure.Refusal("tenant path"), text
+    for text in (
+        "see https://stackoverflow.com/questions/12/how",
+        "see https://stackoverflow.com/c",
+        "see https://stackoverflow.com/c/",
+        "see https://stackoverflow.com/collectives/python",
+        "see https://pypi.org/c/x",
+    ):
+        assert closure.judge(text, none) is None, text
+    assert closure.is_tenant_path("stackoverflow.com", "/c/team")
+    assert closure.is_tenant_path("www.stackoverflow.com", "c/team/q")
+    assert not closure.is_tenant_path("stackoverflow.com", "/c")
+    assert not closure.is_tenant_path("xstackoverflow.com", "/c/team")
+    assert not closure.is_tenant_path("pypi.org", "/c/team")

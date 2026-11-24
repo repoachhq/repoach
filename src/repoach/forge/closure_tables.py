@@ -433,7 +433,6 @@ IPV6_DOCUMENTATION = tuple(ipaddress.IPv6Network(n) for n in ("2001:db8::/32", "
 PUBLIC_SUFFIXES: frozenset[str] = frozenset(
     {
         "apache.org",
-        "cloudflare.com",
         "crates.io",
         "docker.io",
         "docs.github.com",
@@ -444,7 +443,6 @@ PUBLIC_SUFFIXES: frozenset[str] = frozenset(
         "golang.org",
         "jsdelivr.net",
         "k8s.io",
-        "mend.io",
         "mozilla.org",
         "nuget.org",
         "npmjs.com",
@@ -455,11 +453,54 @@ PUBLIC_SUFFIXES: frozenset[str] = frozenset(
         "python.org",
         "readthedocs.io",
         "readthedocs.org",
-        "renovatebot.com",
         "stackoverflow.com",
         "unpkg.com",
         "wikipedia.org",
         "yarnpkg.com",
     }
 )
-"""Registrable suffixes of public documentation, package and CDN hosts (option A; 0.22: the yarn and npmmirror registries)."""
+"""Registrable suffixes of public documentation, package and CDN hosts (option A; 0.22: the yarn and npmmirror registries).
+
+A suffix is listed only when no host under it is a tenant surface: a console or an API whose
+path names a customer's account (PR #319 round 4 audit). A vendor that runs one under the same
+suffix is listed by its documentation and CDN hosts instead (:data:`PUBLIC_HOSTS`), and a
+tenant route on a listed host is :data:`TENANT_ROUTES`. Audited, every suffix here: the
+registries (``crates.io``, ``docker.io``, ``ghcr.io``, ``npmjs.com``, ``npmjs.org``,
+``npmmirror.com``, ``nuget.org``, ``pypi.org``, ``pythonhosted.org``, ``yarnpkg.com``,
+``unpkg.com``, ``jsdelivr.net``, ``k8s.io``) name a public package, image or account in their
+paths; the documentation sites (``docs.github.com``, ``docs.gitlab.com``, ``docs.rs``,
+``go.dev``, ``golang.org``, ``python.org``, ``mozilla.org``, ``apache.org``,
+``readthedocs.io``, ``readthedocs.org``, ``wikipedia.org``) and ``stackoverflow.com`` serve
+public pages, a project's documentation subdomain included.
+"""
+
+PUBLIC_HOSTS: frozenset[str] = frozenset(
+    {
+        "cdnjs.cloudflare.com",
+        "cloudflare.com",
+        "developers.cloudflare.com",
+        "docs.mend.io",
+        "docs.renovatebot.com",
+        "mend.io",
+        "renovatebot.com",
+        "www.cloudflare.com",
+        "www.mend.io",
+        "www.renovatebot.com",
+    }
+)
+"""Exact public hosts of vendors whose registrable suffix also holds tenant surfaces (PR #319 round 4).
+
+``cloudflare.com`` holds the dashboard and the API (``dash.cloudflare.com/<account>/<zone>``,
+``api.cloudflare.com/client/v4/accounts/<id>``), ``mend.io`` its SaaS consoles
+(``saas.mend.io``, ``app.mend.io``) and ``renovatebot.com`` the hosted app's dashboard
+(``app.renovatebot.com/dashboard#github/<org>/<repo>``): only their documentation and CDN
+hosts and their apex and ``www`` sites (the vendor pages a bot footer links,
+``https://www.mend.io/``) are public, each exactly; any other host under them is unknown.
+"""
+
+TENANT_ROUTES: dict[str, frozenset[str]] = {"stackoverflow.com": frozenset({"c"})}
+"""First path segments that open a tenant surface on a public host, by registrable suffix (PR #319 round 4).
+
+Stack Overflow for Teams serves a private team under ``stackoverflow.com/c/<team>/…``: the
+team and its questions are a customer's, so a URL on that route is not public.
+"""

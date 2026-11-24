@@ -27,9 +27,11 @@ from .closure_tables import (
     HOST_TLDS,
     IPV4_RESERVED,
     IPV6_DOCUMENTATION,
+    PUBLIC_HOSTS,
     PUBLIC_SUFFIXES,
     REVERSE_DNS_HEADS,
     RFC5737_NETWORKS,
+    TENANT_ROUTES,
     UNSPECIFIED_BROADCAST,
 )
 
@@ -165,8 +167,8 @@ class Refusal:
     """What the oracle found, never a value.
 
     Attributes:
-        reason: ``residual``, ``unknown host``, ``public address``, ``unknown mailbox`` or
-            ``url userinfo``.
+        reason: ``residual``, ``tenant path``, ``unknown host``, ``public address``,
+            ``unknown mailbox`` or ``url userinfo``.
         kind: The kind of the known value for a ``residual``, else ``""``.
         n: The ordinal of the known value within its kind, else ``0``.
     """
@@ -238,9 +240,49 @@ def is_placeholder_host(host: str) -> bool:
 
 
 def is_public_host(host: str) -> bool:
-    """Whether ``host`` is, or is under, a registrable suffix of :data:`PUBLIC_SUFFIXES`."""
+    """Whether ``host`` is one of :data:`PUBLIC_HOSTS`, or is or is under a suffix of :data:`PUBLIC_SUFFIXES`.
+
+    Args:
+        host: A host name, in any case, with or without its trailing dot.
+
+    Returns:
+        ``True`` for a public documentation, package or CDN host.
+    """
     folded = _canonical_host(host)
+    if folded in PUBLIC_HOSTS:
+        return True
     return any(folded == s or folded.endswith("." + s) for s in PUBLIC_SUFFIXES)
+
+
+def is_tenant_path(host: str, path: str) -> bool:
+    """Whether ``path`` on the public ``host`` opens a tenant surface (:data:`TENANT_ROUTES`).
+
+    Args:
+        host: A public host, in any case.
+        path: The URL path after the host, its leading ``/`` included or not.
+
+    Returns:
+        ``True`` when the first segment of ``path`` is a tenant route of ``host``'s suffix and a
+        segment follows it (``stackoverflow.com/c/<team>``).
+    """
+    folded = _canonical_host(host)
+    segments = path.lstrip("/").split("/")
+    if len(segments) < 2 or not segments[1]:
+        return False
+    return any(
+        (folded == suffix or folded.endswith("." + suffix)) and segments[0].casefold() in routes
+        for suffix, routes in TENANT_ROUTES.items()
+    )
+
+
+def _path_after(text: str, end: int) -> str:
+    """The URL path right after offset ``end``: from a ``/`` to the next space, ``?`` or ``#``."""
+    if text[end : end + 1] != "/":
+        return ""
+    stop = end
+    while stop < len(text) and not text[stop].isspace() and text[stop] not in "?#\"'<>":
+        stop += 1
+    return text[end:stop]
 
 
 def is_doc_mailbox_host(host: str) -> bool:
@@ -700,7 +742,10 @@ def residual(text: str, known: Known) -> tuple[str, int] | None:
 
 
 def judge(text: str, known: Known) -> Refusal | None:
-    """What the oracle refuses in ``text``: a known value, an unknown host, a public address, an unknown mailbox or a URL userinfo.
+    """What the oracle refuses in ``text``: a known value, a tenant path, an unknown host, a public address, an unknown mailbox or a URL userinfo.
+
+    A public host followed by a tenant route (:func:`is_tenant_path`) is refused as a
+    ``tenant path``: the host is public, the customer's surface after it is not.
 
     A URL userinfo (:func:`userinfos`) is judged as the mailbox it spells, ``<userinfo>@<host>``
     (:func:`is_literal_mailbox`): ``git`` on a placeholder-class host and a password-less user on a
@@ -718,6 +763,12 @@ def judge(text: str, known: Known) -> Refusal | None:
     if left is not None:
         return Refusal("residual", left[0], left[1])
     forms = decoded_forms(_blank(text, known.literals))
+    for form in forms:
+        for place in hosts(form):
+            if is_public_host(place.host) and is_tenant_path(
+                place.host, _path_after(form, place.end)
+            ):
+                return Refusal("tenant path")
     for place in (h for form in forms for h in hosts(form)):
         if is_placeholder_host(place.host) or is_public_host(place.host):
             continue
