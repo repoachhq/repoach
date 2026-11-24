@@ -1626,3 +1626,25 @@ def test_the_judge_blanks_the_literals_before_it_decodes() -> None:
     ):
         assert closure.judge(text, known) is None, text
         assert closure.judge(text, closure.Known(())) == closure.Refusal("unknown mailbox"), text
+
+
+def test_a_unicode_local_part_and_a_userinfo_lead_their_host() -> None:
+    """D8 (0.28, PR #319): a Unicode local part is a mailbox; a URL's userinfo leads its host whatever it ends with."""
+    none = closure.Known(())
+    for text in (
+        "write to josé@acme.io today",
+        "write to ü1@acme.io today",
+        "clone https://u:abc=@acme.io/x now",
+        "clone https://u:p?w#@acme.io/x now",
+    ):
+        assert closure.judge(text, none) == closure.Refusal("unknown host"), text
+    assert [(b.local, b.host) for b in closure.mailboxes("to josé@acme.io")] == [
+        ("josé", "acme.io")
+    ]
+    for text in (
+        "remote=git@forge.example.com:org/project.git",
+        "**git@forge.example.com**",
+        "cc @alice and ü@",
+        "a/=@acme.io",
+    ):
+        assert closure.judge(text, none) is None, text

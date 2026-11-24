@@ -404,7 +404,12 @@ REVERSE_DNS_HEADS: frozenset[str] = frozenset(
 LOCAL_CHARS = (
     "._%+-:${}" + "abcdefghijklmnopqrstuvwxyz" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ" + "0123456789"
 )
-"""Characters of a mailbox's local part, ``:`` and ``${}`` included so a credential is read as one."""
+"""ASCII characters of a mailbox's local part, ``:`` and ``${}`` included so a credential is read as one.
+
+Any Unicode letter or digit is one as well (RFC 6531, read by :func:`_local_before`), so
+``josé@<host>`` is a mailbox. No other ASCII symbol is added: the local part decides whether a
+mailbox is a placeholder (``git@``), and a ``key=git@`` or ``**git@`` must stay ``git``.
+"""
 
 IPV4_RESERVED = tuple(
     ipaddress.IPv4Network(n)
@@ -716,9 +721,12 @@ def _label_run(run: str) -> list[str] | None:
 
 
 def _local_before(text: str, at: int) -> str:
-    """The run of :data:`LOCAL_CHARS` right before the ``@`` at ``at``; empty unless it holds a letter or digit."""
+    """The run of local-part characters right before the ``@`` at ``at``; empty unless it holds a letter or digit.
+
+    A local-part character is one of :data:`LOCAL_CHARS` or any Unicode letter or digit.
+    """
     begin = at
-    while begin > 0 and text[begin - 1] in LOCAL_CHARS:
+    while begin > 0 and (text[begin - 1] in LOCAL_CHARS or text[begin - 1].isalnum()):
         begin -= 1
     local = text[begin:at]
     return local if any(c.isalnum() for c in local) else ""
@@ -733,10 +741,24 @@ def _scheme_before(text: str, end: int) -> bool:
 
 
 def _led(text: str, start: int) -> bool:
-    """Whether ``<scheme>://`` or ``<local>@`` stands right before offset ``start``; reads back, never copies."""
+    """Whether ``<scheme>://``, ``<local>@`` or a URL's userinfo stands right before offset ``start``.
+
+    A userinfo is whatever runs from ``<scheme>://`` to the ``@`` with no space and no ``/``, so
+    ``https://u:abc=@<host>`` leads its host whatever the password ends with. Reads back, never copies.
+    """
     if text.endswith("://", 0, start) and _scheme_before(text, start - 3):
         return True
-    return text.endswith("@", 0, start) and _local_before(text, start - 1) != ""
+    if not text.endswith("@", 0, start):
+        return False
+    return _local_before(text, start - 1) != "" or _userinfo_before(text, start - 1)
+
+
+def _userinfo_before(text: str, at: int) -> bool:
+    """Whether the ``@`` at ``at`` ends a URL's userinfo: ``<scheme>://`` then no space and no ``/``."""
+    begin = at
+    while begin > 0 and not text[begin - 1].isspace() and text[begin - 1] != "/":
+        begin -= 1
+    return text.endswith("://", 0, begin) and _scheme_before(text, begin - 3)
 
 
 def _runs(text: str) -> list[tuple[int, int, str]]:
@@ -857,7 +879,7 @@ def public_addresses(text: str) -> list[str]:
 
 
 def mailboxes(text: str) -> list[Mailbox]:
-    """Every ``<local>@<host>`` of ``text``, ``local`` a run of :data:`LOCAL_CHARS`, ``host`` a label run or an IPv4."""
+    """Every ``<local>@<host>`` of ``text``, ``local`` read by :func:`_local_before`, ``host`` a label run or an IPv4."""
     found = []
     for at in (i for i, c in enumerate(text) if c == "@"):
         local = _local_before(text, at)
