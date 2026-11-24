@@ -60,6 +60,13 @@ class Denylist:
         """The ordinal of the first entry ``text`` holds (:func:`denylist_hit`), or ``None``."""
         return denylist_hit(text, self._patterns)
 
+    def short_entry(self) -> int | None:
+        """The ordinal of the first entry shorter than :data:`DENYLIST_MIN_LENGTH`, or ``None``."""
+        for n, entry in enumerate(self._entries, 1):
+            if len(entry) < DENYLIST_MIN_LENGTH:
+                return n
+        return None
+
     def needle_values(self) -> tuple[str, ...]:
         """The entries, for :func:`repoach.forge.recording.known_values` only; never printed."""
         return self._entries
@@ -70,8 +77,10 @@ def read_denylist(config_dir: Path | None = None) -> Denylist:
 
     A copy of that gate's reader (it lands later; not imported): the file
     :func:`denylist_file`, one entry per line with ``#`` comments, and
-    :data:`DENYLIST_ENV`, newline- or comma-separated. Both live outside
-    the tree; no entry is ever printed or written.
+    :data:`DENYLIST_ENV`, newline- or comma-separated. Both live outside the tree;
+    no entry is ever printed or written, and the frame that raises binds
+    none: the entries are read in :func:`_read_entries` and judged by the
+    opaque :class:`Denylist`.
 
     Args:
         config_dir: The configuration directory holding the file; ``None``
@@ -86,6 +95,15 @@ def read_denylist(config_dir: Path | None = None) -> Denylist:
     Raises:
         DenylistError: An entry shorter than :data:`DENYLIST_MIN_LENGTH`, by ordinal.
     """
+    denylist = _read_entries(config_dir)
+    short = denylist.short_entry()
+    if short is not None:
+        raise DenylistError(f"deny-list entry {short}: too short")
+    return denylist
+
+
+def _read_entries(config_dir: Path | None) -> Denylist:
+    """The merged entries, opaque; never raises on content."""
     raw: list[str] = []
     path = denylist_file(config_dir)
     if path.is_file():
@@ -96,9 +114,6 @@ def read_denylist(config_dir: Path | None = None) -> Denylist:
     for item in (r.strip() for r in raw):
         if item and item not in entries:
             entries.append(item)
-    for n, entry in enumerate(entries, 1):
-        if len(entry) < DENYLIST_MIN_LENGTH:
-            raise DenylistError(f"deny-list entry {n}: too short")
     return Denylist(tuple(entries))
 
 

@@ -676,7 +676,7 @@ def test_denylist_is_read_from_the_file_and_the_variable_and_never_printed(
     (config / deny_list.DENYLIST_FILE_NAME).write_text(
         "# the owner's strings\nsomeone-handle\n\n4242424242  # an id\n"
     )
-    monkeypatch.setenv(deny_list.DENYLIST_ENV, "someone-host,someone-handle\n")
+    monkeypatch.setenv(deny_list.DENYLIST_ENV, "someone-host\nsomeone-handle\n")
     denylist = rec.read_denylist()
     assert len(denylist) == 3 and repr(denylist) == "<denylist: 3 entries>"
     assert [denylist.hit(t) for t in ("someone-handle", "4242424242", "someone-host")] == [1, 2, 3]
@@ -691,8 +691,16 @@ def test_denylist_is_read_from_the_file_and_the_variable_and_never_printed(
     assert denylist.hit(f"?node={_new_node(4242424242)}-patch") == 2
     assert denylist.hit(_new_node(4242424243)) is None
     monkeypatch.setenv(deny_list.DENYLIST_ENV, "abc")
-    with pytest.raises(rec.DenylistError, match=r"^deny-list entry 3: too short$"):
+    with pytest.raises(rec.DenylistError, match=r"^deny-list entry 3: too short$") as short:
         rec.read_denylist()
+    for info, entry in ((short, "abc"),):
+        bound = [
+            name
+            for frame, _line in traceback.walk_tb(info.tb.tb_next)
+            for name, value in frame.f_locals.items()
+            if entry in (value if isinstance(value, str | tuple | list) else ())
+        ]
+        assert bound == [], entry
     (config / deny_list.DENYLIST_FILE_NAME).unlink()
 
     body = "deployed on someone-host"
