@@ -1640,6 +1640,31 @@ URL's userinfo leads its host whatever it ends with (`https://u:abc=@acme.io`);
 no ASCII symbol joins `LOCAL_CHARS`, since a local part decides whether a
 mailbox is a placeholder (`remote=git@…` stays `git`, measured on
 `val_ini_scp_private`) (`test_a_unicode_local_part_and_a_userinfo_lead_their_host`).
+(i) **Review round 2 of PR #319.** D8: a reverse-DNS head
+(`REVERSE_DNS_HEADS`) keeps a name from being a host only when a
+`/<segment>` alone follows it; led by `//` or followed by a port it is a
+host (`dev.acme.internal:8443`, `//dev.acme.io/ns`), and
+`see dev.acme.io/ns` is the named residual
+(`test_a_reverse_dns_head_is_a_host_after_slashes_or_before_a_port`; the
+sweep's `reverse_dns` cells led by `//` or followed by a port are planted).
+The userinfo scan of (h) stops at the previous `@` (RFC 3986: a userinfo
+holds none), so the reader stays linear: `x://` + `=@a` x 20 000 took
+81.6 s at (h) and 0.08 s now
+(`test_the_userinfo_scan_stops_at_the_previous_at_and_stays_linear`). The
+deny-list reader raises from a frame that binds no entry (`_read_entries`,
+`Denylist.short_entry`), and `REPOACH_PERSONAL_DENYLIST` holds one entry
+per line, a comma refused by name: the runner masks a secret's value and
+each line, never the parts of a line (SP-NO-PERSONAL-DATA-GATE D3
+amended alike). D3 `home_path` is judged in every decoded form of a
+string and also matches `/var/home/<x>` and a Windows profile
+`C:\Users\<x>` (single or JSON-escaped backslashes); the gate's D1 copy is
+amended alike, and row `reg_path_windows_users_known_login_redacted`
+becomes `reg_path_windows_users_known_login_refused`, like its POSIX twins
+(`test_a_home_path_is_judged_decoded_on_posix_and_windows`). The posture's
+names test runs as its own gate suite (`tests/unit/test_security_posture_names.py`,
+`[gate].pytest`), since a docs-only change skips the unit job. Counts: 905
+rows = 614 planted + 291 ordinary = 830 written + 73 refused + 2 bounded,
+25 residuals.
 
 ## Intent
 
