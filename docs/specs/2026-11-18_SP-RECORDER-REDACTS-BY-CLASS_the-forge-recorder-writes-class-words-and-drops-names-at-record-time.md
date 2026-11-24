@@ -1715,6 +1715,35 @@ method and turns a replay mismatch into its `SystemExit`; `main()` turns a
 `ForgeError` into exit 2; every entry point's `Raises` lists what escapes.
 Counts: 920 rows = 628 planted + 292 ordinary = 837 written + 81 refused +
 2 bounded, 25 residuals.
+(l) **Review round 5 of PR #319: every reader fails closed.** D8: a URL
+userinfo is read by URL grammar, never by a character allowlist: after
+`<scheme>://` the authority runs to the first whitespace, `/`, `<`, `>` or
+`"`, and everything before its LAST `@` is the userinfo, whatever it holds
+(`^ | \ [ ] # ? @` and the rest), on every host; `closure.userinfos`,
+the leading of a host after it and the one-label authority read that one
+span (`_url_userinfo_spans`), so `postgres://app:<pw>^x@localhost` and
+`https://u:<pw>^@pypi.org` are refused as `url userinfo`, and the pipeline,
+whose redactor reads RFC 3986 characters only, refuses what it leaves. A
+tenant route is judged lexically by host and path (`closure.has_tenant_path`),
+whatever leads the host: a scheme, `//`, nothing, a port, a Markdown link
+(`stackoverflow.com:443/c/<team>`, `[x](stackoverflow.com/c/<team>)`). D3:
+the token shapes are judged on every decoded form of a string
+(`fixture_judge.has_secret_token`, the one decoder `closure.decoded_forms`
+the home-path rule and the deny-list read), so `ghp%5F…`, `ghp&#95;…` and
+`ghp\u005f…` are refused. A deny-list file that exists but cannot be read (a
+dangling symlink, a directory, a permission, an encoding, any `OSError`) is a
+`DenylistError` naming the reason, never an empty list; `known_values` takes
+an opaque `Denylist` or `None` only (a tuple is a `TypeError`), and the
+entries reach the oracle through `Denylist.judged_with(known)`, no caller.
+D4: the live `_record` is split into its stages and runs
+`repoach.forge.fixture_pipeline.redact_recording`; both scripts declare the
+synthetic ids and judge through `fixture_pipeline.seal_fixture`; the offline
+script reaches the text rewriting through `rename_logins_in_text`,
+`rename_logins_in_argument`, `rewrite_recorded_source` and
+`replace_known_in_source`, never its patterns. The CI deny-list check judges
+the fixtures in its own step only; the main step has no list and skips it
+naming the reason. Counts: 934 rows = 642 planted + 292 ordinary = 837
+written + 95 refused + 2 bounded, 25 residuals.
 
 ## Intent
 
@@ -2406,8 +2435,9 @@ ids declared) stand.
 ## Interface
 
 Inputs (0.17; the 0.6–0.16 names not listed here are deleted or demoted per **What 0.17 removes or demotes**):
-- `src/repoach/forge/closure.py`: `LOCAL_CHARS`, and from `closure_tables.py` (0.28 (k)) `HOST_TLDS`, `EXTENSION_TLDS`, `REVERSE_DNS_HEADS`, `IPV4_RESERVED`, `PUBLIC_SUFFIXES` (the 25 registrable suffixes), `PUBLIC_HOSTS`, `TENANT_ROUTES`; `is_placeholder_host(host)`, `is_public_host(host)`, `is_tenant_path(host, path)`, `userinfos(text) -> list[Mailbox]`, `is_doc_mailbox_host(host)`, `Host(host, led, start, end, literal=False)`, `hosts(text) -> list[Host]`, `Mailbox(local, host, start, end)`, `mailboxes(text) -> list[Mailbox]`, `public_addresses(text) -> list[str]`, `token_pattern(word)`, `decoded_forms(text) -> list[str]`, `forms_of(text, *, literals=())`, `node_id_numbers(text) -> list[str]`, `is_literal_mailbox(box)`, `JUDGED_KINDS`, `Known` (an opaque, count-only repr; `values(kind)`), `residual(text, known) -> tuple[kind, n] | None`, `judge(text, known) -> Refusal | None` with `Refusal(reason, kind, n)` and reasons `residual`, `tenant path`, `unknown host`, `public address`, `unknown mailbox`, `url userinfo`.
-- `src/repoach/forge/recording.py`: `login_sightings(values)`, `assign_roles(sightings, *, bot="", maintainer=None, author=None, held=...)` (0.28 (k)), `known_values(raw, *, roles, remote="", denylist=None, min_length=4, ids=None, projects=None, forge="github", keep_users=frozenset(), keep_projects=frozenset()) -> Known`, `replace_known(text, known, mapping=None) -> str`, `replace_known_in_value`, `replace_known_in_stdout`, `Known.mapping()`, `ReplaySpawn(exchanges, normalize=None)`, `find_secret_tokens(text)`, `SECRET_TOKEN_PATTERNS`, `_PROJECT_ID_RE`, `project_id_values` (D9), `_api_route(path)`, `LANGUAGE_AT_WORDS` with its parts `PYTHON_DECORATORS`, `CSS_AT_RULES`, `DOC_TAGS`, `LANGUAGE_ANNOTATIONS` (in `recording_tables.py` since 0.28 (k)), `_URL_IPV6_HOST` and `_URL_BODY` of `_URL_IN_TEXT_RE` (0.20), plus the unchanged 0.16 names of D1, D1b (demoted), D1c and D2.
+- `src/repoach/forge/closure.py`: `LOCAL_CHARS`, and from `closure_tables.py` (0.28 (k)) `HOST_TLDS`, `EXTENSION_TLDS`, `REVERSE_DNS_HEADS`, `IPV4_RESERVED`, `PUBLIC_SUFFIXES` (the 25 registrable suffixes), `PUBLIC_HOSTS`, `TENANT_ROUTES`; `is_placeholder_host(host)`, `is_public_host(host)`, `is_tenant_path(host, path)`, `has_tenant_path(text)` (0.28 (l)), `userinfos(text) -> list[Mailbox]`, `is_doc_mailbox_host(host)`, `Host(host, led, start, end, literal=False)`, `hosts(text) -> list[Host]`, `Mailbox(local, host, start, end)`, `mailboxes(text) -> list[Mailbox]`, `public_addresses(text) -> list[str]`, `token_pattern(word)`, `decoded_forms(text) -> list[str]`, `forms_of(text, *, literals=())`, `node_id_numbers(text) -> list[str]`, `is_literal_mailbox(box)`, `JUDGED_KINDS`, `Known` (an opaque, count-only repr; `values(kind)`), `residual(text, known) -> tuple[kind, n] | None`, `judge(text, known) -> Refusal | None` with `Refusal(reason, kind, n)` and reasons `residual`, `tenant path`, `unknown host`, `public address`, `unknown mailbox`, `url userinfo`.
+- `src/repoach/forge/recording.py`: `rename_logins_in_text(text, roles)`, `rename_logins_in_argument(arg, roles)`, `rewrite_recorded_source(source, forge)`, `replace_known_in_source(source, known)` (0.28 (l)), `login_sightings(values)`, `assign_roles(sightings, *, bot="", maintainer=None, author=None, held=...)` (0.28 (k)), `known_values(raw, *, roles, remote="", denylist=None, min_length=4, ids=None, projects=None, forge="github", keep_users=frozenset(), keep_projects=frozenset()) -> Known`, `replace_known(text, known, mapping=None) -> str`, `replace_known_in_value`, `replace_known_in_stdout`, `Known.mapping()`, `ReplaySpawn(exchanges, normalize=None)`, `find_secret_tokens(text)`, `SECRET_TOKEN_PATTERNS`, `_PROJECT_ID_RE`, `project_id_values` (D9), `_api_route(path)`, `LANGUAGE_AT_WORDS` with its parts `PYTHON_DECORATORS`, `CSS_AT_RULES`, `DOC_TAGS`, `LANGUAGE_ANNOTATIONS` (in `recording_tables.py` since 0.28 (k)), `_URL_IPV6_HOST` and `_URL_BODY` of `_URL_IN_TEXT_RE` (0.20), plus the unchanged 0.16 names of D1, D1b (demoted), D1c and D2.
+- `src/repoach/forge/fixture_pipeline.py` (0.28 (l)): `classify_calls`, `synthesize_user_ids`, `replace_known_in_calls`, `redact_recording(calls, args, kwargs, *, raw, roles, remote, denylist, forge, method) -> RedactedRecording`, `seal_fixture(fixture, *, denylist, known, users_in=None, sort_keys=False)`; `repoach.forge.fixture_judge.has_secret_token(text)`; `repoach.forge.denylist.Denylist.judged_with(known)`.
 - `scripts/record_forge_fixture.py`: `refuse_unclassified(fixture, denylist, known)`, `generic_class` (home path only), `build_roles` (through `assign_roles`), `Denylist`, `read_denylist`, `GIT_ENV_KEYS`, `git_env()`, `origin_url`, `record`, the CLI unchanged.
 - `scripts/redact_forge_fixtures.py`: `redact_fixture(data, ids=None, *, forge, projects=None, remote="", denylist=None)`, `fixture_known(data, *, roles=None, remote="", denylist=None, ids=None, projects=None, forge="github")` (`None` is the maintainer's deny-list since 0.28 (k)), `fixture_roles(data, also=())`, `ResidualValueError`, `run`, the CLI unchanged.
 
