@@ -381,7 +381,15 @@ _PUNYCODE_LABEL = re.compile(r"xn--[a-z0-9-]+", re.I)
 
 
 def _label_run(run: str) -> list[str] | None:
-    """The labels of a dotted host name, its last label letters or an IDNA ``xn--`` label, else ``None``."""
+    """The labels of a dotted host name read by DNS label grammar, else ``None``.
+
+    Every label is letters, digits and hyphens (RFC 1123 2.1), neither led nor ended by a hyphen.
+    The last label is an IDNA ``xn--`` label or two characters or more led by a letter, so a
+    private name whose last label holds a digit is a host (``gitlab.dc1``, ``ci.node1``, PR #319
+    round 7, 4687852986), while an all-numeric last label is not (RFC 3696 2: ``v1.2.3``,
+    ``1.2.3.4``, read as an address elsewhere). A run whose labels before the last are all
+    digits is a version with a tag (``7.1.0.rc1``), never a host.
+    """
     body = run[:-1] if run.endswith(".") else run
     labels = body.split(".")
     if len(labels) < 2 or not all(_LABEL.fullmatch(label) for label in labels):
@@ -389,7 +397,9 @@ def _label_run(run: str) -> list[str] | None:
     last = labels[-1]
     if _PUNYCODE_LABEL.fullmatch(last):
         return labels
-    if len(last) < 2 or not (last.isascii() and last.isalpha()):
+    if len(last) < 2 or not (last[0].isascii() and last[0].isalpha()):
+        return None
+    if all(label.isdigit() for label in labels[:-1]):
         return None
     return labels
 

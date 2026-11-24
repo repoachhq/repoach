@@ -2066,3 +2066,39 @@ def test_a_container_registry_namespace_is_an_identity_slot() -> None:
     started = time.perf_counter()
     assert not closure.has_tenant_path("a." * 20000 + "ghcr.io")
     assert time.perf_counter() - started < 2.0
+
+
+def test_a_host_is_read_by_dns_label_grammar_in_every_label() -> None:
+    """D3 (PR #319 round 7, 4687852986): a led host whose last label holds a digit is a host.
+
+    Every label is letters, digits and hyphens; the last is led by a letter (or is an ``xn--``
+    label), so ``gitlab.dc1`` and ``ci.node1`` are hosts after a scheme, a ``<local>@`` or a
+    userinfo, while a version (``v1.2.3``, ``7.1.0.rc1``, ``pkg@1.0.0-rc1``), an address and a
+    file name (``foo.py3``) stay ordinary text.
+    """
+    none = closure.Known(())
+    for text in (
+        "see https://gitlab.dc1/zqns/zqrepo now",
+        "see https://build.node1:8443/x",
+        "mail zqkvn@ci.node1 now",
+        "push git@gitlab.dc1:zqns/zqrepo.git",
+        "dsn postgres://app:zqpw@db.rack2/x",
+        "see https://zq-1.zq2-x.k8s3/x",
+        "see https://GITLAB.DC1/x",
+    ):
+        assert closure.judge(text, none) is not None, text
+    assert [h.host for h in closure.hosts("https://gitlab.dc1/x")] == ["gitlab.dc1"]
+    assert [b.host for b in closure.mailboxes("zqkvn@ci.node1")] == ["ci.node1"]
+    for text in (
+        "bump to v1.2.3 and 1.2.3 then 10.4.0-rc1",
+        "install pkg@1.2.3, pkg@1.0.0-rc1 and rails@7.1.0.rc1",
+        "open foo.py3, bar.mp4, x.h264, lib.so.6 and libc.so.6",
+        "see https://example.com/foo.py3 and @babel/core@7.24.0",
+        "the address 1.2.3.4 and version 2.0.1.beta2",
+        "pinned image@sha256:abc and node@18.19.1",
+    ):
+        assert closure.judge(text, none) is None, text
+    for run in ("1.2.3", "7.1.0.rc1", "1.0.0-rc1", "x.y", "x.1a", "x.-a", "x.a"):
+        assert closure._label_run(run) is None, run
+    for run in ("gitlab.dc1", "ci.node1", "a.b.c9", "zq.xn--p1ai", "1.example.com"):
+        assert closure._label_run(run) is not None, run

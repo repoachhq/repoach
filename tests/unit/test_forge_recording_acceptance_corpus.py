@@ -10958,6 +10958,36 @@ ROWS: tuple[Row, ...] = (
             text="FROM docker.io/library/python:3.12-slim, https://pypi.org/project/ruff/, https://www.npmjs.com/package/typescript and https://cdn.jsdelivr.net/npm/lodash@4/x.js"
         ),
     ),
+    Row(
+        id="r7_url_on_a_digit_bearing_last_label_is_rewritten",
+        source="PR #319 review round 7 (4687852986)",
+        inp=Sample(body="see https://gitlab.dc1/zqns7/zqrepo7/-/merge_requests/3 now"),
+        outcome=Written(text="see https://forge.example.com/org/project/-/merge_requests/3 now"),
+        markers=("gitlab.dc1", "zqns7", "zqrepo7"),
+    ),
+    Row(
+        id="r7_mailbox_on_a_digit_bearing_last_label_is_refused",
+        source="PR #319 review round 7 (4687852986)",
+        inp=Sample(body="write to zqkvn@ci.node1 for access"),
+        outcome=Refused("unknown mailbox at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r7_scp_remote_on_a_digit_bearing_last_label_is_rewritten",
+        source="PR #319 review round 7 (4687852986)",
+        inp=Sample(body="git clone git@gitlab.dc1:zqns7/zqrepo7.git"),
+        outcome=Written(text="git clone git@forge.example.com:org/project.git"),
+        markers=("gitlab.dc1", "zqns7", "zqrepo7"),
+    ),
+    Row(
+        id="r7_versions_addresses_and_file_names_with_digits_are_ordinary",
+        source="PR #319 review round 7 (4687852986)",
+        inp=Sample(
+            body="bump v1.2.3 to 10.4.0-rc1; npm i pkg@1.0.0-rc1 and rails@7.1.0.rc1; open foo.py3, x.h264 and libc.so.6"
+        ),
+        outcome=Written(
+            text="bump v1.2.3 to 10.4.0-rc1; npm i pkg@1.0.0-rc1 and rails@7.1.0.rc1; open foo.py3, x.h264 and libc.so.6"
+        ),
+    ),
 )
 
 
@@ -11410,10 +11440,10 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
     refused = [row for row in ROWS if isinstance(row.outcome, Refused)]
     bounded = [row for row in ROWS if isinstance(row.outcome, Bounded)]
     assert (len(ROWS), len(planted), len(ordinary), len(refused), len(bounded)) == (
-        955,
-        661,
-        294,
-        109,
+        959,
+        664,
+        295,
+        110,
         2,
     )
     assert len(residual) == 25

@@ -3611,7 +3611,8 @@ def test_userinfo_chains_host_token_boundary_and_nested_parens_by_construction()
     ):
         assert [p[0] for p in locations(url)][-1:] == ["git.zqcorp.io"], url
     assert locations("see https://zqhost.zqcorp-/zqns/zqrepo")[-1][0] == "zqhost.zqcorp"
-    assert locations("see https://zqhost.zqcorp1/zqns/zqrepo") == []
+    assert locations("see https://zqhost.zqcorp1/zqns/zqrepo")[-1][0] == "zqhost.zqcorp1"
+    assert locations("see https://zqhost.1.2/zqns/zqrepo") == []
     nested = locations("https://git.zqcorp.io/zqns/Item_(a_(b))")
     assert nested[0][1][0] == "zqns"
     assert redact_urls_in_text("https://git.zqcorp.io/zqns/Item_(a_(b)) end") == (
