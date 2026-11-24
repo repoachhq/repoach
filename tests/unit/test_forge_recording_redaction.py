@@ -5971,6 +5971,7 @@ def test_an_api_path_is_read_in_the_structured_sources_of_a_call_only() -> None:
         _stderr_call("ok", stdin=json.dumps({"endpoint": path, "x": 1})),
         _stderr_call(f"HTTP 404: Not Found ({path})"),
         _one_call([{"body": "ok", "endpoint": path}]),
+        _one_call([{"body": "ok", "title": f"fix {path} paging"}]),
         _one_call({"data": {"pr": {"body": "ok", "resource": f"/{path}"}}}),
     )
     for raw in structured:
@@ -6051,6 +6052,11 @@ def test_an_api_path_cited_in_prose_is_the_named_residual_ng4_16() -> None:
         "repos/kvnpay/kvnledger/contents/main.tf: the file",
         "repos/kvnpay/kvnledger/contents/main.tf; the file",
         "repos/kvnpay/kvnledger/contents/main.tf! the file",
+        "repos/kvnpay/kvnledger/contents/main.tf.. the file",
+        "repos/kvnpay/kvnledger/contents/main.tf? Yes, the file",
+        "repos/kvnpay/kvnledger/contents/main.tf?, the file",
+        "repos/kvnpay/kvnledger/contents/main.tf,, the file",
+        "repos/kvnpay/kvnledger/contents/main.tf_ holds it",
         "repos/kvnpay/kvnledger/contents/main.tf. The file",
         "repos/kvnpay/kvnledger/contents/A.Yaml\tholds it",
         "repos/kvnpay/kvnledger/contents/a.b12345 holds it",
@@ -6063,6 +6069,8 @@ def test_an_api_path_cited_in_prose_is_the_named_residual_ng4_16() -> None:
         "GET repos/kvnpay/kvnledger/contents/README.md#L3",
         "GET repos/kvnpay/kvnledger/contents/README.md?ref=main for it",
         "HTTP 404 (repos/kvnpay/kvnledger/contents/README.md)",
+        "HTTP 404 (repos/kvnpay/kvnledger/contents/README.md), retrying",
+        'GET "repos/kvnpay/kvnledger/contents/README.md" failed',
         "repos/kvnpay/kvnledger/contents/README.md.",
         "repos/kvnpay/kvnledger/contents/README.md ",
         "repos/kvnpay/kvnledger/contents/README.md -- (the readme)",

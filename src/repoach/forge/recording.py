@@ -2534,8 +2534,15 @@ _API_ROUTE_END = "/" + _PATH_END
 _FILE_NAME_RE = re.compile(r"\.[A-Za-z][A-Za-z0-9]{0,5}$")
 """The extension that ends a file name, ``index.ts``, ``notes.md`` (0.27)."""
 
-_SENTENCE_AFTER_RE = re.compile(r"[.,:;!]?\s+\w")
-"""What follows a path cited in a sentence: optional punctuation, a space, then a word (0.27)."""
+_SENTENCE_AFTER_RE = re.compile(r"[,?]*\s+\w")
+"""What follows a path cited in a sentence, read where the path's token ends (0.27).
+
+The token ends at the first :data:`_PATH_END` character, so a dot, a
+colon, a semicolon or a bang after the file name is inside it; of the
+characters that end it only a comma and a question mark are prose
+punctuation, then a space and a word. A closing delimiter (``)``, a
+quote) ends a call written inside one: ``HTTP 404 (repos/…/README.md), retrying``.
+"""
 
 
 def _api_path_projects(text: str) -> list[tuple[str, str]]:
@@ -2564,7 +2571,7 @@ def _api_path_projects(text: str) -> list[tuple[str, str]]:
             continue
         end = next((i for i, c in enumerate(rest) if c in _PATH_END), len(rest))
         path = rest[:end].rstrip(_URL_TRIM_TAIL)
-        if _FILE_NAME_RE.search(path) and _SENTENCE_AFTER_RE.match(rest, len(path)):
+        if _FILE_NAME_RE.search(path) and _SENTENCE_AFTER_RE.match(rest, end):
             continue
         owner, repository = match.group("owner"), _bare(match.group("repo"))
         if not _names_a_value(repository):
