@@ -117,6 +117,13 @@ class UnknownForgeError(Exception):
 def fixture_forge(path: Path, data: object) -> str:
     """The forge a fixture was recorded on: its ``forge`` key, else its directory's.
 
+    Args:
+        path: The fixture's file, whose directory names the forge when ``data`` does not.
+        data: The fixture as committed.
+
+    Returns:
+        ``github`` or ``gitlab``.
+
     Raises:
         UnknownForgeError: Neither names a forge.
     """
@@ -130,7 +137,15 @@ def fixture_forge(path: Path, data: object) -> str:
 
 
 def redact_output(stdout: str) -> str:
-    """Redact one recorded stdout; an unchanged JSON answer keeps its bytes."""
+    """Redact one recorded stdout; an unchanged JSON answer keeps its bytes.
+
+    Args:
+        stdout: One recorded stdout.
+
+    Returns:
+        The stdout with its JSON values redacted by field, or its text URLs rewritten; the very
+        same string when nothing changes.
+    """
     values = decode_json_values(stdout)
     if values is None:
         return redact_urls_in_text(stdout)
@@ -505,7 +520,15 @@ def _redact_fixture(
 
 
 def render(data: object, *, ascii_only: bool = False) -> str:
-    """A fixture's text: two-space indent, key order kept, trailing newline."""
+    """A fixture's text: two-space indent, key order kept, trailing newline.
+
+    Args:
+        data: The fixture.
+        ascii_only: Escape every non-ASCII character, as the committed file did.
+
+    Returns:
+        The file's text.
+    """
     return json.dumps(data, indent=2, ensure_ascii=ascii_only) + "\n"
 
 
@@ -515,7 +538,17 @@ def corpus_start(
     low: int = SYNTHETIC_ID_START,
     high: int = SYNTHETIC_ID_END,
 ) -> int:
-    """The first number the corpus may hand out: after every trusted number a fixture declares under ``key``."""
+    """The first number the corpus may hand out: after every trusted number a fixture declares.
+
+    Args:
+        fixtures: Every fixture of the corpus.
+        key: The declaration key, ``synthetic_user_ids`` by default.
+        low: The first number of the synthetic range.
+        high: The last number of the synthetic range.
+
+    Returns:
+        One past the largest trusted declared number, ``low`` when none is declared.
+    """
     declared = [n for data in fixtures for n in trusted_declaration(data.get(key), low, high)]
     return max([low - 1, *declared]) + 1
 
@@ -531,6 +564,9 @@ def run(root: Path, *, check: bool, denylist: Denylist | None = None) -> list[Pa
         root: The fixture corpus.
         check: Write nothing; only say which files would change.
         denylist: The deny-list (:func:`repoach.forge.denylist.read_denylist` when ``None``).
+
+    Returns:
+        The files that changed, or would change under ``check``.
 
     Raises:
         UnknownForgeError: A fixture whose forge cannot be told.
@@ -576,7 +612,14 @@ def run(root: Path, *, check: bool, denylist: Denylist | None = None) -> list[Pa
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry point: one line on stdout, or nothing and exit 2 on a refusal."""
+    """CLI entry point: one line on stdout, or nothing and exit 2 on a refusal.
+
+    Args:
+        argv: The command line after the program name; ``sys.argv[1:]`` when ``None``.
+
+    Returns:
+        ``0`` when done, ``1`` under ``--check`` when a file would change, ``2`` on a refusal.
+    """
     route_default_logs_to_stderr()
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("root", nargs="?", type=Path, default=FIXTURE_ROOT)

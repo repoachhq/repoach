@@ -7286,3 +7286,47 @@ def test_record_refuses_an_unknown_method_and_a_replay_that_issues_another_call(
         == 2
     )
     assert capsys.readouterr().err.endswith("needs the 'gh' CLI on PATH\n")
+
+
+def _public_functions(tree: ast.Module) -> list[ast.FunctionDef]:
+    """Module-level functions and class methods whose name has no leading underscore."""
+    found: list[ast.FunctionDef] = []
+    for node in tree.body:
+        members = node.body if isinstance(node, ast.ClassDef) else [node]
+        found += [
+            m for m in members if isinstance(m, ast.FunctionDef) and not m.name.startswith("_")
+        ]
+    return found
+
+
+def test_the_recorders_public_functions_document_their_arguments_and_value() -> None:
+    """PR #319 round 4: a Google ``Args:`` and ``Returns:`` on every public function of the class.
+
+    The class is every public function of the two recorder scripts that takes an argument, and
+    every public function or method of the forge recorder modules that takes two or more; a
+    function returning ``None`` needs no ``Returns:``.
+    """
+    missing = []
+    for rel in (
+        "scripts/record_forge_fixture.py",
+        "scripts/redact_forge_fixtures.py",
+        "src/repoach/forge/closure.py",
+        "src/repoach/forge/closure_tables.py",
+        "src/repoach/forge/recording.py",
+        "src/repoach/forge/recording_tables.py",
+        "src/repoach/forge/denylist.py",
+        "src/repoach/forge/fixture_judge.py",
+    ):
+        for node in _public_functions(ast.parse((ROOT / rel).read_text())):
+            arguments = [
+                a.arg for a in node.args.args + node.args.kwonlyargs if a.arg not in ("self", "cls")
+            ]
+            if len(arguments) < (1 if rel.startswith("scripts/") else 2):
+                continue
+            doc = ast.get_docstring(node) or ""
+            returns_none = isinstance(node.returns, ast.Constant) and node.returns.value is None
+            if "Args:" not in doc or not (returns_none or "Returns:" in doc):
+                missing.append(f"{rel}:{node.name}")
+            elif any(f"    {a}:" not in doc for a in arguments):
+                missing.append(f"{rel}:{node.name} (an argument)")
+    assert missing == []

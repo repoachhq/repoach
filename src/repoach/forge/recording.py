@@ -364,7 +364,15 @@ RECORDED_SOURCE_RE = re.compile(r"^recorded ([0-9]{4}-[0-9]{2}-[0-9]{2}) from (?
 
 
 def recorded_source(date: str, forge: str) -> str:
-    """A recorded fixture's ``source`` head: the date and the forge, never a checkout's folder name."""
+    """A recorded fixture's ``source`` head: the date and the forge, never a checkout's folder name.
+
+    Args:
+        date: The recording day, ``YYYY-MM-DD``.
+        forge: ``github`` or ``gitlab``.
+
+    Returns:
+        ``recorded <date> from a live <forge> change request``.
+    """
     return f"recorded {date} from a live {forge} change request"
 
 
@@ -707,6 +715,14 @@ def path_identity(segments: list[str], *, remote: bool = False) -> PathIdentity:
     construction (``<ns>/…/<repo>``, 0.23) and reads that way whatever its
     first word, so a recorded remote whose namespace is a reserved word
     (``jwt``, ``assets``, real GitHub accounts) still yields its identity.
+
+    Args:
+        segments: The path's segments, split on ``/``.
+        remote: The path is a remote's or an argv API path's: the namespace is every segment but
+            the last, whatever the words.
+
+    Returns:
+        The placeholder segments, the namespace and the repository the path names.
     """
     core = [s for s in segments if s]
     if not core:
@@ -1132,7 +1148,15 @@ def _login_pattern(login: str) -> re.Pattern[str]:
 
 
 def outside_literals(text: str, rewrite: Callable[[str], str]) -> str:
-    """``text`` with ``rewrite`` applied to every stretch between :data:`CLI_PLACEHOLDER_RE` literals, which stay as they are."""
+    """``text`` with ``rewrite`` applied to every stretch between :data:`CLI_PLACEHOLDER_RE` literals, which stay as they are.
+
+    Args:
+        text: The text rewritten.
+        rewrite: The rewrite applied to each stretch.
+
+    Returns:
+        ``text`` rewritten, its literals unchanged.
+    """
     out: list[str] = []
     last = 0
     for match in CLI_PLACEHOLDER_RE.finditer(text):
@@ -1153,6 +1177,13 @@ def classify_text(text: str, roles: dict[str, str]) -> str:
     one consistent identity. A :data:`CLI_PLACEHOLDER_RE` template is
     left as it is (0.10); every other occurrence of the token is
     replaced, after a ``:``, a ``.`` or a ``/`` alike.
+
+    Args:
+        text: Any string of a recording.
+        roles: Login -> class word for the recording.
+
+    Returns:
+        ``text`` with each login replaced.
     """
     expanded = dict(roles)
     present = {k.removeprefix(MENTION_ONLY_PREFIX).casefold() for k in roles}
@@ -1248,14 +1279,32 @@ class SyntheticIdsExhaustedError(Exception):
 def is_synthetic_number(
     value: object, low: int = SYNTHETIC_ID_START, high: int = SYNTHETIC_ID_END
 ) -> bool:
-    """Whether ``value`` is an ``int`` in ``low..high`` (by default the user range)."""
+    """Whether ``value`` is an ``int`` in ``low..high`` (by default the user range).
+
+    Args:
+        value: A decoded JSON value.
+        low: The first number of the range.
+        high: The last number of the range.
+
+    Returns:
+        ``True`` for an ``int`` (never a ``bool``) inside the range.
+    """
     return isinstance(value, int) and not isinstance(value, bool) and low <= value <= high
 
 
 def trusted_declaration(
     raw: object, low: int = SYNTHETIC_ID_START, high: int = SYNTHETIC_ID_END
 ) -> frozenset[int]:
-    """The numbers of a declaration that may be kept: the ones in ``low..high`` only."""
+    """The numbers of a declaration that may be kept: the ones in ``low..high`` only.
+
+    Args:
+        raw: A fixture's declaration, as committed.
+        low: The first number of the range.
+        high: The last number of the range.
+
+    Returns:
+        The declared numbers inside the range, empty when ``raw`` is not a list.
+    """
     if not isinstance(raw, list):
         return frozenset()
     return frozenset(n for n in raw if is_synthetic_number(n, low, high))
@@ -1448,7 +1497,16 @@ class UserIdMap:
         return f"U_{n}" if isinstance(value, str) else n
 
     def apply(self, payload: object, *, forge: str, keep: frozenset[int] = frozenset()) -> object:
-        """Remap the ``id`` of every user object (one holding ``login`` or ``username``)."""
+        """Remap the ``id`` of every user object (one holding ``login`` or ``username``).
+
+        Args:
+            payload: A decoded JSON value.
+            forge: ``github`` or ``gitlab``.
+            keep: Declared synthetic numbers, kept as they are.
+
+        Returns:
+            A copy with each user object's ``id`` synthetic.
+        """
         if isinstance(payload, dict):
             user = any(k in payload for k in USER_KEYS)
             return {
@@ -1464,7 +1522,18 @@ class UserIdMap:
     def apply_projects(
         self, payload: Any, *, forge: str, keep: frozenset[int] = frozenset()
     ) -> Any:
-        """Remap the ``id`` of every repository object and ``api/v4/projects/<id>`` URL (0.10, 0.13 R6-D5)."""
+        """Remap the ``id`` of every repository object and of every ``api/v4/projects/<id>`` path.
+
+        Since 0.10 and 0.13 (R6-D5).
+
+        Args:
+            payload: A decoded JSON value, argv or a text.
+            forge: ``github`` or ``gitlab``.
+            keep: Declared synthetic numbers, kept as they are.
+
+        Returns:
+            A copy with each repository id synthetic.
+        """
         if isinstance(payload, dict):
             repository = is_repository_object(payload)
             return {
@@ -1493,6 +1562,15 @@ class UserIdMap:
         Every other ``id`` of a result (a review, a comment, a thread, a
         check run) is the object's own and is left as it is, even when its
         number equals a user id seen elsewhere.
+
+        Args:
+            result: The recorded result.
+            forge: ``github`` or ``gitlab``.
+            method: The recorded protocol method.
+            keep: Declared synthetic numbers, kept as they are.
+
+        Returns:
+            The result, its user ids synthetic where the method's result holds one.
         """
         if (forge, method) not in RESULT_USER_ID_METHODS or not isinstance(result, list):
             return result
@@ -1505,7 +1583,15 @@ class UserIdMap:
 
 
 def login_values(payload: object, path: str = "") -> list[tuple[str, str]]:
-    """Every ``(key path, value)`` of a string under a :data:`LOGIN_KEYS` key, in order."""
+    """Every ``(key path, value)`` of a string under a :data:`LOGIN_KEYS` key, in order.
+
+    Args:
+        payload: A decoded JSON value.
+        path: The key path of ``payload`` itself, ``""`` at the top.
+
+    Returns:
+        Each login key's path and string value, depth first.
+    """
     if isinstance(payload, dict):
         found: list[tuple[str, str]] = []
         for key, item in payload.items():
@@ -1758,6 +1844,13 @@ def fixture_strings(value: object, path: str) -> list[tuple[str, str]]:
     outside :data:`CODE_KEYS` is yielded at ``<path>.{key <i>}`` and its
     value walked under that same ordinal path, so no path prints a key
     that may name someone.
+
+    Args:
+        value: A decoded value of the fixture.
+        path: The key path of ``value`` itself.
+
+    Returns:
+        Each path and string, in walking order.
     """
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return [(path, str(value))]
@@ -2703,7 +2796,15 @@ def replace_known(text: str, known: closure.Known, mapping: dict[str, str] | Non
 
 
 def replace_known_in_value(value: Any, known: closure.Known) -> Any:
-    """:func:`replace_known` on every string of a decoded value; keys are never rewritten."""
+    """:func:`replace_known` on every string of a decoded value; keys are never rewritten.
+
+    Args:
+        value: A decoded JSON value, argv or the method's arguments.
+        known: The recording's known values.
+
+    Returns:
+        A copy with every string rewritten.
+    """
     if isinstance(value, dict):
         return {k: replace_known_in_value(v, known) for k, v in value.items()}
     if isinstance(value, list):
@@ -2714,7 +2815,15 @@ def replace_known_in_value(value: Any, known: closure.Known) -> Any:
 
 
 def replace_known_in_stdout(text: str, known: closure.Known) -> str:
-    """:func:`replace_known` on a recorded stdout: JSON answers are walked, text is replaced whole."""
+    """:func:`replace_known` on a recorded stdout: JSON answers are walked, text is replaced whole.
+
+    Args:
+        text: One recorded stdout.
+        known: The recording's known values.
+
+    Returns:
+        The stdout rewritten: each JSON value re-serialised, a text stdout replaced whole.
+    """
     values = decode_json_values(text)
     if values is None:
         return replace_known(text, known)
@@ -2848,6 +2957,14 @@ def coerce_call(
 
     ``post_review`` takes a :class:`ReviewDraft`; ``merge`` a
     :class:`MergeMethod`. Every other method takes JSON scalars.
+
+    Args:
+        method: The protocol method.
+        args: Its positional arguments, as JSON.
+        kwargs: Its keyword arguments, as JSON.
+
+    Returns:
+        The typed positional and keyword arguments.
     """
     typed_args = list(args)
     typed_kwargs = dict(kwargs)
@@ -2880,6 +2997,11 @@ def load_fixture(path: Path) -> dict[str, Any]:
 
 
 def dump_fixture(path: Path, data: dict[str, Any]) -> None:
-    """Write one fixture file (sorted keys, two-space indent, trailing newline)."""
+    """Write one fixture file (sorted keys, two-space indent, trailing newline).
+
+    Args:
+        path: The fixture's file; its directory is created.
+        data: The fixture.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False) + "\n")

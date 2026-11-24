@@ -189,7 +189,16 @@ def build_roles(
 
 
 def classify_calls(calls: list[dict[str, Any]], roles: dict[str, str]) -> list[dict[str, Any]]:
-    """Apply ``roles`` to every exchange's argv, stdin, stdout and stderr; redact text URLs."""
+    """Apply the roles to every exchange's argv, stdin, stdout and stderr, and redact text URLs.
+
+    Args:
+        calls: The recorded exchanges, their stdout already redacted by field.
+        roles: Login -> class word for the recording (:func:`build_roles`).
+
+    Returns:
+        New exchanges; a JSON stdout is re-serialised value by value, any other string is
+        rewritten as text.
+    """
     out: list[dict[str, Any]] = []
     for call in calls:
         new = dict(call)
@@ -211,7 +220,20 @@ def classify_calls(calls: list[dict[str, Any]], roles: dict[str, str]) -> list[d
 def synthesize_user_ids(
     calls: list[dict[str, Any]], ids: UserIdMap, *, forge: str, projects: UserIdMap | None = None
 ) -> list[dict[str, Any]]:
-    """Replace every user id, and every repository id (Q2 0.10, ``api/v4/projects/<id>`` 0.13), of the recorded answers by a synthetic one (D1c)."""
+    """Replace every user id and every repository id of the recorded exchanges by a synthetic one (D1c).
+
+    Repository ids include an ``api/v4/projects/<id>`` path (Q2 0.10, 0.13).
+
+    Args:
+        calls: The recorded exchanges, roles already applied.
+        ids: The user-id map; it hands out the synthetic numbers and remembers them.
+        forge: ``github`` or ``gitlab``, the key of the maps.
+        projects: The repository-id map; a fresh one when ``None``.
+
+    Returns:
+        New exchanges: user and repository ids of a JSON stdout remapped, repository ids of
+        argv, stdin, stderr and a text stdout remapped.
+    """
     projects = projects if projects is not None else UserIdMap.for_projects()
     out: list[dict[str, Any]] = []
     for call in calls:
@@ -239,7 +261,15 @@ def synthesize_user_ids(
 def replace_known_in_calls(
     calls: list[dict[str, Any]], known: closure.Known
 ) -> list[dict[str, Any]]:
-    """Replace every known value (D7) in every exchange's argv, stdin, stdout and stderr."""
+    """Replace every known value (D7) in every exchange's argv, stdin, stdout and stderr.
+
+    Args:
+        calls: The recorded exchanges, roles and synthetic ids already applied.
+        known: The recording's known values (:func:`repoach.forge.recording.known_values`).
+
+    Returns:
+        New exchanges, each value replaced by its class token.
+    """
     out: list[dict[str, Any]] = []
     for call in calls:
         new = dict(call)
@@ -518,7 +548,14 @@ def _record(
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry point: one line on stdout, the fixture's path, or nothing and exit 2 on a refusal."""
+    """CLI entry point: one line on stdout, the fixture's path, or nothing and exit 2 on a refusal.
+
+    Args:
+        argv: The command line after the program name; ``sys.argv[1:]`` when ``None``.
+
+    Returns:
+        ``0`` when the fixture is written, ``2`` on a refusal (the reason on stderr).
+    """
     route_default_logs_to_stderr()
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--forge", required=True, choices=["github", "gitlab"])

@@ -721,7 +721,15 @@ def _blank(text: str, literals: tuple[str, ...]) -> str:
 
 
 def forms_of(text: str, *, literals: tuple[str, ...] = ()) -> list[str]:
-    """Every form ``text`` is judged in, casefolded: decoded layers and node-id account numbers."""
+    """Every form ``text`` is judged in, casefolded: decoded layers and node-id account numbers.
+
+    Args:
+        text: One string of the built fixture.
+        literals: Tool and project literals, blanked before decoding.
+
+    Returns:
+        Each decoded layer casefolded, then each user node id's account number, each once.
+    """
     forms: list[str] = []
     for layer in decoded_forms(_blank(text, literals)):
         for form in (layer.casefold(), *node_id_numbers(layer)):
@@ -731,7 +739,16 @@ def forms_of(text: str, *, literals: tuple[str, ...] = ()) -> list[str]:
 
 
 def residual(text: str, known: Known) -> tuple[str, int] | None:
-    """The first known value ``text`` still holds, as ``(kind, ordinal)``, or ``None``."""
+    """The first known value ``text`` still holds, as ``(kind, ordinal)``, or ``None``.
+
+    Args:
+        text: One string of the built fixture.
+        known: The recording's known values.
+
+    Returns:
+        The kind and the 1-based ordinal within it of the first value found, in
+        :data:`JUDGED_KINDS` order.
+    """
     forms = forms_of(text, literals=known.literals)
     for kind in JUDGED_KINDS:
         for n, value in enumerate(known.values(kind), 1):
