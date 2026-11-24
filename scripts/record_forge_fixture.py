@@ -61,6 +61,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
 import subprocess
 import sys
 from collections.abc import Callable
@@ -320,8 +321,49 @@ def replace_known_in_calls(
     return out
 
 
+GIT_ENV_KEYS: tuple[str, ...] = (
+    "PATH",
+    "HOME",
+    "XDG_CONFIG_HOME",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_SYSTEM",
+    "GIT_CONFIG_NOSYSTEM",
+    "SYSTEMROOT",
+)
+"""The variables the recorder's own ``git`` child keeps: where ``git`` is and where its config lives.
+
+``git remote get-url`` reads no credential, so a forge token, an API key, the maintainer's
+deny-list (``REPOACH_PERSONAL_DENYLIST``) and an inline ``GIT_CONFIG_COUNT`` /
+``GIT_CONFIG_KEY_<n>`` / ``GIT_CONFIG_VALUE_<n>`` value (an ``http.extraHeader`` carries a token)
+never reach it, in a checkout whose config the recorder does not control. ``SYSTEMROOT`` lets
+the child start on Windows.
+"""
+
+
+def git_env() -> dict[str, str]:
+    """The minimal environment of the recorder's own ``git`` child.
+
+    Returns:
+        The :data:`GIT_ENV_KEYS` the process has, and ``GIT_TERMINAL_PROMPT=0`` so a checkout
+        that would ask for a password fails instead of waiting.
+    """
+    env = {key: os.environ[key] for key in GIT_ENV_KEYS if key in os.environ}
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    return env
+
+
 def origin_url(cwd: Path) -> str:
-    """The ``origin`` remote of the checkout at ``cwd``, ``""`` when there is none; a needle source, never written."""
+    """The ``origin`` remote of the checkout at ``cwd``: a needle source, never written.
+
+    ``git`` runs with :func:`git_env` only, the one subprocess the recorder starts itself; the
+    forge's own ``gh`` / ``glab`` calls need its credentials and keep the environment.
+
+    Args:
+        cwd: The checkout whose forge is recorded.
+
+    Returns:
+        The remote as ``git`` prints it, ``""`` when there is none or ``git`` cannot run.
+    """
     try:
         done = subprocess.run(
             ["git", "-C", str(cwd), "remote", "get-url", "origin"],
@@ -329,6 +371,7 @@ def origin_url(cwd: Path) -> str:
             text=True,
             check=False,
             timeout=30,
+            env=git_env(),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         _log.info("recorder.no_origin", error=type(exc).__name__)

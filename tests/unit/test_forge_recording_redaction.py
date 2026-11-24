@@ -19,6 +19,7 @@ import inspect
 import json
 import os
 import re
+import shutil
 import string
 import subprocess
 import sys
@@ -6908,3 +6909,64 @@ def test_the_recorder_never_raises_on_a_recording_nested_past_the_readers(
             trim=None,
             out_root=Path("."),
         )
+
+
+def test_the_recorder_runs_its_own_git_with_a_minimal_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """PR #319 round 4: ``origin_url`` hands ``git`` the path and config variables only, no token or deny-list."""
+    for key, value in {
+        "GH_TOKEN": "ghp_zqfaketoken",
+        "GITLAB_TOKEN": "glpat-zqfake",
+        "ANTHROPIC_API_KEY": "sk-zqfake",
+        deny_list.DENYLIST_ENV: "zqentry",
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "http.extraHeader",
+        "GIT_CONFIG_VALUE_0": "Authorization: bearer zqfake",
+        "GIT_CONFIG_GLOBAL": str(tmp_path / "gitconfig"),
+        "GIT_CONFIG_NOSYSTEM": "1",
+    }.items():
+        monkeypatch.setenv(key, value)
+    seen: list[dict[str, str]] = []
+
+    def _run(argv: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
+        seen.append(dict(kw["env"]))
+        return subprocess.CompletedProcess(argv, 0, "git@h.io:zqgroup/zqrepo.git\n", "")
+
+    monkeypatch.setattr(rec.subprocess, "run", _run)
+    assert rec.origin_url(tmp_path) == "git@h.io:zqgroup/zqrepo.git"
+    (env,) = seen
+    assert set(env) <= {*rec.GIT_ENV_KEYS, "GIT_TERMINAL_PROMPT"}
+    assert env["GIT_CONFIG_GLOBAL"] == str(tmp_path / "gitconfig")
+    assert env["GIT_CONFIG_NOSYSTEM"] == "1" and env["GIT_TERMINAL_PROMPT"] == "0"
+    assert env["PATH"] == os.environ["PATH"]
+    assert not any("zqfake" in v or "zqentry" in v for v in env.values())
+    assert rec.GIT_ENV_KEYS == (
+        "PATH",
+        "HOME",
+        "XDG_CONFIG_HOME",
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_SYSTEM",
+        "GIT_CONFIG_NOSYSTEM",
+        "SYSTEMROOT",
+    )
+
+
+def test_origin_url_reads_a_real_checkout_under_the_minimal_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """PR #319 round 4: the minimal environment is enough for ``git remote get-url``; no remote reads ``""``."""
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    repo = tmp_path / "checkout"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, env=rec.git_env())
+    assert rec.origin_url(repo) == ""
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin", "git@h.io:zqgroup/zqrepo.git"],
+        check=True,
+        env=rec.git_env(),
+    )
+    assert rec.origin_url(repo) == "git@h.io:zqgroup/zqrepo.git"
