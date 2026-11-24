@@ -8,10 +8,10 @@ created: 2026-11-18
 updated: 2026-11-24
 
 owns:
-  code: [scripts/record_forge_fixture.py, scripts/redact_forge_fixtures.py, src/repoach/forge/denylist.py, src/repoach/forge/fixture_judge.py, tests/unit/test_forge_recording_redaction.py, tests/unit/test_forge_recording_acceptance_corpus.py, tests/unit/test_forge_closure.py, tests/unit/test_forge_recorder_sweep.py]
+  code: [scripts/record_forge_fixture.py, scripts/redact_forge_fixtures.py, tests/unit/test_forge_recording_redaction.py, tests/unit/test_forge_recording_acceptance_corpus.py, tests/unit/test_forge_closure.py, tests/unit/test_forge_recorder_sweep.py]
   resources: []
 
-depends_on: [SP-UNIVERSAL-FORGE, SP-SCRUB-PERSONAL-DATA-AT-HEAD, SP-UNIVERSAL-INSTALL]
+depends_on: [SP-UNIVERSAL-FORGE, SP-SCRUB-PERSONAL-DATA-AT-HEAD]
 provides_to: []
 
 constraints:
