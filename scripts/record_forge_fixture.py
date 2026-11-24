@@ -184,6 +184,16 @@ def build_roles(
     ``@<login>`` (:data:`repoach.forge.recording.MENTION_ONLY_PREFIX`), so
     only its ``@<handle>`` form is replaced; seen later as a login, it is
     re-keyed with the same word.
+
+    Args:
+        calls: The recorded exchanges, as the forge printed them.
+        bot: The configured bot login.
+        maintainer: The login an ``is_maintainer`` call asks about, if any.
+        author: The change request's author, if known.
+        also: Further logins read outside the answers (the method's arguments).
+
+    Returns:
+        Each login (a mention-only one keyed ``@<login>``) mapped to its class word.
     """
     roles: dict[str, str] = {}
     following = {"bot": 1, "author": 1, "service": 1}
@@ -369,18 +379,29 @@ def record(
     trim: int | None,
     out_root: Path,
 ) -> Path:
-    """Run one protocol method for real and write its fixture; raises on no input (0.21, B3).
+    """Run one read-only protocol method against the forge, redact its exchanges and write the fixture.
 
-    A recording whose JSON nests deeper than the readers can walk (a
+    Every refusal names a reason and a path, never a value, and writes
+    nothing; none is ever an uncaught crash (0.21, B3). A recording whose JSON nests deeper than the readers can walk (a
     value nested hundreds of levels, which no forge answers) is refused
     like any other value the recorder cannot classify: the readers'
     ``RecursionError`` becomes a named refusal, nothing is written.
+
+    Args:
+        forge_name: ``github`` or ``gitlab``.
+        cwd: The checkout whose forge is recorded.
+        case: The fixture's file name, without ``.json``.
+        method: The protocol method; a write method is refused.
+        args: Its positional arguments.
+        kwargs: Its keyword arguments.
+        trim: Keep only the first ``trim`` items of every recorded JSON array.
+        out_root: The fixture root; the file is ``<out_root>/<forge>/<case>.json``.
 
     Returns:
         The fixture path written.
 
     Raises:
-        UnclassifiedValueError: ``nesting too deep`` for such a recording.
+        UnclassifiedValueError: Anything the judge refuses, ``nesting too deep`` included.
     """
     try:
         return _record(
