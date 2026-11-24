@@ -18,7 +18,9 @@ from repoach.forge.denylist import Denylist, read_denylist
 from repoach.forge.recording import (
     CONSTANT_FIELDS,
     RECORDED_SOURCE_HEAD_RE,
+    SECRET_TOKEN_PATTERNS,
     decode_json_values,
+    find_secret_tokens,
     is_classified_login,
     login_values,
     scanned_strings,
@@ -86,7 +88,10 @@ def refuse_unclassified(
     Every login under a login key must be a class word or a
     :data:`repoach.forge.recording.NON_PERSON_LOGINS` entry. Then each
     string of the fixture, in this order, may hold no home path, no
-    deny-list entry and nothing the closure oracle
+    deny-list entry, no token-shaped value
+    (:data:`repoach.forge.recording.SECRET_TOKEN_PATTERNS`; a JSON stdout
+    holds no secret-shaped key either, :func:`repoach.forge.recording.find_secret_tokens`)
+    and nothing the closure oracle
     (:func:`repoach.forge.closure.judge`) refuses: a known value, a host
     that is neither a placeholder nor public, a public address or a mailbox
     that is neither a placeholder nor a documentation literal.
@@ -105,6 +110,9 @@ def refuse_unclassified(
         for key_path, login in login_values(value):
             if login and not is_classified_login(login):
                 raise UnclassifiedValueError(f"unclassified: {path}.{key_path}")
+    for i, call in enumerate(calls):
+        if find_secret_tokens(str(call.get("stdout") or "")):
+            raise UnclassifiedValueError(f"secret-shaped value at exchanges[{i}].stdout")
     deny = read_denylist() if denylist is None else denylist
     judged = known if known is not None else closure.Known(())
     for path, text in scanned_strings(fixture):
@@ -114,6 +122,8 @@ def refuse_unclassified(
         entry = deny.hit(text)
         if entry is not None:
             raise UnclassifiedValueError(f"deny-list entry {entry} at {path}")
+        if any(pattern.search(text) for pattern in SECRET_TOKEN_PATTERNS):
+            raise UnclassifiedValueError(f"secret-shaped value at {path}")
         if path in CONSTANT_FIELDS:
             continue
         if path == "source":

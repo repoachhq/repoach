@@ -3110,7 +3110,7 @@ ROWS: tuple[Row, ...] = (
             remote="git@github.com:kvnteam/kvnportal.git",
             deny=("kvnsecret42", "84729163"),
         ),
-        outcome=Refused("refusing to write a fixture carrying"),
+        outcome=Refused("secret-shaped value at exchanges[0].stdout"),
         markers=("ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8",),
     ),
     Row(

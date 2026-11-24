@@ -96,7 +96,6 @@ from repoach.forge.recording import (
     declared_user_ids,
     decode_json_values,
     dump_fixture,
-    find_secret_tokens,
     is_classified_login,
     known_values,
     login_values,
@@ -109,7 +108,6 @@ from repoach.forge.recording import (
     replace_known,
     replace_known_in_stdout,
     replace_known_in_value,
-    scanned_strings,
     serialize_result,
 )
 from repoach.forge.select import select_forge
@@ -501,11 +499,6 @@ def _record(
     declared_projects = declared_project_ids(fixture)
     if declared_projects:
         fixture[SYNTHETIC_PROJECT_IDS_KEY] = declared_projects
-    leaked = {hit for _path, text in scanned_strings(fixture) for hit in find_secret_tokens(text)}
-    if leaked:
-        raise SystemExit(
-            f"refusing to write a fixture carrying {len(leaked)} secret-shaped value(s)"
-        )
     refuse_unclassified(fixture, denylist, known)
     path = out_root / forge_name / f"{case}.json"
     dump_fixture(path, fixture)
