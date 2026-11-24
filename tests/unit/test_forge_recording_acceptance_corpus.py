@@ -39,7 +39,7 @@ from typing import Any
 import pytest
 
 from repoach.forge import denylist as deny_list
-from repoach.forge import fixture_pipeline
+from repoach.forge import fixture_judge, fixture_pipeline
 from repoach.forge import recording as rec_mod
 from repoach.forge.github import GitHubForge, comment_from_github
 from repoach.forge.gitlab import GitLabForge, note_to_comment
@@ -10989,8 +10989,8 @@ def _record_live(
             out_root=out_root,
         )
     except (
-        REC.UnclassifiedValueError,
-        REC.DenylistError,
+        fixture_judge.UnclassifiedValueError,
+        deny_list.DenylistError,
         rec_mod.SyntheticIdsExhaustedError,
         rec_mod.NeedleError,
         SystemExit,
@@ -11229,8 +11229,8 @@ def _judge_offline_refusal(row: Row, live_msg: str) -> list[str]:
         )
     except (
         OFF.ResidualValueError,
-        REC.UnclassifiedValueError,
-        REC.DenylistError,
+        fixture_judge.UnclassifiedValueError,
+        deny_list.DenylistError,
         rec_mod.NeedleError,
     ) as exc:
         return _offline_prefix_problems(row.outcome.prefix, str(exc))

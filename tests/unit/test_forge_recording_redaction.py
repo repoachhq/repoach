@@ -137,8 +137,10 @@ _REFUSAL_RE = re.compile(
 def residual(fixture: dict[str, Any], known: closure.Known) -> tuple[str, int, str] | None:
     """The first refusal the recorder's judge makes of ``fixture``, as ``(kind, ordinal, path)``, or ``None``."""
     try:
-        rec.refuse_unclassified(fixture, deny_list.Denylist(known.values("deny-list")), known)
-    except rec.UnclassifiedValueError as exc:
+        fixture_judge.refuse_unclassified(
+            fixture, deny_list.Denylist(known.values("deny-list")), known
+        )
+    except fixture_judge.UnclassifiedValueError as exc:
         found = _REFUSAL_RE.match(str(exc))
         assert found is not None, str(exc)
         if found.group("deny"):
@@ -261,8 +263,8 @@ def _raw_calls(
         if i in edits:
             new["stdout"] = redact_stdout(json.dumps(edits[i]))
         calls.append(new)
-    classified = rec.classify_calls(calls, roles)
-    return fixture, rec.synthesize_user_ids(classified, UserIdMap(), forge=forge_name)
+    classified = fixture_pipeline.classify_calls(calls, roles)
+    return fixture, fixture_pipeline.synthesize_user_ids(classified, UserIdMap(), forge=forge_name)
 
 
 def _person(login_key: str, login: str, ident: object) -> dict[str, Any]:
@@ -657,7 +659,7 @@ def test_fixtures_hold_no_denylisted_value(real_user_config_dir: Path) -> None:
     A user id in node-id form is judged by the number it encodes. A
     failure names the file and the entry's ordinal only.
     """
-    entries = rec.read_denylist(real_user_config_dir)
+    entries = deny_list.read_denylist(real_user_config_dir)
     if not entries:
         pytest.skip(
             f"deny-list absent: {_shown(deny_list.denylist_file(real_user_config_dir))} holds no entry "
@@ -693,7 +695,7 @@ def test_the_denylist_file_route_is_read_under_pytest(
     deny_list.denylist_file(config).write_text(
         "# a string every redacted fixture holds\nforge.example.com\n"
     )
-    entries = rec.read_denylist(config)
+    entries = deny_list.read_denylist(config)
     assert len(entries) == 1 and entries.hit("forge.example.com") == 1
     hits = _denylisted(entries)
     assert len(hits) >= 30 and {n for _file, n in hits} == {1}
@@ -710,13 +712,13 @@ def test_denylist_is_read_from_the_file_and_the_variable_and_never_printed(
 ) -> None:
     """D3 (0.8): SP-NO-PERSONAL-DATA-GATE D3's two sources merged; the recorder refuses a hit by ordinal."""
     config = _no_denylist(monkeypatch, tmp_path)
-    assert len(rec.read_denylist()) == 0
+    assert len(deny_list.read_denylist()) == 0
     config.mkdir(parents=True)
     (config / deny_list.DENYLIST_FILE_NAME).write_text(
         "# the owner's strings\nsomeone-handle\n\n4242424242  # an id\n"
     )
     monkeypatch.setenv(deny_list.DENYLIST_ENV, "someone-host\nsomeone-handle\n")
-    denylist = rec.read_denylist()
+    denylist = deny_list.read_denylist()
     assert len(denylist) == 3 and repr(denylist) == "<denylist: 3 entries>"
     assert [denylist.hit(t) for t in ("someone-handle", "4242424242", "someone-host")] == [1, 2, 3]
     assert denylist.hit("ssh someone-host") == 3
@@ -730,14 +732,14 @@ def test_denylist_is_read_from_the_file_and_the_variable_and_never_printed(
     assert denylist.hit(f"?node={_new_node(4242424242)}-patch") == 2
     assert denylist.hit(_new_node(4242424243)) is None
     monkeypatch.setenv(deny_list.DENYLIST_ENV, "abc")
-    with pytest.raises(rec.DenylistError, match=r"^deny-list entry 3: too short$") as short:
-        rec.read_denylist()
+    with pytest.raises(deny_list.DenylistError, match=r"^deny-list entry 3: too short$") as short:
+        deny_list.read_denylist()
     monkeypatch.setenv(deny_list.DENYLIST_ENV, "someone-host,someone-handle")
     with pytest.raises(
-        rec.DenylistError,
+        deny_list.DenylistError,
         match=r"^deny-list variable REPOACH_PERSONAL_DENYLIST: a comma; one entry per line$",
     ) as comma:
-        rec.read_denylist()
+        deny_list.read_denylist()
     for info, entry in ((short, "abc"), (comma, "someone-host")):
         bound = [
             name
@@ -1097,7 +1099,7 @@ def test_a_mention_is_a_handle_not_a_decorator_nor_a_dotted_name_and_replaces_on
     calls = [{"args": ["api", "x"], "stdout": json.dumps(payload), "stderr": "", "returncode": 0}]
     roles = rec.build_roles(calls, bot="", maintainer=None, author="q-handle")
     assert roles == {"q-handle": "author", "@someone-x": "author-2"}
-    out = json.loads(rec.classify_calls(calls, roles)[0]["stdout"])
+    out = json.loads(fixture_pipeline.classify_calls(calls, roles)[0]["stdout"])
     assert (
         out["body"]
         == "use @pytest.fixture here, and see @dataclass; cc @author-2. mail a@b.example"
@@ -1172,16 +1174,20 @@ def test_an_scp_or_ssh_remote_gets_the_placeholder_host_namespace_and_project() 
         answer = {"author": {"login": "x-handle"}, "body": text}
         recorded = [{"args": [], "stdout": redact_stdout(json.dumps(answer)), "stderr": text}]
         built = rec.build_roles(recorded, bot="", maintainer=None, author="x-handle")
-        calls = rec.classify_calls(recorded, built)
+        calls = fixture_pipeline.classify_calls(recorded, built)
         assert "x-handle" not in json.dumps(calls) and "github.com" not in json.dumps(calls)
-        rec.refuse_unclassified({"source": "s", "calls": calls}, denylist=deny_list.Denylist())
+        fixture_judge.refuse_unclassified(
+            {"source": "s", "calls": calls}, denylist=deny_list.Denylist()
+        )
 
         raw = [{"args": [], "stdout": json.dumps(answer), "stderr": ""}]
-        unredacted = rec.classify_calls(
+        unredacted = fixture_pipeline.classify_calls(
             raw, rec.build_roles(raw, bot="", maintainer=None, author=None)
         )
-        with pytest.raises(rec.UnclassifiedValueError, match=r"^unknown host at exchanges\[0\]"):
-            rec.refuse_unclassified(
+        with pytest.raises(
+            fixture_judge.UnclassifiedValueError, match=r"^unknown host at exchanges\[0\]"
+        ):
+            fixture_judge.refuse_unclassified(
                 {"source": "s", "calls": unredacted}, denylist=deny_list.Denylist()
             )
 
@@ -1209,7 +1215,7 @@ def test_a_login_equal_to_a_git_word_is_replaced_everywhere(
     }
     calls = [{"args": ["pr", "view", "1"], "stdout": json.dumps(answer), "stderr": ""}]
     roles = rec.build_roles(calls, bot="", maintainer=None, author="main")
-    out = json.loads(rec.classify_calls(calls, roles)[0]["stdout"])
+    out = json.loads(fixture_pipeline.classify_calls(calls, roles)[0]["stdout"])
     assert out == {
         "author": {"login": "author"},
         "baseRefName": "author",
@@ -1403,7 +1409,9 @@ def _through_the_pipeline(fixture: dict[str, Any], found: closure.Known) -> dict
     for call in calls:
         call["stdout"] = redact_stdout(call["stdout"])
     known = {**found.mapping(), **_ROLES}
-    calls = rec.synthesize_user_ids(rec.classify_calls(calls, known), UserIdMap(), forge="github")
+    calls = fixture_pipeline.synthesize_user_ids(
+        fixture_pipeline.classify_calls(calls, known), UserIdMap(), forge="github"
+    )
     kwargs = recording.redact_urls_in_value(classify_logins(fixture["kwargs"], known))
     return {**fixture, "calls": calls, "kwargs": kwargs}
 
@@ -1433,8 +1441,8 @@ def test_residual_needles_are_seen_in_every_generated_form() -> None:
             if residual(fixture, found) is None:
                 missed.append((position, text))
                 continue
-            with pytest.raises(rec.UnclassifiedValueError):
-                rec.refuse_unclassified(fixture, deny_list.Denylist(), found)
+            with pytest.raises(fixture_judge.UnclassifiedValueError):
+                fixture_judge.refuse_unclassified(fixture, deny_list.Denylist(), found)
     assert missed == []
     for needle, _kind in _TEXT_NEEDLES:
         for neighbour in _INSIDE_A_TOKEN:
@@ -1449,8 +1457,10 @@ def test_residual_needles_are_seen_in_every_generated_form() -> None:
     )
     left = residual(_placed(f"merge into {_HANDLE}", "prose"), found)
     assert left == ("login", 1, "exchanges[0].stdout.body")
-    with pytest.raises(rec.UnclassifiedValueError, match=r"^residual login 1 at exchanges\[0\]"):
-        rec.refuse_unclassified(
+    with pytest.raises(
+        fixture_judge.UnclassifiedValueError, match=r"^residual login 1 at exchanges\[0\]"
+    ):
+        fixture_judge.refuse_unclassified(
             _placed(f"merge into {_HANDLE}", "prose"), deny_list.Denylist(), found
         )
 
@@ -1541,7 +1551,7 @@ def test_a_repository_id_is_synthetic_in_both_tools(tmp_path: Path) -> None:
     """Q2 (0.10): the recorder and the offline transform both remap a repository id into ``2001..2999`` and declare it."""
     project = {"id": 67000001, "name": "p", "web_url": "https://gitlab.com/grp/repo-x"}
     calls = [{"args": [], "stdout": json.dumps(project), "stderr": ""}]
-    (recorded,) = rec.synthesize_user_ids(calls, UserIdMap(), forge="gitlab")
+    (recorded,) = fixture_pipeline.synthesize_user_ids(calls, UserIdMap(), forge="gitlab")
     assert json.loads(recorded["stdout"])["id"] == 2001
     assert declared_project_ids([recorded]) == [2001]
     out = _corpus(
@@ -1590,8 +1600,8 @@ def test_a_remote_userinfo_is_never_kept() -> None:
 @pytest.mark.parametrize(
     "error",
     [
-        rec.UnclassifiedValueError,
-        rec.DenylistError,
+        fixture_judge.UnclassifiedValueError,
+        deny_list.DenylistError,
         SyntheticIdsExhaustedError,
         NeedleError,
     ],
@@ -1623,7 +1633,7 @@ def test_every_refusal_class_of_the_recorder_exits_2_and_writes_nothing(
         SyntheticIdsExhaustedError,
         NeedleError,
         fixture_pipeline.ResidualValueError,
-        rec.DenylistError,
+        deny_list.DenylistError,
     ],
 )
 def test_every_refusal_class_of_the_offline_transform_exits_2_and_writes_nothing(
@@ -1840,7 +1850,7 @@ def _hits(denylist, corpus):
 
 
 def test_leak():
-    denylist = rec.read_denylist(Path({config!r}))
+    denylist = deny_list.read_denylist(Path({config!r}))
     found = recording.known_values([], roles={{}}, denylist=denylist)
     assert len(found) and _hits(denylist, Path({corpus!r})) == []
 """
@@ -1854,7 +1864,7 @@ def test_denylist_entries_never_reach_a_local_or_a_repr(tmp_path: Path) -> None:
     deny_list.denylist_file(config).write_text(f"{marker}\n")
     corpus = tmp_path / "corpus.txt"
     corpus.write_text(f"held {marker} here\n")
-    assert repr(rec.read_denylist(config)) == "<denylist: 1 entries>"
+    assert repr(deny_list.read_denylist(config)) == "<denylist: 1 entries>"
     module = tmp_path / "test_leak.py"
     script = str(ROOT / "scripts" / "record_forge_fixture.py")
     module.write_text(_LEAK_TEST.format(script=script, config=str(config), corpus=str(corpus)))
@@ -1911,7 +1921,7 @@ def test_branch_names_holding_a_login_are_replaced_and_the_rest_refused() -> Non
     }
     calls = _one_call(answer)
     roles = rec.build_roles(calls, bot="", maintainer=None, author=None)
-    out = json.loads(rec.classify_calls(calls, roles)[0]["stdout"])
+    out = json.loads(fixture_pipeline.classify_calls(calls, roles)[0]["stdout"])
     assert out == {
         "author": {"login": "author"},
         "headRefName": "author-patch-1",
@@ -2294,7 +2304,7 @@ def test_call_args_urls_are_redacted_in_both_tools() -> None:
         "https://github.com/thirdns/thirdrepo/pull/1",
     ]
     calls = [{"args": args, "returncode": 0, "stdin": None, "stderr": "", "stdout": "[]"}]
-    out = rec.classify_calls(calls, {})
+    out = fixture_pipeline.classify_calls(calls, {})
     assert out[0]["args"] == [
         "api",
         "-f",
@@ -2352,13 +2362,13 @@ def test_noreply_mailboxes_are_redacted_by_class_and_not_refused() -> None:
     raw_call[0]["stdout"] = redact_stdout(raw_call[0]["stdout"])
     roles = rec.build_roles(raw_call, bot="", maintainer=None, author="zqxjdoe7")
     found = needles(raw_copy, roles=roles, remote="git@github.com:own-x/repo-y.git")
-    calls = rec.synthesize_user_ids(
-        rec.classify_calls(raw_call, {**found.mapping(), **roles}),
+    calls = fixture_pipeline.synthesize_user_ids(
+        fixture_pipeline.classify_calls(raw_call, {**found.mapping(), **roles}),
         UserIdMap(),
         forge="github",
     )
     fixture = {"forge": "github", "method": "reviews", "case": "c", "source": "s", "calls": calls}
-    rec.refuse_unclassified(fixture, deny_list.Denylist(), found)
+    fixture_judge.refuse_unclassified(fixture, deny_list.Denylist(), found)
     assert (
         json.loads(calls[0]["stdout"])[0]["body"]
         == "Co-authored-by: X <author@users.noreply.forge.example.com>"
@@ -2523,8 +2533,8 @@ def test_bots_scoped_packages_and_case_insensitive_decorators() -> None:
     )
     assert roles == {"dependabot[bot]": "bot", "dependabot": "bot", "@zqcolleague": "author"}
     found = needles(raw, roles=roles, remote="git@github.com:own-x/repo-y.git")
-    calls = rec.synthesize_user_ids(
-        rec.classify_calls(redacted_calls, {**found.mapping(), **roles}),
+    calls = fixture_pipeline.synthesize_user_ids(
+        fixture_pipeline.classify_calls(redacted_calls, {**found.mapping(), **roles}),
         UserIdMap(),
         forge="github",
     )
@@ -2535,7 +2545,7 @@ def test_bots_scoped_packages_and_case_insensitive_decorators() -> None:
         "source": recording.recorded_source("2026-11-19", "github"),
         "calls": calls,
     }
-    rec.refuse_unclassified(fixture, deny_list.Denylist(), found)
+    fixture_judge.refuse_unclassified(fixture, deny_list.Denylist(), found)
     out_item = json.loads(calls[0]["stdout"])[0]
     assert out_item["user"]["login"] == "bot"
     assert "dependabot" not in out_item["body"].casefold()
@@ -2599,7 +2609,7 @@ def test_gitlab_api_numeric_project_ids_and_offline_kwargs_and_system_noreply() 
     found_only_url = needles(_one_call({"description": f"API call: {api_url}"}), roles={})
     assert "77665544" in _kinds(found_only_url, "id")
     redacted_calls = [{**c, "stdout": redact_stdout(c["stdout"])} for c in raw_with_repo]
-    calls = rec.synthesize_user_ids(redacted_calls, UserIdMap(), forge="gitlab")
+    calls = fixture_pipeline.synthesize_user_ids(redacted_calls, UserIdMap(), forge="gitlab")
     parsed = json.loads(calls[0]["stdout"])
     assert parsed["repository"]["id"] == 2001
     assert (
@@ -2858,8 +2868,8 @@ def test_short_bot_stems_placeholder_bots_and_offline_bot_parity() -> None:
         if len(f"@{stem}") >= recording.NEEDLE_MIN_LENGTH:
             assert f"@{stem}" in _kinds(found, "login")
             assert residual(_placed(f"Run @{stem} check", "prose"), found) is not None
-        calls = rec.synthesize_user_ids(
-            rec.classify_calls(red_calls, {**found.mapping(), **roles}),
+        calls = fixture_pipeline.synthesize_user_ids(
+            fixture_pipeline.classify_calls(red_calls, {**found.mapping(), **roles}),
             UserIdMap(),
             forge="github",
         )
@@ -2873,7 +2883,7 @@ def test_short_bot_stems_placeholder_bots_and_offline_bot_parity() -> None:
             "source": recording.recorded_source("2026-11-19", "github"),
             "calls": calls,
         }
-        rec.refuse_unclassified(fixture, deny_list.Denylist(), found)
+        fixture_judge.refuse_unclassified(fixture, deny_list.Denylist(), found)
 
         fx_off = {
             "forge": "github",
@@ -3455,7 +3465,7 @@ def test_scp_remotes_in_unified_diffs_and_plus_usernames_are_redacted() -> None:
             "stderr": "",
         }
         found = needles([[raw_call], [1], {}, ""], roles={}, remote="")
-        red_calls = rec.classify_calls([raw_call], found.mapping())
+        red_calls = fixture_pipeline.classify_calls([raw_call], found.mapping())
         assert red_calls[0]["stdout"] == expected_diff, line
         fixture = {
             "forge": "gitlab",
@@ -3470,7 +3480,7 @@ def test_scp_remotes_in_unified_diffs_and_plus_usernames_are_redacted() -> None:
             "result": None,
             "raises": None,
         }
-        rec.refuse_unclassified(fixture, deny_list.Denylist(()), found)
+        fixture_judge.refuse_unclassified(fixture, deny_list.Denylist(()), found)
         for token in forbidden:
             assert token not in red_calls[0]["stdout"], (line, token)
 
@@ -3999,12 +4009,14 @@ def test_record_refuses_in_the_fixed_order_and_keeps_only_the_token_secret_gate(
         ("a@b.example.com", r"^unknown mailbox at "),
     )
     for body, pattern in steps:
-        with pytest.raises(rec.UnclassifiedValueError, match=pattern):
-            rec.refuse_unclassified(fixture(body), deny, known)
-    with pytest.raises(rec.UnclassifiedValueError, match=r"^unclassified: exchanges\[0\]"):
-        rec.refuse_unclassified(fixture("zqdeny /home/zq", login="zqother"), deny, known)
-    rec.refuse_unclassified(fixture("docs.github.com is fine"), deny, known)
-    rec.refuse_unclassified(
+        with pytest.raises(fixture_judge.UnclassifiedValueError, match=pattern):
+            fixture_judge.refuse_unclassified(fixture(body), deny, known)
+    with pytest.raises(
+        fixture_judge.UnclassifiedValueError, match=r"^unclassified: exchanges\[0\]"
+    ):
+        fixture_judge.refuse_unclassified(fixture("zqdeny /home/zq", login="zqother"), deny, known)
+    fixture_judge.refuse_unclassified(fixture("docs.github.com is fine"), deny, known)
+    fixture_judge.refuse_unclassified(
         {
             "source": "recorded 2026-11-22 from a live github change request",
             "forge": "zqlogin",
@@ -4014,12 +4026,16 @@ def test_record_refuses_in_the_fixed_order_and_keeps_only_the_token_secret_gate(
         deny_list.Denylist(()),
         known,
     )
-    with pytest.raises(rec.UnclassifiedValueError, match=r"^residual login 1 at case$"):
-        rec.refuse_unclassified({"case": "zqlogin", "calls": []}, deny_list.Denylist(()), known)
-    with pytest.raises(rec.UnclassifiedValueError, match=r"^deny-list entry 1 at method$"):
-        rec.refuse_unclassified({"method": "zqdeny", "calls": []}, deny, known)
-    with pytest.raises(rec.UnclassifiedValueError, match=r"^unknown host at source$"):
-        rec.refuse_unclassified(
+    with pytest.raises(fixture_judge.UnclassifiedValueError, match=r"^residual login 1 at case$"):
+        fixture_judge.refuse_unclassified(
+            {"case": "zqlogin", "calls": []}, deny_list.Denylist(()), known
+        )
+    with pytest.raises(
+        fixture_judge.UnclassifiedValueError, match=r"^deny-list entry 1 at method$"
+    ):
+        fixture_judge.refuse_unclassified({"method": "zqdeny", "calls": []}, deny, known)
+    with pytest.raises(fixture_judge.UnclassifiedValueError, match=r"^unknown host at source$"):
+        fixture_judge.refuse_unclassified(
             {"source": "recorded 2026-11-22 from a live github change request on git.acme.io/x"},
             deny_list.Denylist(()),
             known,
@@ -4750,7 +4766,7 @@ def test_the_offline_transform_replaces_known_values_everywhere_but_the_closed_f
     headless = fixture_pipeline._replace_known({"source": "zqgroup elsewhere"}, known)
     assert headless["source"] == "org elsewhere"
     assert fixture_pipeline._replace_known(7, known) == 7
-    calls = rec.replace_known_in_calls(
+    calls = fixture_pipeline.replace_known_in_calls(
         [
             {
                 "args": ["zqgroup"],
@@ -4764,7 +4780,7 @@ def test_the_offline_transform_replaces_known_values_everywhere_but_the_closed_f
     assert calls == [
         {"args": ["org"], "stdout": json.dumps({"b": "org"}), "stderr": "org", "stdin": None}
     ]
-    bare = rec.replace_known_in_calls([{"stdout": "zqgroup"}], known)
+    bare = fixture_pipeline.replace_known_in_calls([{"stdout": "zqgroup"}], known)
     assert bare == [{"stdout": "org"}]
     known_offline = fixture_pipeline.fixture_known(
         {
@@ -4994,7 +5010,8 @@ def test_record_trims_classifies_the_maintainer_and_names_its_refusals(
     token = "ghp_" + "A1" * 12
     leaky = _github_answering(tmp_path, [CommandResult(0, json.dumps([{"body": token}]), "", [])])
     with pytest.raises(
-        rec.UnclassifiedValueError, match=r"^secret-shaped value at exchanges\[0\]\.stdout"
+        fixture_judge.UnclassifiedValueError,
+        match=r"^secret-shaped value at exchanges\[0\]\.stdout",
     ):
         _record_through(monkeypatch, tmp_path, leaky, method="conversation_comments", args=[7])
     assert not (tmp_path / "w").exists()
@@ -5007,7 +5024,7 @@ def test_a_secret_in_any_string_of_the_fixture_is_refused(
     token = "ghp_" + "B2" * 12
     quiet = _github_answering(tmp_path, [CommandResult(0, "{}", "", [])])
     with pytest.raises(
-        rec.UnclassifiedValueError, match=r"^secret-shaped value at exchanges\[0\]\.args"
+        fixture_judge.UnclassifiedValueError, match=r"^secret-shaped value at exchanges\[0\]\.args"
     ):
         _record_through(monkeypatch, tmp_path, quiet, method="branch_protection", args=[token])
     assert not (tmp_path / "w").exists()
@@ -5041,14 +5058,15 @@ def test_replay_names_the_bot_and_the_error_the_redacted_fixture_raises(
     assert asked == ["zqbotword", None]
     assert fixture_judge.generic_class("a /home/zqperson/x") == "home_path"
     with pytest.raises(
-        rec.UnclassifiedValueError, match=r"^unclassified: exchanges\[0\]\.stdout\.user\.login$"
+        fixture_judge.UnclassifiedValueError,
+        match=r"^unclassified: exchanges\[0\]\.stdout\.user\.login$",
     ):
-        rec.refuse_unclassified(
+        fixture_judge.refuse_unclassified(
             {"source": "s", "calls": [_exchange({"user": {"login": "zqunknown"}})]},
             deny_list.Denylist(),
             None,
         )
-    stdin = rec.replace_known_in_calls(
+    stdin = fixture_pipeline.replace_known_in_calls(
         [{"args": ["a"], "stdout": "x", "stdin": "zqgroup", "stderr": "zqgroup"}],
         recording.known_values(
             [[], [], {}, "git@h.io:zqgroup/zqrepo.git"],
@@ -7061,7 +7079,7 @@ def test_the_recorder_never_raises_on_a_recording_nested_past_the_readers(
         with pytest.raises(fixture_pipeline.ResidualValueError, match=r"^nesting too deep"):
             fixture_pipeline.redact_fixture(fixture, forge="github", denylist=NO_DENYLIST)
     monkeypatch.setattr(rec, "_record", _overflow)
-    with pytest.raises(rec.UnclassifiedValueError, match=r"^nesting too deep"):
+    with pytest.raises(fixture_judge.UnclassifiedValueError, match=r"^nesting too deep"):
         rec.record(
             forge_name="github",
             cwd=Path("."),
@@ -7308,7 +7326,7 @@ def test_record_refuses_an_unknown_method_and_a_replay_that_issues_another_call(
     assert not (tmp_path / "out").exists()
 
     def _unavailable(**_kw: Any) -> Forge:
-        raise rec.ForgeError("forge 'github' (from flag) needs the 'gh' CLI on PATH")
+        raise ForgeError("forge 'github' (from flag) needs the 'gh' CLI on PATH")
 
     monkeypatch.setattr(rec, "select_forge", _unavailable)
     assert (
@@ -7537,9 +7555,6 @@ def test_live_and_offline_finish_through_the_one_shared_pipeline() -> None:
     assert "redact_recording(" in live and "seal_fixture(" in live and "seal_fixture(" in offline
     for source in (live, offline):
         assert "refuse_unclassified(" not in source and "declared_user_ids(" not in source
-    assert rec.classify_calls is fixture_pipeline.classify_calls
-    assert rec.synthesize_user_ids is fixture_pipeline.synthesize_user_ids
-    assert rec.replace_known_in_calls is fixture_pipeline.replace_known_in_calls
     tree = ast.parse(
         (ROOT / "src" / "repoach" / "forge" / "fixture_pipeline.py").read_text(encoding="utf-8")
     )
@@ -7573,6 +7588,44 @@ def test_live_and_offline_finish_through_the_one_shared_pipeline() -> None:
     assert recording.rewrite_recorded_source("recorded 2026-11-24 from zqfolder x", "github") == (
         "recorded 2026-11-24 from a live github change request, x"
     )
+
+
+def test_a_script_exports_its_own_names_only() -> None:
+    """D4 (PR #319 round 6, 4684964640): a script is no second public surface of the library.
+
+    Every script under ``scripts/`` that declares ``__all__`` lists only the names it defines or
+    assigns itself, never one it imports: a caller reaches ``classify_calls`` or
+    ``refuse_unclassified`` from :mod:`repoach.forge.fixture_pipeline` and
+    :mod:`repoach.forge.fixture_judge`, where they live.
+    """
+    declaring = 0
+    for path in sorted((ROOT / "scripts").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        exported: list[str] = []
+        own: set[str] = set()
+        imported: set[str] = set()
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                own.add(node.name)
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                names = {t.id for t in targets if isinstance(t, ast.Name)}
+                own |= names
+                if "__all__" in names and isinstance(node.value, (ast.List, ast.Tuple)):
+                    exported = [e.value for e in node.value.elts if isinstance(e, ast.Constant)]
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                imported |= {(a.asname or a.name).split(".")[0] for a in node.names}
+        if not exported:
+            continue
+        declaring += 1
+        rel = path.relative_to(ROOT).as_posix()
+        assert set(exported) <= own, (rel, sorted(set(exported) - own))
+        assert not set(exported) & imported, rel
+    assert declaring == 2
+    assert not {"classify_calls", "synthesize_user_ids", "replace_known_in_calls"} & set(
+        rec.__all__
+    )
+    assert "refuse_unclassified" not in rec.__all__
 
 
 def test_the_offline_script_is_the_command_line_of_the_pipeline(tmp_path: Path) -> None:

@@ -73,19 +73,8 @@ from typing import Any
 
 from repoach.core.logging import get_logger, route_default_logs_to_stderr
 from repoach.forge.denylist import DenylistError, read_denylist
-from repoach.forge.fixture_judge import (
-    UnclassifiedValueError,
-    decoded_answers,
-    refuse_unclassified,
-)
-from repoach.forge.fixture_pipeline import (
-    RedactedRecording,
-    classify_calls,
-    redact_recording,
-    replace_known_in_calls,
-    seal_fixture,
-    synthesize_user_ids,
-)
+from repoach.forge.fixture_judge import UnclassifiedValueError, decoded_answers
+from repoach.forge.fixture_pipeline import RedactedRecording, redact_recording, seal_fixture
 from repoach.forge.protocol import Forge, ForgeError
 from repoach.forge.recording import (
     Exchange,
@@ -106,17 +95,14 @@ from repoach.forge.recording import (
 from repoach.forge.select import select_forge
 
 __all__ = [
+    "FIXTURE_ROOT",
     "GIT_ENV_KEYS",
     "WRITE_METHODS",
     "build_roles",
-    "classify_calls",
     "git_env",
     "main",
     "origin_url",
     "record",
-    "refuse_unclassified",
-    "replace_known_in_calls",
-    "synthesize_user_ids",
 ]
 
 _log = get_logger(__name__)
