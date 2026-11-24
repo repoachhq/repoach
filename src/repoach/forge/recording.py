@@ -31,6 +31,7 @@ from pydantic import BaseModel
 from ..core.logging import get_logger
 from ..core.redaction import SECRET_VALUE_PATTERNS
 from . import closure, protocol
+from .denylist import Denylist
 from .protocol import InlineCommentDraft, MergeMethod, ReviewDraft
 from .runner import CommandResult
 
@@ -2861,7 +2862,7 @@ def known_values(
     *,
     roles: dict[str, str],
     remote: str = "",
-    denylist: tuple[str, ...] = (),
+    denylist: Denylist | tuple[str, ...] | None = None,
     min_length: int = NEEDLE_MIN_LENGTH,
     ids: UserIdMap | None = None,
     projects: UserIdMap | None = None,
@@ -2901,7 +2902,8 @@ def known_values(
             them and the method's arguments; never a redacted value.
         roles: The recording's login -> class word.
         remote: The checkout's ``origin`` remote, ``""`` when it has none.
-        denylist: The deny-list entries (judged, never replaced).
+        denylist: The deny-list, opaque (:class:`repoach.forge.denylist.Denylist`) or as entries;
+            judged, never replaced, and unwrapped only here.
         min_length: The shortest value a structured source may hold; the
             offline transform passes 1 for logins and segments.
         ids: The user-id map the structured pass filled; a fresh one when ``None``.
@@ -3107,9 +3109,18 @@ def known_values(
             seen.add(folded)
             entries.append((kind, folded))
             tokens.setdefault(folded, token)
-    for value in dict.fromkeys(v.casefold() for v in denylist):
+    for value in dict.fromkeys(v.casefold() for v in _needle_entries(denylist)):
         entries.append(("deny-list", value))
     return closure.Known(tuple(entries), _literals(), tuple(tokens.items()))
+
+
+def _needle_entries(denylist: Denylist | tuple[str, ...] | None) -> tuple[str, ...]:
+    """The deny-list entries for :func:`known_values`, unwrapped from the opaque reader at the last call."""
+    if denylist is None:
+        return ()
+    if isinstance(denylist, Denylist):
+        return denylist.needle_values()
+    return denylist
 
 
 def _unique(pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:

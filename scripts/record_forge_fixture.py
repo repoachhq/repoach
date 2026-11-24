@@ -467,7 +467,7 @@ def _record(
         raw,
         roles=roles,
         remote=remote,
-        denylist=denylist.needle_values(),
+        denylist=denylist,
         ids=ids,
         projects=projects,
         forge=forge_name,

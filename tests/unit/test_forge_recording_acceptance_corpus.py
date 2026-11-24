@@ -10984,7 +10984,7 @@ def _judge_offline(row: Row, live: dict[str, Any]) -> list[str]:
     """The offline transform agrees with the live recorder: parity on the raw text, idempotence on the written text."""
     problems: list[str] = []
     forge = row.inp.forge
-    deny = tuple(row.inp.deny)
+    deny = deny_list.Denylist(tuple(row.inp.deny))
     again = OFF.redact_fixture(
         copy.deepcopy(live), forge=forge, remote=row.inp.remote, denylist=deny
     )
@@ -11029,7 +11029,10 @@ def _judge_offline_refusal(row: Row, live_msg: str) -> list[str]:
         return []
     try:
         OFF.redact_fixture(
-            raw_fixture, forge=inp.forge, remote=inp.remote, denylist=tuple(inp.deny)
+            raw_fixture,
+            forge=inp.forge,
+            remote=inp.remote,
+            denylist=deny_list.Denylist(tuple(inp.deny)),
         )
     except (
         OFF.ResidualValueError,

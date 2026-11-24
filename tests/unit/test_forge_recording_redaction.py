@@ -23,6 +23,7 @@ import string
 import subprocess
 import sys
 import textwrap
+import traceback
 from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
@@ -1791,6 +1792,24 @@ def test_denylist_entries_never_reach_a_local_or_a_repr(tmp_path: Path) -> None:
     assert done.returncode == 1, done.stdout[-500:]
     assert "test_leak" in done.stdout
     assert marker not in done.stdout + done.stderr
+
+
+def test_an_offline_refusal_binds_no_deny_list_entry_in_a_frame(tmp_path: Path) -> None:
+    """K8 (0.28, PR #319): the offline transform carries the opaque reader down to the refusal, never the entries."""
+    marker = "zqoffdeny" + "4712"
+    corpus = tmp_path / "corpus"
+    (corpus / "github").mkdir(parents=True)
+    data = _fixture("github", "reviews", [[{"id": 1, "body": f"held {marker} here"}]])
+    (corpus / "github" / "a.json").write_text(json.dumps(data))
+    with pytest.raises(redact_fixtures.ResidualValueError, match=r"^deny-list entry 1 at ") as info:
+        redact_fixtures.run(corpus, check=True, denylist=deny_list.Denylist((marker,)))
+    bound = [
+        (frame.f_code.co_name, name)
+        for frame, _line in traceback.walk_tb(info.tb)
+        for name, value in frame.f_locals.items()
+        if isinstance(value, tuple | list) and marker in value
+    ]
+    assert bound == []
 
 
 def _one_call(stdout: object, args: list[str] | None = None) -> list[dict[str, Any]]:
@@ -3917,7 +3936,9 @@ def test_offline_transform_takes_the_remote_and_the_denylist_and_matches_the_rec
         "synthetic_user_ids": [1001],
     }
     with pytest.raises(redact_fixtures.ResidualValueError, match=r"^deny-list entry 1 at "):
-        redact_fixtures.redact_fixture(data, forge="github", denylist=("zqdenyval",))
+        redact_fixtures.redact_fixture(
+            data, forge="github", denylist=deny_list.Denylist(("zqdenyval",))
+        )
     clean = {
         **data,
         "calls": [_exchange([{"user": {"login": "author", "id": 1001}, "body": "see zqrep"}])],
@@ -3931,7 +3952,9 @@ def test_offline_transform_takes_the_remote_and_the_denylist_and_matches_the_rec
     )
     assert again == out
     known = redact_fixtures.fixture_known(
-        clean, remote="git@github.com:zqown/zqrep.git", denylist=("zqdenyval",)
+        clean,
+        remote="git@github.com:zqown/zqrep.git",
+        denylist=deny_list.Denylist(("zqdenyval",)),
     )
     assert known.values("segment") == ("zqown", "zqrep")
     assert known.values("deny-list") == ("zqdenyval",)

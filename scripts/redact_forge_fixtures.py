@@ -377,7 +377,7 @@ def fixture_known(
     *,
     roles: dict[str, str] | None = None,
     remote: str = "",
-    denylist: tuple[str, ...] = (),
+    denylist: Denylist | None = None,
     ids: UserIdMap | None = None,
     projects: UserIdMap | None = None,
     forge: str = "github",
@@ -442,7 +442,7 @@ def redact_fixture(
     forge: str,
     projects: UserIdMap | None = None,
     remote: str = "",
-    denylist: tuple[str, ...] = (),
+    denylist: Denylist | None = None,
 ) -> dict[str, object]:
     """The class-redacted copy of one fixture: the live pipeline minus the forge (D4, 0.17).
 
@@ -465,7 +465,7 @@ def redact_fixture(
             forge=forge,
             projects=projects,
             remote=remote,
-            denylist=denylist,
+            denylist=denylist if denylist is not None else Denylist(),
         )
     except RecursionError as exc:
         raise ResidualValueError("nesting too deep: the fixture cannot be walked") from exc
@@ -478,7 +478,7 @@ def _redact_fixture(
     forge: str,
     projects: UserIdMap | None,
     remote: str,
-    denylist: tuple[str, ...],
+    denylist: Denylist,
 ) -> dict[str, object]:
     """:func:`redact_fixture` without its nesting guard."""
     ids = ids if ids is not None else UserIdMap()
@@ -514,7 +514,7 @@ def _redact_fixture(
     if list(data) == sorted(data):
         out = dict(sorted(out.items()))
     try:
-        refuse_unclassified(out, Denylist(denylist), known)
+        refuse_unclassified(out, denylist, known)
     except UnclassifiedValueError as exc:
         raise ResidualValueError(str(exc)) from exc
     return out
@@ -568,7 +568,6 @@ def run(root: Path, *, check: bool, denylist: Denylist | None = None) -> list[Pa
         )
     )
     pending: list[tuple[Path, str]] = []
-    entries = deny.needle_values()
     for index, (path, text) in enumerate(loaded):
         data = fixtures[index]
         rel = path.relative_to(root).as_posix()
@@ -578,7 +577,7 @@ def run(root: Path, *, check: bool, denylist: Denylist | None = None) -> list[Pa
                 ids,
                 forge=fixture_forge(path, data),
                 projects=projects,
-                denylist=entries,
+                denylist=deny,
             )
         except ResidualValueError as exc:
             reason, _sep, where = str(exc).rpartition(" at ")
