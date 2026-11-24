@@ -59,7 +59,8 @@ from typing import Any
 from repoach.core.logging import route_default_logs_to_stderr
 from repoach.forge import closure
 from repoach.forge.denylist import Denylist, DenylistError, read_denylist
-from repoach.forge.fixture_judge import UnclassifiedValueError, refuse_unclassified
+from repoach.forge.fixture_judge import UnclassifiedValueError
+from repoach.forge.fixture_pipeline import seal_fixture
 from repoach.forge.recording import (
     LOGIN_KEYS,
     SYNTHETIC_ID_END,
@@ -72,8 +73,6 @@ from repoach.forge.recording import (
     SyntheticIdsExhaustedError,
     UserIdMap,
     assign_roles,
-    declared_project_ids,
-    declared_user_ids,
     decode_json_values,
     known_values,
     login_sightings,
@@ -460,20 +459,12 @@ def _redact_fixture(
     if "result" in out and isinstance(method, str):
         out["result"] = ids.apply_result(out["result"], forge=forge, method=method, keep=keep)
     out = _source(out, forge)
-    for key, declared in (
-        (SYNTHETIC_IDS_KEY, declared_user_ids(out)),
-        (SYNTHETIC_PROJECT_IDS_KEY, declared_project_ids(out)),
-    ):
-        out.pop(key, None)
-        if declared:
-            out[key] = declared
-    if list(data) == sorted(data):
-        out = dict(sorted(out.items()))
     try:
-        refuse_unclassified(out, denylist, known)
+        return seal_fixture(
+            out, denylist=denylist, known=known, sort_keys=list(data) == sorted(data)
+        )
     except UnclassifiedValueError as exc:
         raise ResidualValueError(str(exc)) from exc
-    return out
 
 
 def render(data: object, *, ascii_only: bool = False) -> str:

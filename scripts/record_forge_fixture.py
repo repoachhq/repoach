@@ -66,49 +66,58 @@ import os
 import subprocess
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from repoach.core.logging import get_logger, route_default_logs_to_stderr
-from repoach.forge import closure
 from repoach.forge.denylist import DenylistError, read_denylist
 from repoach.forge.fixture_judge import (
     UnclassifiedValueError,
     decoded_answers,
     refuse_unclassified,
 )
+from repoach.forge.fixture_pipeline import (
+    RedactedRecording,
+    classify_calls,
+    redact_recording,
+    replace_known_in_calls,
+    seal_fixture,
+    synthesize_user_ids,
+)
 from repoach.forge.protocol import Forge, ForgeError
 from repoach.forge.recording import (
-    SYNTHETIC_IDS_KEY,
-    SYNTHETIC_PROJECT_IDS_KEY,
     Exchange,
     NeedleError,
     RecordingSpawn,
     ReplayMismatchError,
     ReplaySpawn,
     SyntheticIdsExhaustedError,
-    UserIdMap,
     assign_roles,
-    classify_logins,
     coerce_call,
-    declared_project_ids,
-    declared_user_ids,
-    decode_json_values,
     dump_fixture,
-    known_values,
     login_sightings,
     raw_logins,
     recorded_source,
     redact_stdout,
-    redact_urls_in_text,
-    redact_urls_in_value,
-    replace_known,
-    replace_known_in_stdout,
-    replace_known_in_value,
     serialize_result,
 )
 from repoach.forge.select import select_forge
+
+__all__ = [
+    "GIT_ENV_KEYS",
+    "WRITE_METHODS",
+    "build_roles",
+    "classify_calls",
+    "git_env",
+    "main",
+    "origin_url",
+    "record",
+    "refuse_unclassified",
+    "replace_known_in_calls",
+    "synthesize_user_ids",
+]
 
 _log = get_logger(__name__)
 
@@ -186,101 +195,6 @@ def build_roles(
     sightings = login_sightings(value for _path, value in decoded_answers(calls))
     sightings += [(login, False) for login in also]
     return assign_roles(sightings, bot=bot, maintainer=maintainer, author=author)
-
-
-def classify_calls(calls: list[dict[str, Any]], roles: dict[str, str]) -> list[dict[str, Any]]:
-    """Apply the roles to every exchange's argv, stdin, stdout and stderr, and redact text URLs.
-
-    Args:
-        calls: The recorded exchanges, their stdout already redacted by field.
-        roles: Login -> class word for the recording (:func:`build_roles`).
-
-    Returns:
-        New exchanges; a JSON stdout is re-serialised value by value, any other string is
-        rewritten as text.
-    """
-    out: list[dict[str, Any]] = []
-    for call in calls:
-        new = dict(call)
-        new["args"] = classify_logins(redact_urls_in_value(call["args"]), roles)
-        values = decode_json_values(call["stdout"])
-        if values is None:
-            new["stdout"] = str(classify_logins(redact_urls_in_text(call["stdout"]), roles))
-        else:
-            new["stdout"] = "\n".join(
-                json.dumps(classify_logins(v, roles), ensure_ascii=False) for v in values
-            )
-        for key in ("stdin", "stderr"):
-            if isinstance(call.get(key), str):
-                new[key] = str(classify_logins(redact_urls_in_text(call[key]), roles))
-        out.append(new)
-    return out
-
-
-def synthesize_user_ids(
-    calls: list[dict[str, Any]], ids: UserIdMap, *, forge: str, projects: UserIdMap | None = None
-) -> list[dict[str, Any]]:
-    """Replace every user id and every repository id of the recorded exchanges by a synthetic one (D1c).
-
-    Repository ids include an ``api/v4/projects/<id>`` path (Q2 0.10, 0.13).
-
-    Args:
-        calls: The recorded exchanges, roles already applied.
-        ids: The user-id map; it hands out the synthetic numbers and remembers them.
-        forge: ``github`` or ``gitlab``, the key of the maps.
-        projects: The repository-id map; a fresh one when ``None``.
-
-    Returns:
-        New exchanges: user and repository ids of a JSON stdout remapped, repository ids of
-        argv, stdin, stderr and a text stdout remapped.
-    """
-    projects = projects if projects is not None else UserIdMap.for_projects()
-    out: list[dict[str, Any]] = []
-    for call in calls:
-        new = dict(call)
-        values = decode_json_values(call["stdout"])
-        if values is not None:
-            new["stdout"] = "\n".join(
-                json.dumps(
-                    projects.apply_projects(ids.apply(v, forge=forge), forge=forge),
-                    ensure_ascii=False,
-                )
-                for v in values
-            )
-        else:
-            new["stdout"] = str(projects.apply_projects(call["stdout"], forge=forge))
-        if isinstance(call.get("args"), list):
-            new["args"] = projects.apply_projects(call["args"], forge=forge)
-        for key in ("stdin", "stderr"):
-            if isinstance(call.get(key), str):
-                new[key] = str(projects.apply_projects(call[key], forge=forge))
-        out.append(new)
-    return out
-
-
-def replace_known_in_calls(
-    calls: list[dict[str, Any]], known: closure.Known
-) -> list[dict[str, Any]]:
-    """Replace every known value (D7) in every exchange's argv, stdin, stdout and stderr.
-
-    Args:
-        calls: The recorded exchanges, roles and synthetic ids already applied.
-        known: The recording's known values (:func:`repoach.forge.recording.known_values`).
-
-    Returns:
-        New exchanges, each value replaced by its class token.
-    """
-    out: list[dict[str, Any]] = []
-    for call in calls:
-        new = dict(call)
-        if isinstance(call.get("args"), list):
-            new["args"] = replace_known_in_value(call["args"], known)
-        new["stdout"] = replace_known_in_stdout(call["stdout"], known)
-        for key in ("stdin", "stderr"):
-            if isinstance(call.get(key), str):
-                new[key] = replace_known(call[key], known)
-        out.append(new)
-    return out
 
 
 GIT_ENV_KEYS: tuple[str, ...] = (
@@ -446,105 +360,144 @@ def _record(
     trim: int | None,
     out_root: Path,
 ) -> Path:
-    """:func:`record` without its nesting guard."""
+    """:func:`record` without its nesting guard: check, collect, redact, replay, seal, write."""
+    _refuse_unrecordable(method)
+    live = _collect(forge_name=forge_name, cwd=cwd, method=method, args=args, kwargs=kwargs)
+    calls = _redact_by_field(live.calls, trim)
+    maintainer = str(args[0]) if method == "is_maintainer" and args else None
+    roles = build_roles(
+        calls,
+        bot=live.forge.bot_username,
+        maintainer=maintainer,
+        author=live.author,
+        also=raw_logins(live.raw),
+    )
+    denylist = read_denylist()
+    redacted = redact_recording(
+        calls,
+        args,
+        kwargs,
+        raw=live.raw,
+        roles=roles,
+        remote=live.remote,
+        denylist=denylist,
+        forge=forge_name,
+        method=method,
+    )
+    bot = roles.get(live.forge.bot_username, live.forge.bot_username)
+    result, raises = _replay_redacted(forge_name, cwd, method, redacted, roles, bot, live.raises)
+    fixture: dict[str, Any] = {
+        "forge": forge_name,
+        "case": case,
+        "method": method,
+        "args": redacted.args,
+        "kwargs": redacted.kwargs,
+        "bot_username": bot,
+        "source": recorded_source(datetime.now(UTC).date().isoformat(), forge_name),
+        "trimmed": trim,
+        "calls": redacted.calls,
+        "result": result,
+        "raises": raises,
+    }
+    fixture = seal_fixture(
+        fixture, denylist=denylist, known=redacted.known, users_in=redacted.calls
+    )
+    path = out_root / forge_name / f"{case}.json"
+    dump_fixture(path, fixture)
+    return path
+
+
+def _refuse_unrecordable(method: str) -> None:
+    """Refuse a write method and a name that is no protocol method, before anything runs.
+
+    Raises:
+        SystemExit: Naming the method, which is the caller's own argument.
+    """
     if method in WRITE_METHODS:
         raise SystemExit(f"refusing to record write method {method!r}: fixtures never post")
     if method.startswith("_") or not inspect.isfunction(getattr(Forge, method, None)):
         raise SystemExit(f"refusing to record {method!r}: no protocol method has that name")
+
+
+@dataclass(frozen=True)
+class _Live:
+    """What one live call left: the forge, its exchanges, the raw recording and the inputs read beside it."""
+
+    forge: Forge
+    calls: list[dict[str, Any]]
+    raw: list[object]
+    raises: str | None
+    remote: str
+    author: str | None
+
+    def __repr__(self) -> str:
+        """A count, never a value."""
+        return f"<live call: {len(self.calls)} exchanges>"
+
+
+def _collect(
+    *, forge_name: str, cwd: Path, method: str, args: list[Any], kwargs: dict[str, Any]
+) -> _Live:
+    """Run the method once against the forge, recording every exchange; read the remote and the author.
+
+    Raises:
+        TypeError: ``args`` or ``kwargs`` do not fit the method's signature.
+        ForgeError: The forge cannot be selected.
+    """
     typed_args, typed_kwargs = coerce_call(method, args, kwargs)
     forge = select_forge(override=forge_name, cwd=cwd)
     author = _author_of(forge, method, args)
     recorder = RecordingSpawn(inner=forge._spawn)
     forge._spawn = recorder
-    live_raises: str | None = None
+    raises: str | None = None
     try:
         getattr(forge, method)(*typed_args, **typed_kwargs)
     except ForgeError as exc:
-        live_raises = type(exc).__name__
+        raises = type(exc).__name__
     calls = [e.to_json() for e in recorder.exchanges]
-    remote = origin_url(cwd)
     raw: list[object] = [copy.deepcopy(calls), copy.deepcopy(args), copy.deepcopy(kwargs)]
+    return _Live(forge, calls, raw, raises, origin_url(cwd), author)
+
+
+def _redact_by_field(calls: list[dict[str, Any]], trim: int | None) -> list[dict[str, Any]]:
+    """Each exchange with its stdout redacted by field, then trimmed to ``trim`` items."""
+    out = []
     for call in calls:
-        call["stdout"] = redact_stdout(call["stdout"])
-    if trim is not None:
-        for call in calls:
-            call["stdout"] = _trim_stdout(call["stdout"], trim)
-    maintainer = str(args[0]) if method == "is_maintainer" and args else None
-    roles = build_roles(
-        calls,
-        bot=forge.bot_username,
-        maintainer=maintainer,
-        author=author,
-        also=raw_logins(raw),
-    )
-    denylist = read_denylist()
-    calls = classify_calls(calls, roles)
-    ids = UserIdMap()
-    projects = UserIdMap.for_projects()
-    calls = synthesize_user_ids(calls, ids, forge=forge_name, projects=projects)
-    args = list(
-        projects.apply_projects(
-            classify_logins(redact_urls_in_value(args), roles), forge=forge_name
-        )
-    )
-    kwargs = dict(
-        projects.apply_projects(
-            classify_logins(redact_urls_in_value(kwargs), roles), forge=forge_name
-        )
-    )
-    known = known_values(
-        raw,
-        roles=roles,
-        remote=remote,
-        denylist=denylist,
-        ids=ids,
-        projects=projects,
-        forge=forge_name,
-        method=method,
-    )
-    calls = replace_known_in_calls(calls, known)
-    args = list(replace_known_in_value(args, known))
-    kwargs = dict(replace_known_in_value(kwargs, known))
-    bot = roles.get(forge.bot_username, forge.bot_username)
-    typed_args, typed_kwargs = coerce_call(method, args, kwargs)
+        stdout = redact_stdout(call["stdout"])
+        out.append({**call, "stdout": stdout if trim is None else _trim_stdout(stdout, trim)})
+    return out
+
+
+def _replay_redacted(
+    forge_name: str,
+    cwd: Path,
+    method: str,
+    redacted: RedactedRecording,
+    roles: dict[str, str],
+    bot: str,
+    live_raises: str | None,
+) -> tuple[object, str | None]:
+    """The result replayed from the redacted exchanges; it must agree with the live call.
+
+    Raises:
+        SystemExit: The replay issues a call the recording does not hold, or raises otherwise.
+    """
+    typed_args, typed_kwargs = coerce_call(method, redacted.args, redacted.kwargs)
 
     def _normalize(text: str) -> str:
         """The issued text as the fixture records it: the pipeline applied to one string."""
-        value = classify_logins(redact_urls_in_value(text), roles)
-        return str(replace_known(str(projects.apply_projects(value, forge=forge_name)), known))
+        return redacted.normalize(text, roles, forge=forge_name)
 
     disagrees = "refusing to write a fixture whose redacted replay disagrees with the live call"
     try:
         result, raises = _replay(
-            forge_name, cwd, method, typed_args, typed_kwargs, calls, bot, _normalize
+            forge_name, cwd, method, typed_args, typed_kwargs, redacted.calls, bot, _normalize
         )
     except ReplayMismatchError as exc:
         raise SystemExit(disagrees) from exc
     if raises != live_raises:
         raise SystemExit(disagrees)
-    fixture: dict[str, Any] = {
-        "forge": forge_name,
-        "case": case,
-        "method": method,
-        "args": args,
-        "kwargs": kwargs,
-        "bot_username": bot,
-        "source": recorded_source(datetime.now(UTC).date().isoformat(), forge_name),
-        "trimmed": trim,
-        "calls": calls,
-        "result": result,
-        "raises": raises,
-    }
-    declared = declared_user_ids(calls)
-    if declared:
-        fixture[SYNTHETIC_IDS_KEY] = declared
-    declared_projects = declared_project_ids(fixture)
-    if declared_projects:
-        fixture[SYNTHETIC_PROJECT_IDS_KEY] = declared_projects
-    refuse_unclassified(fixture, denylist, known)
-    path = out_root / forge_name / f"{case}.json"
-    dump_fixture(path, fixture)
-    return path
+    return result, raises
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -7430,3 +7430,56 @@ def test_the_denylist_hands_its_entries_to_no_caller() -> None:
     assert (known.literals, known.mapping()) == (("lit",), {"zqlogin": "author"})
     with pytest.raises(TypeError, match=r"denylist must be a Denylist or None"):
         recording.known_values([], roles={}, denylist=cast(Any, ("zqentryone",)))
+
+
+def test_live_and_offline_finish_through_the_one_shared_pipeline() -> None:
+    """D4 (PR #319 round 5, 4683464072, 4683464045): one pipeline module, a narrow API for the scripts.
+
+    The live ``_record`` runs :func:`repoach.forge.fixture_pipeline.redact_recording`, and both
+    scripts declare the synthetic ids and judge through
+    :func:`repoach.forge.fixture_pipeline.seal_fixture`, so neither writes a fixture the other
+    would judge differently. The offline script reaches the text rewriting through the public
+    facade (``rename_logins_in_text``, ``rename_logins_in_argument``,
+    ``rewrite_recorded_source``, ``replace_known_in_source``), never its patterns.
+    """
+    from repoach.forge import fixture_pipeline
+
+    live = inspect.getsource(rec._record)
+    offline = inspect.getsource(redact_fixtures._redact_fixture)
+    assert "redact_recording(" in live and "seal_fixture(" in live and "seal_fixture(" in offline
+    for source in (live, offline):
+        assert "refuse_unclassified(" not in source and "declared_user_ids(" not in source
+    assert rec.classify_calls is fixture_pipeline.classify_calls
+    assert rec.synthesize_user_ids is fixture_pipeline.synthesize_user_ids
+    assert rec.replace_known_in_calls is fixture_pipeline.replace_known_in_calls
+    tree = ast.parse((ROOT / "scripts" / "redact_forge_fixtures.py").read_text(encoding="utf-8"))
+    imported = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module == "repoach.forge.recording"
+        for alias in node.names
+    }
+    internals = {
+        "token_pattern",
+        "mention_pattern",
+        "outside_literals",
+        "bot_mention_stem",
+        "MENTION_ONLY_PREFIX",
+        "RECORDED_SOURCE_RE",
+        "RECORDED_SOURCE_HEAD_RE",
+        "recorded_source",
+    }
+    assert imported and not imported & internals
+    assert not any(name.startswith("_") for name in imported)
+    assert {
+        "rename_logins_in_text",
+        "rename_logins_in_argument",
+        "rewrite_recorded_source",
+        "replace_known_in_source",
+    } <= imported
+    known = recording.known_values([], roles={}, denylist=NO_DENYLIST)
+    fixture = {"calls": [], "source": "recorded 2026-11-24 from a live github change request"}
+    assert fixture_pipeline.seal_fixture(fixture, denylist=NO_DENYLIST, known=known) == fixture
+    assert recording.rewrite_recorded_source("recorded 2026-11-24 from zqfolder x", "github") == (
+        "recorded 2026-11-24 from a live github change request, x"
+    )
