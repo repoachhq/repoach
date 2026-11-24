@@ -4828,6 +4828,19 @@ def test_record_trims_classifies_the_maintainer_and_names_its_refusals(
     assert not (tmp_path / "w").exists()
 
 
+def test_a_secret_in_any_string_of_the_fixture_is_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """D3 (0.28, PR #319): the token scan reads every string written, the method's arguments and argv included."""
+    token = "ghp_" + "B2" * 12
+    quiet = _github_answering(tmp_path, [CommandResult(0, "{}", "", [])])
+    with pytest.raises(
+        SystemExit, match=r"^refusing to write a fixture carrying 1 secret-shaped value\(s\)$"
+    ):
+        _record_through(monkeypatch, tmp_path, quiet, method="branch_protection", args=[token])
+    assert not (tmp_path / "w").exists()
+
+
 def test_replay_names_the_bot_and_the_error_the_redacted_fixture_raises(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
