@@ -7719,3 +7719,78 @@ def test_the_denylist_test_is_collected_by_its_own_ci_step_only() -> None:
         if "pytest" in str(step.get("run", "")) and "tests/unit" in str(step.get("run", ""))
     ]
     assert sorted(collecting) == ["Pytest", "Pytest — fixture deny-list"]
+
+
+def _message_heads(source: Path, error: str) -> set[str]:
+    """The literal head of every message ``raise <error>(...)`` builds in ``source``, up to its first field."""
+    heads: set[str] = set()
+    for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
+        if not (isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call)):
+            continue
+        func = node.exc.func
+        if not (isinstance(func, ast.Name) and func.id == error and node.exc.args):
+            continue
+        arg = node.exc.args[0]
+        parts = arg.values if isinstance(arg, ast.JoinedStr) else [arg]
+        head = parts[0].value if parts and isinstance(parts[0], ast.Constant) else ""
+        if isinstance(head, str) and head.strip():
+            heads.add(head.split(":")[0].strip())
+    return heads
+
+
+def test_a_refusal_class_names_every_reason_it_is_raised_for() -> None:
+    """PR #319 round 6 (4684966549): an error's docstring lists every reason its messages name.
+
+    ``DenylistError`` is raised for an unreadable file (each of its reasons), a comma in the
+    variable and a short entry; ``UnclassifiedValueError`` for every judge rule and every
+    closure refusal; ``ResidualValueError`` names the judge's and ``nesting too deep``.
+    """
+    forge = ROOT / "src" / "repoach" / "forge"
+    deny_heads = _message_heads(forge / "denylist.py", "DenylistError")
+    assert len(deny_heads) == 3
+    doc = inspect.getdoc(deny_list.DenylistError) or ""
+    for phrase in (
+        "deny-list file personal-denylist",
+        "deny-list variable REPOACH_PERSONAL_DENYLIST: a comma",
+        "deny-list entry <n>: too short",
+        "exists but is not a regular file",
+        "not UTF-8",
+        "cannot be read",
+    ):
+        assert phrase in doc, phrase
+    unreadable: list[str] = []
+    for node in ast.walk(ast.parse((forge / "denylist.py").read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Return) and isinstance(node.value, ast.Tuple):
+            why = node.value.elts[2]
+            first = why.values[0] if isinstance(why, ast.JoinedStr) else why
+            if isinstance(first, ast.Constant) and str(first.value).strip():
+                unreadable.append(str(first.value).split("(")[0].strip())
+    assert len(unreadable) == 3
+    for text in unreadable:
+        assert text in doc, text
+    for head in deny_heads:
+        assert head.split(" {")[0] in doc, head
+    judged = inspect.getdoc(fixture_judge.UnclassifiedValueError) or ""
+    heads = _message_heads(forge / "fixture_judge.py", "UnclassifiedValueError")
+    heads |= _message_heads(ROOT / "scripts" / "record_forge_fixture.py", "UnclassifiedValueError")
+    reasons = {
+        str(node.args[0].value)
+        for node in ast.walk(ast.parse((forge / "closure.py").read_text(encoding="utf-8")))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "Refusal"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+    }
+    assert len(reasons) == 6 and len(heads) >= 5
+    for phrase in {re.sub(r"\s+at\b.*$", "", h.split(" {")[0]) for h in heads} | reasons:
+        assert phrase in judged, phrase
+    residual = inspect.getdoc(fixture_pipeline.ResidualValueError) or ""
+    for phrase in (
+        "unclassified",
+        "secret-shaped value",
+        "generic class",
+        "deny-list entry",
+        "nesting too deep",
+    ):
+        assert phrase in residual, phrase

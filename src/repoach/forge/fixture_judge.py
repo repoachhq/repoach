@@ -39,9 +39,14 @@ A POSIX home (``/home/<x>``, ``/Users/<x>``, ``/var/home/<x>``) or a Windows pro
 
 
 class UnclassifiedValueError(Exception):
-    """A recorded value is a login with no class word, or matches a generic personal class.
+    """The judge refuses a fixture; the message names the reason and the key path, never the value.
 
-    The message carries the key path, never the value.
+    The reasons, each the head of its message: ``unclassified`` (a login with no class word),
+    ``secret-shaped value`` (a token shape, or a secret-shaped key in a JSON stdout),
+    ``generic class home_path``, ``deny-list entry <n>``, every refusal of the closure oracle
+    (:class:`repoach.forge.closure.Refusal`: ``residual <kind> <n>``, ``tenant path``,
+    ``unknown host``, ``public address``, ``unknown mailbox``, ``url userinfo``), and, from the
+    live recorder, ``nesting too deep`` (a recording deeper than the readers can walk).
     """
 
 

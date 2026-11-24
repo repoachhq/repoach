@@ -302,7 +302,13 @@ def seal_fixture(
 
 
 class ResidualValueError(Exception):
-    """The oracle refuses a redacted fixture (D3, D4); the message names a reason, a kind, an ordinal and a path, never a value."""
+    """The offline transform refuses a fixture (D3, D4); the message names a reason, a kind, an ordinal and a path, never a value.
+
+    The reasons are the judge's (:class:`repoach.forge.fixture_judge.UnclassifiedValueError`:
+    ``unclassified``, ``secret-shaped value``, ``generic class home_path``, ``deny-list entry``
+    and every refusal of the closure oracle), and ``nesting too deep`` (a fixture deeper than
+    the readers can walk); :func:`redact_corpus` adds the fixture's path to the location.
+    """
 
 
 FORGE_OF_DIRECTORY: dict[str, str] = {"github": "github", "gitlab": "gitlab", "gate": "github"}

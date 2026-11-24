@@ -30,7 +30,18 @@ DENYLIST_MIN_LENGTH = 4
 
 
 class DenylistError(Exception):
-    """The deny-list holds an entry too short to judge with; the message names its ordinal only."""
+    """The deny-list cannot be judged with; the message names the reason, never an entry.
+
+    :func:`read_denylist` raises it for three reasons, each its own message:
+
+    - ``deny-list file personal-denylist: <why>``: the file exists but cannot be read, ``<why>``
+      being ``exists but is not a regular file`` (a dangling symlink, a symlink loop, a
+      directory), ``not UTF-8``, or ``cannot be read (<OSError class>)`` (a permission or any
+      other ``OSError``);
+    - ``deny-list variable REPOACH_PERSONAL_DENYLIST: a comma; one entry per line``;
+    - ``deny-list entry <n>: too short``: an entry shorter than :data:`DENYLIST_MIN_LENGTH`,
+      named by its ordinal.
+    """
 
 
 def denylist_file(config_dir: Path | None = None) -> Path:
