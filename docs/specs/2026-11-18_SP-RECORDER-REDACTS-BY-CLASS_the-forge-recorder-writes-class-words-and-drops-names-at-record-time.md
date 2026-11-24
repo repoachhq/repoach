@@ -1,7 +1,7 @@
 ---
 id: SP-RECORDER-REDACTS-BY-CLASS
 title: The forge recorder replaces every login by its class word, drops names and avatars, makes user ids synthetic at record time, and refuses a fixture it cannot classify
-version: 0.27
+version: 0.28
 status: approved
 author: agent
 created: 2026-11-18
@@ -1526,6 +1526,89 @@ stderr), is still read; a file a sentence cites inside a structured
 string names no one, so `repos/<o>/<r>/contents/README.md was not found`
 in a stderr is NG4-16; neither is in the bank or the corpus.
 
+Amendment (0.28, 2026-11-24, one implementer, after the 0.27 verifier's
+NO-GO; the owner's two decisions of 2026-11-24 fixed and not
+re-litigated: **structure versus prose**, and **no sentence rule: prose
+is declared by the call, never guessed from its wording**; only the red
+items, every green rule untouched, `tmp/fable021/DEFERRED.md` still
+deferred).
+(a) **The sentence rule is withdrawn.** `_FILE_NAME_RE`,
+`_SENTENCE_AFTER_RE` and the "cited file" exception of 0.27 (a) are
+gone: inside a structured string an API path
+`repos/<o>/<r>/<REST word>…` is read whatever follows it, a sentence, a
+comma, a colon, a newline, an HTTP status. This closes the 60 leaks of
+`tmp/verify027/cells27.py` (error and log lines in a stderr, a stdin,
+kwargs and a JSON field: `…/README.md: HTTP 404`, `GET …/README.md
+HTTP/1.1`, `…, retrying`, `…\nexit status 1`) and the three of
+`demo_w.py`; it brings back, by the owner's decision, the rewrite of a
+sentence written in an undeclared structured channel: 11 `O_stdin_*`
+cells of `cells26.py` and 7 `O_stderr_*` cells of `cells27.py`
+(`repos/payments/ledger/releases/v1.md documents the ledger …` in a
+stdin or a stderr learns `payments` and `ledger`). Row
+`v27_stdin_file_cited_in_a_sentence_is_ordinary` becomes the planted row
+`v28_undeclared_stdin_sentence_is_a_structured_source`; with
+`v28_stderr_file_then_words_is_read`.
+(b) **Prose is the channel the call declares** (`_declared_prose`,
+`_prose_parameters`, `_PROSE_KEYS`). It is part of the provenance rule:
+neither the `argv` reading (`_argv_strings`, hard) nor the `structured`
+reading (`_structured_strings`, soft) reads a declared value.
+
+| Channel | Declared by | Source in the forge code |
+|---|---|---|
+| argv field value | `-f`/`-F`/`--field`/`--raw-field` with a key of `_PROSE_KEYS` (`body=`, `path=`, `title=`…), separate, `-f<field>`, `-f=<field>` or `--field=<field>` | `github.py` `_pr_review_comment`, reply (`-f body=`, `-f path=`) |
+| argv flag argument | the argument after `--body`, `--title`, `--message`, `--description`, or joined (`--body=<text>`) | `gh pr create --title --body`, `gh pr comment|review --body`, `glab mr create --title --description` |
+| stdin | `--body-file -` (or `--body-file=-`), a prose field whose value is `@-` (`-F body=@-`) | `gh pr merge --squash --body-file -`; `--input -` sends JSON, whose prose keys are `_PROSE_KEYS` |
+| positional argument | a parameter of `protocol.Forge.<method>` whose name is a prose key | `post_comment(number, body)`, `reply(number, comment_id, body)`, `upsert_marked_comment(number, marker, body)` |
+| JSON key, any depth | `_PROSE_KEYS`, matched as written: `body`, `description`, `title`, `message`, `messageHeadline`, `messageBody`, `diff`, `path`, `new_path`, `old_path` | audited over every answer, stdin and argument of `tests/fixtures/forge/**` (`tmp/fix028/keys_audit.py`): the other keys are ids, states, dates, refs, URLs and labels (`name`, `workflow`) |
+
+`known_values` takes `method` (the live recorder passes it, the offline
+transform reads the fixture's `method`); an argument the signature does
+not name, and every argument of an unknown method, stays structured, so
+the 0.27 row `v27_method_positional_arg_api_path_is_replaced` is
+unchanged. `glab` records no raw-stdin body: its write payloads go
+through `--input -` as JSON. This closes the 0.27 verifier's red 1 (a
+posted body and review path in the argv, the positional body; the four
+older `--body` corruptions, which the hard `argv` reading made since
+0.24) and red 2 (`title`, `message`, `messageHeadline`, `messageBody`):
+`tmp/verify027/repro_post.py` writes the body and the path as they
+stand; `tmp/fix028/cells28.py`, 276 cells over the fifteen prose values
+and three review paths of the real write-method fixtures (each with a
+planted stderr control) through the offline transform: 0 LEAK, 0
+CORRUPTION at the head (89 CORRUPTION at `3cd7f8e`, 120 at `0d604fe`).
+(c) **The corpus harness sends a row's stdin to the call only**, as a
+real method does; it no longer echoes it into the method's kwargs (which
+made every stdin row a kwargs row too, so a declared stdin could not be
+pinned). No row changed by it; the one deferred `stdin differs` parity
+case of `sweep_v2.py`/`sweep.py`/`probe1.py`/`probe_b.py` (the harness's
+two copies of the stdin rewritten apart) is now the named refusal
+`unknown mailbox at exchanges[0].stdin`.
+(d) **Fact corrected.** 0.27 (a) said a comment's body and a review
+comment's path are "never read". False at 0.27: carried in a write
+call's argv (`-f body=`, `--body`, `-f path=`) or as the method's
+positional body they were structured strings, and the hard `argv`
+reading read an argv element led by `repos/` since 0.24. 0.28 (b) makes
+the statement true for every channel the call declares.
+(e) **Remaining cells, named** (L6). Head LEAK/CORRUPTION per set:
+`cells25` 12/0, `cells26` 48/11, `cells26b` 7/0, `cells27` 0/21,
+`cells28` 0/0, `demo_w` 0/1; `cells021`–`cells24` identical to every
+earlier tree. Every LEAK is NG4-16 prose (`tmp/fix027/attrib.py`).
+CORRUPTION: 11 `cells26` `O_stdin_*` and 7 `cells27` `O_stderr_*` are
+prose in an undeclared structured channel (a); 7 `cells27`
+`O_posarg_*` and 7 `O_argv_body_*` put the body as an extra positional
+argument of `conversation_comments(number)`, which no recording can
+hold (the live recorder refuses every write method and the signature
+names no such argument; the same harness channel carries the planted
+`L_args_*` leaks of `cells25`/`cells26`, which stay closed), and their
+real counterpart, `post_comment`, is 0/0 in `cells28`; 1 `demo_w` W15
+is `{"Body": …}`, a key no forge writes (keys are matched as written).
+(f) **Counts.** Twenty-two `v28_` rows, one of them the renamed 0.27 row
+(5 planted, 0 residual, 0 refused; 17 ordinary): 904 rows = 614
+planted + 290 ordinary = 830 written + 74 refused, 25 residuals.
+What it could break, measured: a sentence written in a stderr, an
+undeclared stdin or a non-prose field (the 18 cells of (e)) is rewritten
+where it names a REST route under `repos/`; a prose value a forge sends
+through a flag or key outside the table above would be read.
+
 ## Intent
 
 Child 2 of SP-REPO-CARRIES-NO-PERSONAL-DATA. SP-SCRUB-PERSONAL-DATA-AT-HEAD
@@ -1604,7 +1687,10 @@ whole behaviour row by row.
      an argv string of a recorded call and no other string, 0.25; each
      source and its reading are one row of `PROVENANCE`, 0.26; a GitHub
      API path `repos/<o>/<r>/<REST word>` in the structured sources of a
-     call, never in prose, 0.27, NG4-16;
+     call, never in prose, 0.27, NG4-16; prose is the channel the call
+     declares, never a string's wording: a prose key, a prose argv field
+     or flag, a declared stdin, a positional argument the method's
+     signature names, 0.28;
      kind `segment`, through `path_identity`);
   2. **the deny-list** (kind `deny-list`; a numeric entry also in its two
      node-id forms);
@@ -2202,7 +2288,7 @@ ids declared) stand.
   13. (0.21, decided under the owner's goal) A **mention of a non-participant whose login is a language word** — one of the 425 `LANGUAGE_AT_WORDS` of D2 (`cc @test please review`, `ping @main`, `fix: @link reported this`) — is written in its `@` form: the finder cannot tell the handle from the word by construction, and narrowing the skip set to a syntactic context would rewrite ordinary prose about doc tags and pasted code (`cc @param please`, `completion: @escaping`) and would not close a line-leading mention. A participant's login equal to a language word is a known value, replaced wherever it stands and refused when it survives. Rows `v21_language_word_mention_only_NG4_13`, `v21_language_word_mention_only_in_title_NG4_13`, `v21_language_word_participant_login_replaced*`; named test `test_a_mention_only_handle_equal_to_a_language_word_is_the_documented_residual`; sweep `language_word_cells` (849 cells).
   14. (0.22, decided under the owner's goal and the owner's list) An **identity that follows a reserved route word** is not read: GitLab's legacy `s/<user>` redirect and its admin area (`admin/users/<u>`, `admin/groups/<g>`, `admin/projects/<ns>/<r>`), Bitbucket's `snippets/<ws>/<id>`, a segment after `.well-known`. A reserved word names no one, so the path led by one is written as it stands (`uploads/-/system/…`, `help/user/profile`); the price is the name an instance's own pages carry after one, which a reviewer pastes seldom and which the generic reading replaced at 0.21 while corrupting the word before it (`uploads` → `org`). Row `v22_gitlab_s_redirect_identity_after_a_reserved_word_NG4_14` (live, the identity after `s/` written on the instance; 0.23 — this item cited the ordinary rows `v22_*_reserved_word_*`, which plant no identity after the word); named test `test_a_reserved_route_word_is_never_an_identity` (the five grammars asserted); sweep `RESERVED_WORDS` (every forge's words in two shapes). The rule is a URL path's: the recorded remote and an argv API path read `<ns>/…/<repo>` by construction (0.23 (a), 0.24 (a) and (b)).
   15. (0.23, decided under the owner's goal; 0.24: every registry, the GitLab instance included) An **npm scope read from a URL** (`https://npm.<corp>/@<scope>/<pkg>/-/<pkg>-<v>.tgz`, a Nexus or Artifactory proxy, GitLab's own `api/vN/…/packages/npm/@<scope>/…` on the instance, project and group endpoints, and the company-scope case `npm.<corp>/@<corp>/…`) is never learnt and is written as it stands, the host replaced; a scope equal to a known namespace (the remote's) is replaced as that value. A scope is as often a forwarded or proxied public one (`@babel`, `@types`, which GitLab's package forwarding brings to its own endpoints, whose project and group forms impose no scope naming) as a corporate one, and reading it as a namespace corrupts every yarn.lock line and every import of the fixture's code; the price is a third party's or the company's own scope kept in a URL and beside it. Rows `v23_scoped_tarball_on_a_private_registry_keeps_its_scope_NG4_15`, the five `v23_gitlab_npm_scope_*_is_ordinary_text_NG4_15`, `v24_company_scope_on_its_own_registry_is_ordinary_text_NG4_15` (and the controls `v23_scoped_tarball_on_a_nexus_proxy_keeps_its_scope`, `v24_forwarded_types_scope_next_to_a_gitlab_npm_url_stays_in_code`, `v24_forwarded_babel_scope_on_a_gitlab_project_endpoint_stays_in_code`, `v24_gitlab_npm_scope_equal_to_the_remote_namespace_is_replaced`); named test `test_an_npm_scope_is_never_learnt_on_any_registry` (the ordinary shapes asserted).
-  16. (0.27, the owner's decision of 2026-11-24, structure versus prose) An **API path cited in prose** — `[/][api/v<N>/]repos/<o>/<r>/<REST word>…` in a body, a merge request description, a code block, a review comment's `path`/`new_path`/`old_path`, a raw (non-JSON) stdout, or a file a sentence cites inside a structured string — names no one and is written as it stands; the same path in the argv, stdin, stderr, a JSON stdout field or the method's arguments is read (D7, `PROVENANCE` row `structured`). Reading prose cost 74 corrupted ordinary directory cells at 0.26; the price is another repository named through the GitHub API in a comment, which SP-NO-PERSONAL-DATA-GATE and its optional NER oracle cover later. Rows `v27_body_led_by_a_github_api_path_is_prose_NG4_16`, `v27_json_string_in_a_body_is_prose_NG4_16`, `v27_review_path_field_api_path_is_prose_NG4_16`, `v27_reserved_owner_api_path_in_a_body_is_prose_NG4_16`, `v27_code_block_api_path_is_prose_NG4_16`, `v27_gitlab_body_api_path_is_prose_NG4_16`, `v27_raw_stdout_led_by_an_api_path_is_prose_NG4_16`; named test `test_an_api_path_cited_in_prose_is_the_named_residual_ng4_16`.
+  16. (0.27, the owner's decision of 2026-11-24, structure versus prose) An **API path cited in prose** — `[/][api/v<N>/]repos/<o>/<r>/<REST word>…` in a body, a merge request description, a code block, a review comment's `path`/`new_path`/`old_path`, a title, a commit message, a GitLab change's `diff`, a raw (non-JSON) stdout, or a channel the call declares prose (an argv `body=`/`path=`/`title=` field, the argument of `--body`/`--title`/`--message`/`--description`, a stdin declared by `--body-file -` or `-F body=@-`, a positional argument the method's signature names `body`; 0.28) — names no one and is written as it stands; the same path in the argv, stdin, stderr, a JSON stdout field or the method's arguments is read (D7, `PROVENANCE` row `structured`), whatever words follow it (0.28: the 0.27 cited-file sentence rule is withdrawn). Reading prose cost 74 corrupted ordinary directory cells at 0.26; the price is another repository named through the GitHub API in a comment, which SP-NO-PERSONAL-DATA-GATE and its optional NER oracle cover later. Rows `v27_body_led_by_a_github_api_path_is_prose_NG4_16`, `v27_json_string_in_a_body_is_prose_NG4_16`, `v27_review_path_field_api_path_is_prose_NG4_16`, `v27_reserved_owner_api_path_in_a_body_is_prose_NG4_16`, `v27_code_block_api_path_is_prose_NG4_16`, `v27_gitlab_body_api_path_is_prose_NG4_16`, `v27_raw_stdout_led_by_an_api_path_is_prose_NG4_16`; named test `test_an_api_path_cited_in_prose_is_the_named_residual_ng4_16`; the declared channels: `test_prose_is_declared_by_the_call_never_by_its_wording`, `test_a_prose_positional_argument_is_named_by_the_method_signature`, rows `v28_*`.
 
 ## Assumptions
 
@@ -2317,8 +2403,12 @@ login and a deny-list entry (`pos_*`, `deny_in_*`).
 | `::test_a_remote_path_names_a_repository_by_construction` (0.23; 0.24: the nested `uploads` remote written `org/project`) | D7 source 1, B1: every reserved word as a remote namespace yields it and the repository, with a subgroup, a `.git`, a lone segment, empty segments; the route roots as a remote namespace too; `known_values` learns the remote's values on GitHub, on the instance, from an https and an ssh remote, and replaces them in a route; a structured URL field keeps the reserved rule; a short namespace is `needle segment 1: too short` | apply the reserved rule to the remote, read the remote as a route, read a lone segment as a repository, read every path as a remote |
 | `::test_every_hard_identity_path_reads_a_repository_path_by_construction` (0.24) | D7 sources 1 and 2, B1-a, B1-b, N13: a lone remote segment that is a reserved word is the namespace; a nested remote under `marketplace`, `uploads`, `settings`, `assets` learns each segment and the joined `<word>/<sub>`, written `org/project` after a `/-/` route, on the project and group pages and in a clone address, a fixed point of the text rewrite; a three-level namespace joins each leading path; a flat remote learns no joined value; the argv `repos/<word>/<r>`, `projects/<word>%2F<r>` and nested `api/v4/projects/<word>%2F<sub>%2F<r>` for seven words including the owner roots; a short argv namespace is `needle segment 1: too short`; a `URL_KEYS` value under a reserved word learns nothing | read the argv path by the route grammar, drop the joined values, join only the whole namespace, join for every source, send a lone remote segment to the route grammar |
 | `::test_the_provenance_table_is_the_one_rule_of_what_names_an_identity` (0.26; 0.27: five rows) | D7: `PROVENANCE` enumerated; every `_segments` call of `known_values` inside the four readers, every `_add("segment", …)` inside them or `_segments`; `_api_project` once, as the argv source; `_structured_strings` once, as the structured source; `_api_path_projects` once, inside the `api_path` reader; the dispatch's source and reading names equal to the table's | a reading invoked outside the table, a row dropped, added or reordered |
-| `::test_an_api_path_is_read_in_the_structured_sources_of_a_call_only` (0.27) | D7, the owner's structure/prose decision: an API path in an argv `--input=`, kwargs, flat, nested and JSON-encoded method args, raw and JSON stdin, stderr, a JSON stdout field at any depth is learnt; in a body, a code block, a JSON string in a body, a review `path`, a `description`, `new_path`/`old_path`, a raw stdout, a prose key of the method's arguments, nothing; `_structured_strings` enumerated on five shapes | read prose, skip a structured source, drop the keys, read a raw stdout, walk no JSON |
-| `::test_an_api_path_cited_in_prose_is_the_named_residual_ng4_16` (0.27) | NG4-16: a body, a review path and a raw stdout written as they stand; a file cited in a sentence (each of `.,:;!?`, `..`, `?,`, `,,`, a trailing `_`, a tab, two spaces, extensions of one to six characters, any case) names no one; the same file as a call (`#`, `?<query>`, `)`, `), <words>`, a closing quote, end, a trailing dot or space, a dash, a seven-character or digit-led extension, no extension, a segment after it) is read | read prose, drop the file rule, drop the sentence rule, widen or narrow either |
+| `::test_an_api_path_is_read_in_the_structured_sources_of_a_call_only` (0.27; 0.28: `title`, `message`, `messageHeadline`, `messageBody`, `diff` prose, `Title` structured) | D7, the owner's structure/prose decision: an API path in an argv `--input=`, kwargs, flat, nested and JSON-encoded method args, raw and JSON stdin, stderr, a JSON stdout field at any depth is learnt; in a body, a code block, a JSON string in a body, a review `path`, a `description`, `new_path`/`old_path`, a title, a commit message, a diff, a raw stdout, a prose key of the method's arguments, nothing; `_structured_strings` enumerated on five shapes | read prose, skip a structured source, drop the keys, read a raw stdout, walk no JSON |
+| `::test_an_api_path_cited_in_prose_is_the_named_residual_ng4_16` (0.27; 0.28: the sentence rule withdrawn) | NG4-16: a body, a review path and a raw stdout written as they stand; inside a structured string the words after the path decide nothing: a file followed by a sentence, a comma, a colon, a newline, a digit, a one-character word, `?:` (verify027 W04–W09) is read as a call is | read prose, judge a structured string by its wording |
+| `::test_prose_is_declared_by_the_call_never_by_its_wording` (0.28) | D7, the owner's second decision of 2026-11-24: `_declared_prose` on 27 argv shapes (`-f`/`-F`/`--field`/`--raw-field` with a prose key, separate, `-f<field>`, `-f=<field>`, `--field=<field>`; `--body`/`--title`/`--message`/`--description` next or joined; `--body-file -`, `--body-file=-`, `-F body=@-`, `--field=body=@-`; a non-prose key, `line=@-`, a field without `=`, a trailing flag, `--input -`, non-strings, look-alike flags); neither the argv nor the structured reader reads a declared value or stdin; an undeclared field, the argument after the prose one, an undeclared stdin and a dict that is not an exchange are read; `_argv_strings` and `_structured_strings` enumerated | read a declared channel, declare by wording, widen a flag to the rest of the argv, drop a form |
+| `::test_a_prose_positional_argument_is_named_by_the_method_signature` (0.28) | D7: `_prose_parameters` from `protocol.Forge` (`post_comment` {1}, `reply` {2}, `upsert_marked_comment` {2}; none for `conversation_comments`, `create_pull_request`, `post_review`, `find_marked_comment`, a property, an unknown or malformed name); `known_values(method=…)` reads no prose positional argument and still reads the others and the kwargs; `_without_prose_arguments` on five shapes; the offline transform of `post_comment_inline.json` with a body and a review path under `repos/` writes both as they stand in the argv, the arguments and the answer (verify027 `repro_post.py`) | ignore the method, guess positions, blank the kwargs |
+| `::test_the_prose_keys_are_the_audited_keys_matched_as_written` (0.28) | D7: `_PROSE_KEYS` is the audited ten; `Body`/`MESSAGE` structured (W15); a JSON stdin behind blanks (W13) and a JSON array stdin (W14) walked | casefold the keys, skip the JSON probe |
+| `::test_the_decoded_forms_of_an_api_path_are_read_in_order` (0.28) | D7, W24: the raw form before its decoded forms, so the first reading keeps its class | forms reversed |
 | `::test_the_api_path_reader_reads_a_whole_path_between_its_bounds` (0.27) | the 0.26 verifier's X01–X16: the eight lookbehind leads, a doubled `api/v3/`, `api/v10/`, a one-character owner, a space before the word, `pulls:`/`pulls;`, `iſsues`, a `.git` owner, `Settings`/`SETTINGS`, `kvn%5Fteam` | the lookbehind narrowed, the prefix repeated or one digit, a two-character owner, `lstrip("/ ")`, dots-only trim, `lower()`, `_bare(owner)`, a case-sensitive reserved check, `%` in the owner |
 | `::test_inside_a_source_the_first_reading_in_recording_order_keeps_the_class` (0.27) | D7, X21, X22: two URL fields in one answer and in two exchanges, two stderr, method args then kwargs: the first reading keeps its class | a source's items reversed, URL fields prepended |
 | `::test_a_url_field_on_a_single_label_host_learns_the_host` (0.27) | D7 source 2, X26: `http://intranet/…` in a URL field is a host value, in a body not | the route reader learns no host |
@@ -2329,7 +2419,8 @@ login and a deny-list entry (`pos_*`, `deny_in_*`).
 | `::test_a_url_field_path_learns_no_joined_namespace` (0.25) | D7 source 2, mutant V09: a GitLab `web_url` under a nested group learns its segments one by one, no joined `<a>/<b>`, so a body `kvnteam/kvnsub-old` is written `org/org-old` | join the namespace for every hard source |
 | `::test_an_npm_scope_is_never_learnt_on_any_registry` (0.24; 0.23: `test_a_gitlab_npm_scope_is_a_root_group`) | D1b, D7 source 3, B2-c, NG4-15: `_npm_registry` on the three endpoints, in any case, and seven negatives; twelve tails per endpoint written as they stand, the prefix's namespace only; the encoded project prefix; `known_values` and `replace_known` keep `@types/node` and `@babel/core` in code next to a GitLab npm URL on a third-party instance and a led address, read a dashless `groups/<g>/packages/npm/` prefix as the group alone, keep a third party's and a company's own scope, and replace a scope equal to the remote namespace | learn the scope again, write it `@org`, drop the registry check, read the prefix generically |
 | `::test_an_owner_root_is_read_in_any_case` (0.23) | D1b: `repos`, `users`, `orgs`, `apps`, `groups` and `api/vN/` matched casefolded, the root word written as it stands, through `path_identity`, `redact_url` and `known_values` | compare a root raw, write the root lowercase |
-| `tests/unit/test_forge_recording_acceptance_corpus.py` rows `v27_*` (0.27: seven NG4-16 residual rows — body, JSON string in a body, review path, reserved owner in a body, code block, GitLab body, raw stdout —; a reserved owner, an error line, nested method args and a file with a fragment read in a structured source; directory paths under `repos/` ordinary in a body, a review path, a code block, a monorepo layout and a stdin sentence) | 0.27 (a), (b) | read prose, read a file cited in a sentence, skip a structured source |
+| `tests/unit/test_forge_recording_acceptance_corpus.py` rows `v28_*` (0.28: seventeen ordinary rows, one per declared prose channel — argv `-f body=`, `--raw-field=title=`, `-F path=`, the argument of `--body`, `--title`, `--message=`, GitLab `--description`, a stdin declared by `--body-file -` and by `-F body=@-`, the keys `title` (GitHub and GitLab), `message`, `messageHeadline`, `messageBody`, a GitLab `diff`, a kwargs `message`, a JSON stdin `title` —; five planted rows on the structured side — an undeclared stdin sentence, a stderr file followed by words, a stdin with an undeclared `@-` field, an undeclared argv field, the argument after the prose one) | 0.28 (a)–(c) | read a declared channel, judge by wording, skip a structured source |
+| `tests/unit/test_forge_recording_acceptance_corpus.py` rows `v27_*` (0.27; 0.28: `v27_stdin_file_cited_in_a_sentence_is_ordinary` becomes `v28_undeclared_stdin_sentence_is_a_structured_source`; seven NG4-16 residual rows — body, JSON string in a body, review path, reserved owner in a body, code block, GitLab body, raw stdout —; a reserved owner, an error line, nested method args and a file with a fragment read in a structured source; directory paths under `repos/` ordinary in a body, a review path, a code block, a monorepo layout and a stdin sentence) | 0.27 (a), (b) | read prose, read a file cited in a sentence, skip a structured source |
 | `tests/unit/test_forge_recording_acceptance_corpus.py` rows `v26_*` (0.26; 0.27: four renamed `v27_*_NG4_16`: a GitHub API path with a REST route word in a body, kwargs, stdin, a JSON string, a review comment's `path`, with a reserved owner; a file after the repository and a bare path, ordinary; a second exchange's argv; a URL-field namespace before an argv repository) | 0.26 (a), (b), (c) | read no text API path, read a bare one, read one exchange, read argv first |
 | `tests/unit/test_forge_recording_acceptance_corpus.py` rows `v25_*` (0.25: six ordinary texts led by `repos/` or `projects/` in a body or a review comment's `path`, reserved words and a plain directory; an argv `repos/settings/<r>` still read; a GitLab `web_url` under a nested group learning no joined value) | 0.25 (a) and (b) | read every string as an argv path, join for every hard source |
 | `tests/unit/test_forge_recording_acceptance_corpus.py` rows `v24_*` (0.24: three nested remotes under a reserved root, two argv API paths, two forwarded public scopes in code, the company scope NG4-15, a scope equal to the remote namespace; any of the three 0.24 rules reverted turns one red) and rows `v23_*` and `v22_gitlab_s_redirect_identity_after_a_reserved_word_NG4_14` (0.23; 0.24: the five `v23_gitlab_npm_scope_*` rows corrected to NG4-15) | B1 (five rows: GitHub `assets` replaced and `jwt` refused, the instance's `snippets`, an https `help` remote, `uploads` replaced in a route too), B2 (eight rows: the three endpoints, the file name, the encoded path, a third-party instance, the unscoped package; NG4-15 and the Nexus control), the casefolded root (one row), NG4-14 live (one row) | any of the three rules reverted |
