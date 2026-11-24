@@ -7432,6 +7432,70 @@ def test_the_denylist_hands_its_entries_to_no_caller() -> None:
         recording.known_values([], roles={}, denylist=cast(Any, ("zqentryone",)))
 
 
+def test_git_env_keeps_the_git_variables_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PR #319 round 5 (4683465486): ``git_env`` drops the deny-list, every token and inline git config."""
+    for key in [k for k in os.environ if k not in ("PATH", "HOME")]:
+        monkeypatch.delenv(key)
+    secrets = {
+        deny_list.DENYLIST_ENV: "zqentry",
+        "GH_TOKEN": "zqfake1",
+        "GITHUB_TOKEN": "zqfake2",
+        "GITLAB_TOKEN": "zqfake3",
+        "ANTHROPIC_API_KEY": "zqfake4",
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "http.extraHeader",
+        "GIT_CONFIG_VALUE_0": "zqfake5",
+        "GIT_ASKPASS": "zqfake6",
+        "SSH_AUTH_SOCK": "zqfake7",
+    }
+    for key, value in secrets.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("XDG_CONFIG_HOME", "/x")
+    env = rec.git_env()
+    assert set(env) == {"PATH", "HOME", "XDG_CONFIG_HOME", "GIT_TERMINAL_PROMPT"}
+    assert env["GIT_TERMINAL_PROMPT"] == "0" and env["XDG_CONFIG_HOME"] == "/x"
+    assert not any(value in env.values() for value in secrets.values())
+    monkeypatch.setenv("GIT_TERMINAL_PROMPT", "1")
+    assert rec.git_env()["GIT_TERMINAL_PROMPT"] == "0"
+
+
+def test_origin_url_returns_empty_on_timeout_missing_git_and_a_failing_git(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """PR #319 round 5 (4683465486): every failure of the recorder's ``git`` child reads as no remote.
+
+    A timeout, a missing ``git`` (``FileNotFoundError``), any other ``OSError`` and a non-zero
+    exit each give ``""`` and one log line naming the error class, never the command's output.
+    """
+    calls: list[dict[str, Any]] = []
+
+    def _raising(error: BaseException) -> Any:
+        def _run(argv: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
+            calls.append(kw)
+            raise error
+
+        return _run
+
+    for error in (
+        subprocess.TimeoutExpired(["git"], 30),
+        FileNotFoundError(2, "No such file or directory", "git"),
+        PermissionError(13, "Permission denied", "git"),
+    ):
+        monkeypatch.setattr(rec.subprocess, "run", _raising(error))
+        with capture_logs() as logs:
+            assert rec.origin_url(tmp_path) == ""
+        assert [(e["event"], e["error"]) for e in logs] == [
+            ("recorder.no_origin", type(error).__name__)
+        ]
+    assert all(kw["timeout"] == 30 and kw["check"] is False for kw in calls)
+
+    def _failing(argv: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(argv, 2, "git@h.io:zqgroup/zqrepo.git\n", "fatal")
+
+    monkeypatch.setattr(rec.subprocess, "run", _failing)
+    assert rec.origin_url(tmp_path) == ""
+
+
 def test_live_and_offline_finish_through_the_one_shared_pipeline() -> None:
     """D4 (PR #319 round 5, 4683464072, 4683464045): one pipeline module, a narrow API for the scripts.
 
