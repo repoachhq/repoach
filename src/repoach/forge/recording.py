@@ -3008,3 +3008,89 @@ def dump_fixture(path: Path, data: dict[str, Any]) -> None:
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
+
+
+def rename_logins_in_text(text: str, roles: dict[str, str]) -> str:
+    """Replace every login of ``roles`` in free text by its class word, a tool literal left as it is.
+
+    The offline transform's one entry into the text rewriting: the ``@<login>`` form of every
+    login (and a ``<name>[bot]`` login's ``@<stem>``), and the bare form of every login that is
+    not mention-only (a key without :data:`MENTION_ONLY_PREFIX`).
+
+    Args:
+        text: One string of a fixture.
+        roles: Login (a mention-only one keyed ``@<login>``) -> class word.
+
+    Returns:
+        ``text`` with each login replaced, outside the tool literals (:func:`outside_literals`).
+    """
+    rules: list[tuple[re.Pattern[str], str]] = []
+    for login, word in sorted(roles.items(), key=lambda pair: len(pair[0]), reverse=True):
+        handle = login.removeprefix(MENTION_ONLY_PREFIX)
+        rules.append((mention_pattern(handle), f"@{word}"))
+        if handle == login:
+            rules.append((token_pattern(login), word))
+            mention_stem = bot_mention_stem(login)
+            if mention_stem is not None:
+                rules.append((mention_pattern(mention_stem), f"@{word}"))
+
+    def rewrite(piece: str) -> str:
+        for pattern, replacement in rules:
+            piece = pattern.sub(replacement, piece)
+        return piece
+
+    return outside_literals(text, rewrite)
+
+
+def rename_logins_in_argument(arg: str, roles: dict[str, str]) -> str:
+    """Replace a login that is a whole argument, a path segment or a ``=`` value; never a mention-only one.
+
+    Args:
+        arg: One argv string of a fixture.
+        roles: Login (a mention-only one keyed ``@<login>``) -> class word.
+
+    Returns:
+        The class word when ``arg`` is a login, else ``arg`` with each login after ``/`` or ``=``
+        and before ``/``, ``&`` or its end replaced.
+    """
+    actors = {k: v for k, v in roles.items() if not k.startswith(MENTION_ONLY_PREFIX)}
+    if arg in actors:
+        return actors[arg]
+    for login, word in actors.items():
+        arg = re.sub(rf"(?<=[/=]){re.escape(login)}(?=[/&]|$)", word, arg)
+    return arg
+
+
+def rewrite_recorded_source(source: str, forge: str) -> str:
+    """A committed fixture's ``source`` with its recorded head naming the forge, not the checkout's folder.
+
+    Args:
+        source: The fixture's ``source``.
+        forge: ``github`` or ``gitlab``.
+
+    Returns:
+        ``source`` with a ``recorded <date> from <folder>`` head (:data:`RECORDED_SOURCE_RE`)
+        written as :func:`recorded_source` writes it; any other ``source`` as it is.
+    """
+    m = RECORDED_SOURCE_RE.match(source)
+    if m is None:
+        return source
+    rest = source[m.end() :]
+    if rest.startswith(" "):
+        rest = "," + rest
+    return recorded_source(m.group(1), forge) + rest
+
+
+def replace_known_in_source(source: str, known: closure.Known) -> str:
+    """Replace every known value in a fixture's ``source``, its template head (:data:`RECORDED_SOURCE_HEAD_RE`) kept.
+
+    Args:
+        source: The fixture's ``source``.
+        known: The recording's known values.
+
+    Returns:
+        The head as it is, then the rest with each known value replaced by its class token.
+    """
+    head = RECORDED_SOURCE_HEAD_RE.match(source)
+    cut = head.end() if head else 0
+    return source[:cut] + replace_known(source[cut:], known)

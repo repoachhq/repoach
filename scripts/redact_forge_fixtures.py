@@ -62,9 +62,6 @@ from repoach.forge.denylist import Denylist, DenylistError, read_denylist
 from repoach.forge.fixture_judge import UnclassifiedValueError, refuse_unclassified
 from repoach.forge.recording import (
     LOGIN_KEYS,
-    MENTION_ONLY_PREFIX,
-    RECORDED_SOURCE_HEAD_RE,
-    RECORDED_SOURCE_RE,
     SYNTHETIC_ID_END,
     SYNTHETIC_ID_START,
     SYNTHETIC_IDS_KEY,
@@ -75,23 +72,22 @@ from repoach.forge.recording import (
     SyntheticIdsExhaustedError,
     UserIdMap,
     assign_roles,
-    bot_mention_stem,
     declared_project_ids,
     declared_user_ids,
     decode_json_values,
     known_values,
     login_sightings,
-    mention_pattern,
-    outside_literals,
     raw_logins,
-    recorded_source,
     redact_payload,
     redact_stdout,
     redact_urls_in_text,
     redact_urls_in_value,
+    rename_logins_in_argument,
+    rename_logins_in_text,
     replace_known,
+    replace_known_in_source,
     replace_known_in_stdout,
-    token_pattern,
+    rewrite_recorded_source,
     trusted_declaration,
 )
 
@@ -221,30 +217,6 @@ def fixture_roles(data: dict[str, object], also: Sequence[str] = ()) -> dict[str
     return assign_roles(sightings, bot=bot if isinstance(bot, str) else "", held=_held)
 
 
-def _mention_text(text: str, roles: dict[str, str]) -> str:
-    """Replace every login of ``roles`` in free text by its class word, a tool literal left as it is.
-
-    The ``@<login>`` form of every login (and a ``<name>[bot]`` login's
-    ``@<stem>``) and the bare form of every login that is not mention-only.
-    """
-    rules: list[tuple[re.Pattern[str], str]] = []
-    for login, word in sorted(roles.items(), key=lambda pair: len(pair[0]), reverse=True):
-        handle = login.removeprefix(MENTION_ONLY_PREFIX)
-        rules.append((mention_pattern(handle), f"@{word}"))
-        if handle == login:
-            rules.append((token_pattern(login), word))
-            mention_stem = bot_mention_stem(login)
-            if mention_stem is not None:
-                rules.append((mention_pattern(mention_stem), f"@{word}"))
-
-    def rewrite(piece: str) -> str:
-        for pattern, replacement in rules:
-            piece = pattern.sub(replacement, piece)
-        return piece
-
-    return outside_literals(text, rewrite)
-
-
 def _rename(node: object, roles: dict[str, str]) -> Any:
     """Replace ``roles`` logins under login keys and as mentions; JSON stdout is walked inside."""
     if isinstance(node, dict):
@@ -257,27 +229,19 @@ def _rename(node: object, roles: dict[str, str]) -> Any:
                 renamed = [_rename(v, roles) for v in (values or [])]
                 out[key] = item if values is None or renamed == values else _dumps(renamed)
             elif key == "args" and isinstance(item, list):
-                out[key] = [_segment(a, roles) if isinstance(a, str) else a for a in item]
+                out[key] = [
+                    rename_logins_in_argument(a, roles) if isinstance(a, str) else a for a in item
+                ]
             elif key == "case" and isinstance(item, str):
                 out[key] = item
             elif isinstance(item, str):
-                out[key] = _mention_text(item, roles)
+                out[key] = rename_logins_in_text(item, roles)
             else:
                 out[key] = _rename(item, roles)
         return out
     if isinstance(node, list):
         return [_rename(v, roles) for v in node]
     return node
-
-
-def _segment(arg: str, roles: dict[str, str]) -> str:
-    """Replace a login that is a whole argument, a path segment or a ``=`` value; never a mention-only one."""
-    actors = {k: v for k, v in roles.items() if not k.startswith(MENTION_ONLY_PREFIX)}
-    if arg in actors:
-        return actors[arg]
-    for login, word in actors.items():
-        arg = re.sub(rf"(?<=[/=]){re.escape(login)}(?=[/&]|$)", word, arg)
-    return arg
 
 
 def _dumps(values: list[object]) -> str:
@@ -331,13 +295,8 @@ def _source(data: dict[str, object], forge: str) -> dict[str, object]:
     source = data.get("source")
     if not isinstance(source, str):
         return data
-    m = RECORDED_SOURCE_RE.match(source)
-    if m is None:
-        return data
-    rest = source[m.end() :]
-    if rest.startswith(" "):
-        rest = "," + rest
-    return {**data, "source": recorded_source(m.group(1), forge) + rest}
+    rewritten = rewrite_recorded_source(source, forge)
+    return data if rewritten == source else {**data, "source": rewritten}
 
 
 def fixture_known(
@@ -405,9 +364,7 @@ def _replace_known(node: object, known: closure.Known) -> Any:
             elif key == "stdout" and isinstance(item, str) and "returncode" in node:
                 out[key] = replace_known_in_stdout(item, known)
             elif key == "source" and isinstance(item, str):
-                head = RECORDED_SOURCE_HEAD_RE.match(item)
-                cut = head.end() if head else 0
-                out[key] = item[:cut] + replace_known(item[cut:], known)
+                out[key] = replace_known_in_source(item, known)
             else:
                 out[key] = _replace_known(item, known)
         return out

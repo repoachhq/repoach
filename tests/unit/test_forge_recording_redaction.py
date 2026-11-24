@@ -5098,7 +5098,7 @@ def test_offline_roles_by_enumeration_of_orders_numbering_and_mention_text() -> 
     }
     upper_mention = _roles_data({"user": {"login": "zqbot[bot]"}}, {"body": "cc @ZQBOT"})
     assert redact_fixtures.fixture_roles(upper_mention) == {"zqbot[bot]": "bot", "ZQBOT": "bot"}
-    mention_text = redact_fixtures._mention_text
+    mention_text = recording.rename_logins_in_text
     assert mention_text("zqname-x and zqname", {"zqname": "author", "zqname-x": "author-2"}) == (
         "author-2 and author"
     )
@@ -5221,7 +5221,7 @@ def test_offline_words_skip_the_ones_the_fixture_already_holds_and_the_head_is_n
     }
     assert redact_fixtures.fixture_roles(padded) == {"zqpadded": "author-2"}
     assert (
-        redact_fixtures._mention_text(
+        recording.rename_logins_in_text(
             "zqname-x and zqname", {"zqname": "author-10", "zqname-x": "bot"}
         )
         == "bot and author-10"
