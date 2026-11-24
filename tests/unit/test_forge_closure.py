@@ -20,7 +20,7 @@ from types import ModuleType
 
 import pytest
 
-from repoach.forge import closure, recording
+from repoach.forge import closure, closure_tables, recording
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -76,24 +76,33 @@ def test_the_oracle_shares_no_code_object_with_the_redactor() -> None:
         *_reachable(vars(_script("redact_forge_fixtures"))),
     ]
     ids = {id(item) for item in redactor}
-    own = _reachable(vars(closure))
+    own = [*_reachable(vars(closure)), *_reachable(vars(closure_tables))]
     shared = [item for item in own if id(item) in ids]
     assert shared == []
-    assert not [
-        v for v in vars(closure).values() if getattr(v, "__module__", "") == recording.__name__
+    for module in (closure, closure_tables):
+        assert not [
+            v for v in vars(module).values() if getattr(v, "__module__", "") == recording.__name__
+        ]
+    stdlib = {"__future__", "re", "ipaddress", "base64", "html", "urllib", "dataclasses"}
+    for name, allowed in (("closure", stdlib | {"closure_tables"}), ("closure_tables", stdlib)):
+        tree = ast.parse((ROOT / "src" / "repoach" / "forge" / f"{name}.py").read_text())
+        imported = {
+            alias.name.split(".")[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        } | {
+            (node.module or "").split(".")[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+        }
+        assert imported <= allowed, name
+    relative = [
+        (node.module, node.level)
+        for node in ast.walk(ast.parse((ROOT / "src/repoach/forge/closure.py").read_text()))
+        if isinstance(node, ast.ImportFrom) and node.module == "closure_tables"
     ]
-    tree = ast.parse((ROOT / "src" / "repoach" / "forge" / "closure.py").read_text())
-    imported = {
-        alias.name.split(".")[0]
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Import)
-        for alias in node.names
-    } | {
-        (node.module or "").split(".")[0]
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom)
-    }
-    assert imported <= {"__future__", "re", "ipaddress", "base64", "html", "urllib", "dataclasses"}
+    assert relative == [("closure_tables", 1)]
     sources = {p.pattern for p in redactor if isinstance(p, re.Pattern)}
     assert [
         p.pattern
@@ -435,10 +444,10 @@ def test_host_rule_tld_lists_reverse_dns_heads_and_extension_codes_by_enumeratio
     assert len(iso) == 249
     assert (
         set(iso) | set(reserved) | set(generic) | set(private)
-    ) - closure.EXTENSION_TLDS == closure.HOST_TLDS
-    assert {"eu", "su", "uk"} <= closure.HOST_TLDS and "ac" not in closure.HOST_TLDS
-    assert all(2 <= len(t) <= 12 and t.isascii() and t.islower() for t in closure.HOST_TLDS)
-    assert not closure.HOST_TLDS & closure.EXTENSION_TLDS
+    ) - closure_tables.EXTENSION_TLDS == closure_tables.HOST_TLDS
+    assert {"eu", "su", "uk"} <= closure_tables.HOST_TLDS and "ac" not in closure_tables.HOST_TLDS
+    assert all(2 <= len(t) <= 12 and t.isascii() and t.islower() for t in closure_tables.HOST_TLDS)
+    assert not closure_tables.HOST_TLDS & closure_tables.EXTENSION_TLDS
     assert {
         "ac",
         "am",
@@ -463,7 +472,7 @@ def test_host_rule_tld_lists_reverse_dns_heads_and_extension_codes_by_enumeratio
         "st",
         "sv",
         "tf",
-    } == closure.EXTENSION_TLDS
+    } == closure_tables.EXTENSION_TLDS
     for diagnostic in (
         "kernel/foo.bar.cu:12:3: error: undefined",
         "top/core.alu.sv:33: syntax error",
@@ -479,19 +488,29 @@ def test_host_rule_tld_lists_reverse_dns_heads_and_extension_codes_by_enumeratio
         assert closure.hosts(diagnostic) == [], diagnostic
         assert closure.judge(diagnostic, closure.Known(())) is None, diagnostic
     for code in ("com", "io", "dev", "ai", "de", "fr", "internal", "local", "corp", "example"):
-        assert code in closure.HOST_TLDS
-    for head in closure.REVERSE_DNS_HEADS:
-        assert head in closure.HOST_TLDS
+        assert code in closure_tables.HOST_TLDS
+    for head in closure_tables.REVERSE_DNS_HEADS:
+        assert head in closure_tables.HOST_TLDS
         assert closure.hosts(f"{head}.acme.tools/x") == []
-    assert {"com", "org", "net", "io", "dev", "me", "co", "edu", "gov"} == closure.REVERSE_DNS_HEADS
+    assert {
+        "com",
+        "org",
+        "net",
+        "io",
+        "dev",
+        "me",
+        "co",
+        "edu",
+        "gov",
+    } == closure_tables.REVERSE_DNS_HEADS
     assert closure.hosts("a.b.zq/x") == []
-    for tld in sorted(closure.HOST_TLDS):
+    for tld in sorted(closure_tables.HOST_TLDS):
         found = closure.hosts(f"see svc.acme.{tld}/x now")
         assert [h.host for h in found] == [f"svc.acme.{tld}"], tld
         assert found[0].led is False
         assert closure.hosts(f"see svc.acme.{tld} now") == [], tld
         assert closure.hosts(f"see acme.{tld}/x now") == [], tld
-    for tld in sorted(closure.EXTENSION_TLDS):
+    for tld in sorted(closure_tables.EXTENSION_TLDS):
         assert closure.hosts(f"see svc.acme.{tld}/x now") == [], tld
         led = closure.hosts(f"see https://svc.acme.{tld} now")
         assert [h.host for h in led] == [f"svc.acme.{tld}"], tld
@@ -544,7 +563,7 @@ def test_ipv4_rule_reserved_table_version_lead_and_led_addresses_by_enumeration(
         "224.0.0.0/4",
         "240.0.0.0/4",
     ]
-    assert [str(n) for n in closure.IPV4_RESERVED] == networks
+    assert [str(n) for n in closure_tables.IPV4_RESERVED] == networks
     for net in map(ipaddress.IPv4Network, networks):
         for address in (net[0], net[-1]):
             assert not closure.is_public_address(str(address))
@@ -731,8 +750,8 @@ def test_public_allowlist_and_placeholder_class_by_enumeration() -> None:
         "mend.io",
         "apache.org",
     }
-    assert suffixes == closure.PUBLIC_SUFFIXES
-    assert len(closure.PUBLIC_SUFFIXES) == 28
+    assert suffixes == closure_tables.PUBLIC_SUFFIXES
+    assert len(closure_tables.PUBLIC_SUFFIXES) == 28
     assert closure.is_public_host("api.nuget.org") and not closure.is_public_host("nuget.com")
     for suffix in suffixes:
         assert closure.is_public_host(suffix)
@@ -988,7 +1007,7 @@ def test_judge_orders_its_reasons_and_blanks_literals() -> None:
     assert closure.residual("zqdeny", closure.Known((("deny-list", "zqdeny"),))) == ("deny-list", 1)
     assert closure.KINDS == ("login", "host", "segment", "id", "name", "mailbox")
     assert (*closure.KINDS, "deny-list") == closure.JUDGED_KINDS
-    assert {"http", "https", "ssh", "git", "ftp", "ftps"} == closure.URL_SCHEMES
+    assert {"http", "https", "ssh", "git", "ftp", "ftps"} == closure_tables.URL_SCHEMES
 
 
 def test_refusal_reasons_name_a_kind_and_a_position_never_a_value() -> None:

@@ -32,7 +32,7 @@ import pytest
 import yaml
 from structlog.testing import capture_logs
 
-from repoach.forge import closure, fixture_judge, recording
+from repoach.forge import closure, fixture_judge, recording, recording_tables
 from repoach.forge import denylist as deny_list
 from repoach.forge.github import GitHubForge
 from repoach.forge.gitlab import GitLabForge
@@ -5167,10 +5167,10 @@ def test_known_values_read_bracketed_ipv6_hosts_and_the_names_of_git_authors() -
 def test_language_keywords_after_an_at_sign_are_no_mention() -> None:
     """D2 (0.20, C10 and C11): every word a language specification defines after ``@`` is code; a userinfo blocks a mention."""
     sets = {
-        "PYTHON_DECORATORS": recording.PYTHON_DECORATORS,
-        "CSS_AT_RULES": recording.CSS_AT_RULES,
-        "DOC_TAGS": recording.DOC_TAGS,
-        "LANGUAGE_ANNOTATIONS": recording.LANGUAGE_ANNOTATIONS,
+        "PYTHON_DECORATORS": recording_tables.PYTHON_DECORATORS,
+        "CSS_AT_RULES": recording_tables.CSS_AT_RULES,
+        "DOC_TAGS": recording_tables.DOC_TAGS,
+        "LANGUAGE_ANNOTATIONS": recording_tables.LANGUAGE_ANNOTATIONS,
     }
     union: set[str] = set()
     for name, words in sets.items():
@@ -5194,9 +5194,9 @@ def test_language_keywords_after_an_at_sign_are_no_mention() -> None:
         "swash",
         "when",
     ):
-        assert word in recording.CSS_AT_RULES, word
+        assert word in recording_tables.CSS_AT_RULES, word
     for word in ("param", "returns", "throws", "inheritdoc", "var", "see", "brief", "retval", "a"):
-        assert word in recording.DOC_TAGS, word
+        assert word in recording_tables.DOC_TAGS, word
     for word in (
         "override",
         "suppresswarnings",
@@ -5206,9 +5206,9 @@ def test_language_keywords_after_an_at_sign_are_no_mention() -> None:
         "required",
         "state",
     ):
-        assert word in recording.LANGUAGE_ANNOTATIONS, word
+        assert word in recording_tables.LANGUAGE_ANNOTATIONS, word
     for word in ("dataclass_transform", "abstractproperty", "member", "verify"):
-        assert word in recording.PYTHON_DECORATORS, word
+        assert word in recording_tables.PYTHON_DECORATORS, word
     for body, handles in (
         ("cc @zqperson and @Autowired and @Component", ["zqperson", "Autowired", "Component"]),
         ("@param x and @zqother", ["zqother"]),
@@ -5353,7 +5353,7 @@ def test_a_lone_path_segment_after_a_host_is_a_page_not_a_namespace() -> None:
 def test_a_reserved_route_word_is_never_an_identity() -> None:
     """D1b, D7 source 3 (0.22): a path led by a word a forge reserves names no one on any host; the word is written, never learnt; an identity after one is NG4-14."""
     identity = recording.path_identity
-    words = recording._RESERVED_ROUTE_WORDS
+    words = recording_tables.RESERVED_ROUTE_WORDS
     gitlab = {
         "uploads",
         "help",
@@ -5718,7 +5718,7 @@ def test_a_package_tarball_before_a_dash_names_no_one() -> None:
 def test_a_remote_path_names_a_repository_by_construction() -> None:
     """D7 source 1 (0.23, B1): the recorded remote reads ``<ns>/…/<repo>`` whatever its first word; the reserved-word rule is a URL path's, so a remote namespace that is a reserved word (``assets``, ``jwt``: real GitHub accounts) still yields its identity, live and offline alike."""
     identity = recording.path_identity
-    for word in sorted(recording._RESERVED_ROUTE_WORDS):
+    for word in sorted(recording_tables.RESERVED_ROUTE_WORDS):
         assert identity([word, "zqr"]) == recording.PathIdentity([word, "zqr"]), word
         assert identity([word, "zqr.git"], remote=True) == recording.PathIdentity(
             ["org", "project.git"], (word,), "zqr"
@@ -6028,11 +6028,11 @@ def test_a_github_api_path_names_a_repository_only_through_a_rest_route() -> Non
         "repos/kvnteam/kvnbilling%2Fpulls",
     ):
         assert read(text) == [], text
-    assert len(recording._GITHUB_REPO_API_ROUTES) == 74
+    assert len(recording_tables.GITHUB_REPO_API_ROUTES) == 74
     assert {"pulls", "issues", "hooks", "branches", "commits", "contents", "git"} <= (
-        recording._GITHUB_REPO_API_ROUTES
+        recording_tables.GITHUB_REPO_API_ROUTES
     )
-    assert all(word == word.casefold() for word in recording._GITHUB_REPO_API_ROUTES)
+    assert all(word == word.casefold() for word in recording_tables.GITHUB_REPO_API_ROUTES)
     found = needles(
         _stderr_call("repos/settings/kvnbilling/pulls/5 and the settings page"), roles={}
     )
@@ -6734,7 +6734,7 @@ def test_css_at_rules_are_no_mention_and_the_other_handles_stay() -> None:
         "warn",
         "while",
     ]
-    assert frozenset(expected) <= recording.CSS_AT_RULES
+    assert frozenset(expected) <= recording_tables.CSS_AT_RULES
     for rule in expected:
         assert recording.mentions({"body": f"@{rule} {{ a: b }}"}) == [], rule
         assert recording.mentions({"body": f"@{rule.upper()} x"}) == [], rule
@@ -6745,8 +6745,8 @@ def test_css_at_rules_are_no_mention_and_the_other_handles_stay() -> None:
         "media-person",
         "fontface",
     ]
-    assert "font-face" in recording.CSS_AT_RULES and "media" in recording.CSS_AT_RULES
-    assert all(rule == rule.casefold() for rule in recording.CSS_AT_RULES)
+    assert "font-face" in recording_tables.CSS_AT_RULES and "media" in recording_tables.CSS_AT_RULES
+    assert all(rule == rule.casefold() for rule in recording_tables.CSS_AT_RULES)
 
 
 def test_offline_roles_read_the_logins_under_the_keys_the_redaction_drops() -> None:
