@@ -33,7 +33,7 @@ import pytest
 import yaml
 from structlog.testing import capture_logs
 
-from repoach.forge import closure, fixture_judge, recording, recording_tables
+from repoach.forge import closure, closure_tables, fixture_judge, recording, recording_tables
 from repoach.forge import denylist as deny_list
 from repoach.forge.github import GitHubForge
 from repoach.forge.gitlab import GitLabForge
@@ -7307,21 +7307,22 @@ def test_the_recorders_public_functions_document_their_arguments_and_value() -> 
     function returning ``None`` needs no ``Returns:``.
     """
     missing = []
-    for rel in (
-        "scripts/record_forge_fixture.py",
-        "scripts/redact_forge_fixtures.py",
-        "src/repoach/forge/closure.py",
-        "src/repoach/forge/closure_tables.py",
-        "src/repoach/forge/recording.py",
-        "src/repoach/forge/recording_tables.py",
-        "src/repoach/forge/denylist.py",
-        "src/repoach/forge/fixture_judge.py",
+    for module in (
+        rec,
+        redact_fixtures,
+        closure,
+        closure_tables,
+        recording,
+        recording_tables,
+        deny_list,
+        fixture_judge,
     ):
-        for node in _public_functions(ast.parse((ROOT / rel).read_text())):
+        rel = module.__name__
+        for node in _public_functions(ast.parse(inspect.getsource(module))):
             arguments = [
                 a.arg for a in node.args.args + node.args.kwonlyargs if a.arg not in ("self", "cls")
             ]
-            if len(arguments) < (1 if rel.startswith("scripts/") else 2):
+            if len(arguments) < (2 if rel.startswith("repoach.") else 1):
                 continue
             doc = ast.get_docstring(node) or ""
             returns_none = isinstance(node.returns, ast.Constant) and node.returns.value is None
