@@ -10780,6 +10780,30 @@ ROWS: tuple[Row, ...] = (
         inp=Sample(body="DATABASE_URL=postgres://app:zqpw4471@x@localhost/db"),
         outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
     ),
+    Row(
+        id="r5_tenant_path_bare_is_refused",
+        source="PR #319 review round 5 (4683464700)",
+        inp=Sample(body="see stackoverflow.com/c/kvnteam77 for the setting"),
+        outcome=Refused("tenant path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r5_tenant_path_protocol_relative_is_refused",
+        source="PR #319 review round 5 (4683464700)",
+        inp=Sample(body="see //stackoverflow.com/c/kvnteam77/questions/1 x"),
+        outcome=Refused("tenant path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r5_tenant_path_after_a_port_is_refused",
+        source="PR #319 review round 5 (4683464700)",
+        inp=Sample(body="see stackoverflow.com:443/c/kvnteam77/questions/1 x"),
+        outcome=Refused("tenant path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r5_tenant_path_in_a_markdown_link_is_refused",
+        source="PR #319 review round 5 (4683464700)",
+        inp=Sample(body="[team](stackoverflow.com/c/kvnteam77)"),
+        outcome=Refused("tenant path at exchanges[0].stdout[0].body"),
+    ),
 )
 
 
@@ -11232,10 +11256,10 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
     refused = [row for row in ROWS if isinstance(row.outcome, Refused)]
     bounded = [row for row in ROWS if isinstance(row.outcome, Bounded)]
     assert (len(ROWS), len(planted), len(ordinary), len(refused), len(bounded)) == (
-        927,
-        635,
+        931,
+        639,
         292,
-        88,
+        92,
         2,
     )
     assert len(residual) == 25

@@ -270,14 +270,39 @@ def is_tenant_path(host: str, path: str) -> bool:
     )
 
 
-def _path_after(text: str, end: int) -> str:
-    """The URL path right after offset ``end``: from a ``/`` to the next space, ``?`` or ``#``."""
-    if text[end : end + 1] != "/":
-        return ""
-    stop = end
-    while stop < len(text) and not text[stop].isspace() and text[stop] not in "?#\"'<>":
-        stop += 1
-    return text[end:stop]
+def _tenant_route_re() -> re.Pattern[str]:
+    """One pattern for every tenant route of :data:`TENANT_ROUTES`, read lexically after its host.
+
+    The host is the suffix or any name under it, not preceded by a letter, digit or ``-``
+    (``xstackoverflow.com`` is another host); an optional trailing dot and ``:<port>`` follow,
+    then ``/`` (one or more), the route word, ``/`` and a segment. Nothing before the host is
+    required, so a scheme, ``//``, a bare host and a Markdown link are one case. The suffix is
+    matched first and the labels before it are never read, so the scan stays linear.
+    """
+    alternatives = []
+    for suffix, routes in sorted(TENANT_ROUTES.items()):
+        words = "|".join(re.escape(word) for word in sorted(routes))
+        alternatives.append(rf"{re.escape(suffix)}\.?(?::[0-9]*)?/+(?:{words})/+[^/\s?#\"'<>]")
+    return re.compile(rf"(?<![A-Za-z0-9-])(?:{'|'.join(alternatives)})", re.IGNORECASE)
+
+
+_TENANT_ROUTE_RE = _tenant_route_re()
+
+
+def has_tenant_path(text: str) -> bool:
+    """Whether ``text`` holds a tenant route after its public host, whatever leads the host.
+
+    A Stack Overflow for Teams route (``stackoverflow.com/c/<team>``) is judged by host and path
+    only: after ``https://``, after ``//``, bare, after a port (``stackoverflow.com:443/c/<team>``)
+    or inside a Markdown link, under ``www.`` or any other label of the suffix.
+
+    Args:
+        text: The text read, one decoded form of it.
+
+    Returns:
+        ``True`` when a tenant route of :data:`TENANT_ROUTES` stands after its host.
+    """
+    return _TENANT_ROUTE_RE.search(text) is not None
 
 
 def is_doc_mailbox_host(host: str) -> bool:
@@ -777,8 +802,9 @@ def residual(text: str, known: Known) -> tuple[str, int] | None:
 def judge(text: str, known: Known) -> Refusal | None:
     r"""What the oracle refuses in ``text``: a known value, a tenant path, an unknown host, a public address, an unknown mailbox or a URL userinfo.
 
-    A public host followed by a tenant route (:func:`is_tenant_path`) is refused as a
-    ``tenant path``: the host is public, the customer's surface after it is not.
+    A public host followed by a tenant route (:func:`has_tenant_path`) is refused as a
+    ``tenant path`` whatever leads the host (a scheme, ``//``, nothing, a port, a Markdown link):
+    the host is public, the customer's surface after it is not.
 
     A URL userinfo (:func:`userinfos`, read by URL grammar) is judged as the mailbox it spells,
     ``<userinfo>@<host>`` (:func:`is_literal_mailbox`): ``git`` on a placeholder-class host and a
@@ -797,12 +823,8 @@ def judge(text: str, known: Known) -> Refusal | None:
     if left is not None:
         return Refusal("residual", left[0], left[1])
     forms = decoded_forms(_blank(text, known.literals))
-    for form in forms:
-        for place in hosts(form):
-            if is_public_host(place.host) and is_tenant_path(
-                place.host, _path_after(form, place.end)
-            ):
-                return Refusal("tenant path")
+    if any(has_tenant_path(form) for form in forms):
+        return Refusal("tenant path")
     for place in (h for form in forms for h in hosts(form)):
         if is_placeholder_host(place.host) or is_public_host(place.host):
             continue

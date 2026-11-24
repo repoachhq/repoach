@@ -1883,3 +1883,36 @@ def test_a_url_userinfo_is_read_by_grammar_whatever_it_holds() -> None:
         "postgres://app@localhost:5432/db",
     ):
         assert closure.judge(text, none) is None, text
+
+
+def test_a_tenant_route_is_refused_whatever_leads_its_host() -> None:
+    """D8 (PR #319 round 5, 4683464700): a tenant route is judged by host and path, lexically.
+
+    A scheme, ``//``, a bare host, a port and a Markdown link lead it alike; the redactor keeps
+    no such URL and the oracle refuses every one.
+    """
+    none = closure.Known(())
+    for text in (
+        "see stackoverflow.com/c/kvnteam77 for the setting",
+        "see https://stackoverflow.com/c/kvnteam77 for x",
+        "see https://stackoverflow.com:443/c/kvnteam77/questions/1 x",
+        "see stackoverflow.com:443/c/kvnteam77/questions/1 x",
+        "see //stackoverflow.com/c/kvnteam77 x",
+        "see www.stackoverflow.com/c/kvnteam77 x",
+        "[team](stackoverflow.com/c/kvnteam77)",
+        "see STACKOVERFLOW.COM./C//kvnteam77 x",
+        "see https%3A%2F%2Fstackoverflow.com%2Fc%2Fkvnteam77 x",
+    ):
+        assert closure.judge(text, none) == closure.Refusal("tenant path"), text
+        assert any(closure.has_tenant_path(form) for form in closure.decoded_forms(text)), text
+    for text in (
+        "see https://stackoverflow.com/questions/12/how",
+        "see https://stackoverflow.com/collectives/x",
+        "see stackoverflow.com/c and stackoverflow.com/c/",
+        "see xstackoverflow.com/c/kvnteam77",
+        "see pypi.org/c/kvnteam77",
+    ):
+        assert not closure.has_tenant_path(text), text
+    started = time.perf_counter()
+    assert not closure.has_tenant_path("a." * 20000 + "stackoverflow.com/q")
+    assert time.perf_counter() - started < 2.0
