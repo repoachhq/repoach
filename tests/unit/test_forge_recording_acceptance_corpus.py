@@ -2428,9 +2428,7 @@ ROWS: tuple[Row, ...] = (
             remote="git@github.com:zqpuborg/zqpubrepo.git",
             deny=("zqdenyval",),
         ),
-        outcome=Written(
-            text='```dockerfile\nFROM docker.io/library/python:3.12-slim\nCOPY --from=ghcr.io/astral-sh/uv:0.4.0 /uv /bin/uv\n```\n```go\nimport (\n\t"golang.org/x/sync/errgroup"\n\t"k8s.io/client-go/kubernetes"\n)\n```\nSee https://pkg.go.dev/golang.org/x/sync/errgroup and https://proxy.golang.org/ and https://registry.npmjs.org/typescript\n'
-        ),
+        outcome=Refused("tenant path at exchanges[0].stdout[0].body"),
     ),
     Row(
         id="reg_self_hosted_gitlab_empty_remote_with_docs_python_and_mdn",
@@ -3388,9 +3386,7 @@ ROWS: tuple[Row, ...] = (
             remote="git@github.com:pubteam9/pubrepo9.git",
             deny=("kvnsecret42",),
         ),
-        outcome=Written(
-            text="Pulling from docker.io/library/python:3.12-slim\nPulling from ghcr.io/astral-sh/uv:latest"
-        ),
+        outcome=Refused("tenant path at exchanges[0].stdout[0].body"),
     ),
     Row(
         id="r10_o05_go_mod_download_golang_and_github",
@@ -10906,6 +10902,62 @@ ROWS: tuple[Row, ...] = (
         inp=Sample(body="voir https://fr.wikipedia.org/wiki/Café et josé@example.com"),
         outcome=Written(text="voir https://fr.wikipedia.org/wiki/Café et josé@example.com"),
     ),
+    Row(
+        id="r6_ghcr_namespace_bare_is_refused",
+        source="PR #319 review round 6 (4684965389)",
+        inp=Sample(body="COPY --from=ghcr.io/kvnorg/kvnimage:1.0 /x /x"),
+        outcome=Refused("tenant path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r6_ghcr_namespace_url_is_rewritten",
+        source="PR #319 review round 6 (4684965389)",
+        inp=Sample(body="see https://ghcr.io/kvnorg/kvnimage now"),
+        outcome=Written(text="see https://forge.example.com/org/project now"),
+        markers=("kvnorg", "kvnimage"),
+    ),
+    Row(
+        id="r6_ghcr_oci_api_path_is_rewritten",
+        source="PR #319 review round 6 (4684965389)",
+        inp=Sample(body="GET https://ghcr.io/v2/kvnorg/kvnimage/manifests/latest"),
+        outcome=Written(text="GET https://forge.example.com/org/project"),
+        markers=("kvnorg", "kvnimage"),
+    ),
+    Row(
+        id="r6_docker_hub_namespace_bare_is_refused",
+        source="PR #319 review round 6 (4684965389)",
+        inp=Sample(body="FROM docker.io/kvnorg/redis:7"),
+        outcome=Refused("tenant path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r6_docker_hub_oci_api_path_is_rewritten",
+        source="PR #319 review round 6 (4684965389)",
+        inp=Sample(body="GET https://registry-1.docker.io/v2/kvnorg/app/manifests/latest"),
+        outcome=Written(text="GET https://forge.example.com/org/project"),
+        markers=("kvnorg",),
+    ),
+    Row(
+        id="r6_npm_user_page_is_rewritten",
+        source="PR #319 review round 6 (4684965389)",
+        inp=Sample(body="see https://www.npmjs.com/~kvnuser now"),
+        outcome=Written(text="see https://forge.example.com/org now"),
+        markers=("kvnuser",),
+    ),
+    Row(
+        id="r6_jsdelivr_github_proxy_bare_is_refused",
+        source="PR #319 review round 6 (4684965389)",
+        inp=Sample(body="load cdn.jsdelivr.net/gh/kvnuser/kvnrepo@1/x.js now"),
+        outcome=Refused("tenant path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r6_public_registry_pages_stay_ordinary",
+        source="PR #319 review round 6 (4684965389)",
+        inp=Sample(
+            body="FROM docker.io/library/python:3.12-slim, https://pypi.org/project/ruff/, https://www.npmjs.com/package/typescript and https://cdn.jsdelivr.net/npm/lodash@4/x.js"
+        ),
+        outcome=Written(
+            text="FROM docker.io/library/python:3.12-slim, https://pypi.org/project/ruff/, https://www.npmjs.com/package/typescript and https://cdn.jsdelivr.net/npm/lodash@4/x.js"
+        ),
+    ),
 )
 
 
@@ -11358,10 +11410,10 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
     refused = [row for row in ROWS if isinstance(row.outcome, Refused)]
     bounded = [row for row in ROWS if isinstance(row.outcome, Bounded)]
     assert (len(ROWS), len(planted), len(ordinary), len(refused), len(bounded)) == (
-        947,
-        652,
-        295,
-        104,
+        955,
+        661,
+        294,
+        109,
         2,
     )
     assert len(residual) == 25

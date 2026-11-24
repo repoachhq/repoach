@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from urllib.parse import unquote
 
 from .closure_tables import (
+    ACCOUNT_NAMESPACES,
     HOST_TLDS,
     IPV4_RESERVED,
     IPV6_DOCUMENTATION,
@@ -259,31 +260,53 @@ def is_tenant_path(host: str, path: str) -> bool:
 
     Returns:
         ``True`` when the first segment of ``path`` is a tenant route of ``host``'s suffix and a
-        segment follows it (``stackoverflow.com/c/<team>``).
+        segment follows it (``stackoverflow.com/c/<team>``), or when ``host``'s suffix is an
+        :data:`ACCOUNT_NAMESPACES` one and the path's namespace segment (after an optional
+        ``v2``) starts with its lead and is not one no account holds (``ghcr.io/<owner>/…``).
     """
     folded = _canonical_host(host)
-    segments = path.lstrip("/").split("/")
-    if len(segments) < 2 or not segments[1]:
-        return False
-    return any(
-        (folded == suffix or folded.endswith("." + suffix)) and segments[0].casefold() in routes
-        for suffix, routes in TENANT_ROUTES.items()
-    )
+    segments = [s for s in path.split("/") if s]
+    for suffix, routes in TENANT_ROUTES.items():
+        under = folded == suffix or folded.endswith("." + suffix)
+        if under and len(segments) >= 2 and segments[0].casefold() in routes:
+            return True
+    namespaces = segments[1:] if segments[:1] and segments[0].casefold() == "v2" else segments
+    for suffix, (lead, public) in ACCOUNT_NAMESPACES.items():
+        if not (folded == suffix or folded.endswith("." + suffix)) or not namespaces:
+            continue
+        namespace = namespaces[0].casefold()
+        if namespace.startswith(lead) and namespace[len(lead) :] and namespace not in public:
+            return True
+    return False
+
+
+_SEGMENT_END = "/\\s?#\"'<>"
+"""What ends a path segment read lexically: ``/``, whitespace, a query or fragment mark and the prose delimiters."""
 
 
 def _tenant_route_re() -> re.Pattern[str]:
-    """One pattern for every tenant route of :data:`TENANT_ROUTES`, read lexically after its host.
+    """One pattern for every tenant route and account namespace, read lexically after its host.
 
     The host is the suffix or any name under it, not preceded by a letter, digit or ``-``
     (``xstackoverflow.com`` is another host); an optional trailing dot and ``:<port>`` follow,
-    then ``/`` (one or more), the route word, ``/`` and a segment. Nothing before the host is
-    required, so a scheme, ``//``, a bare host and a Markdown link are one case. The suffix is
-    matched first and the labels before it are never read, so the scan stays linear.
+    then ``/`` (one or more) and, for :data:`TENANT_ROUTES`, the route word, ``/`` and a
+    segment, or, for :data:`ACCOUNT_NAMESPACES`, an optional ``v2/`` and a namespace segment
+    led by its lead that is not one no account holds (``docker.io/library/…`` is public; a
+    namespace followed by ``:``, as in ``ghcr.io/<owner>:tag``, is still read). Nothing before
+    the host is required, so a scheme, ``//``, a bare host and a Markdown link are one case.
+    The suffix is matched first and the labels before it are never read, so the scan stays
+    linear.
     """
     alternatives = []
+    host = r"\.?(?::[0-9]*)?/+"
     for suffix, routes in sorted(TENANT_ROUTES.items()):
         words = "|".join(re.escape(word) for word in sorted(routes))
-        alternatives.append(rf"{re.escape(suffix)}\.?(?::[0-9]*)?/+(?:{words})/+[^/\s?#\"'<>]")
+        alternatives.append(rf"{re.escape(suffix)}{host}(?:{words})/+[^{_SEGMENT_END}]")
+    for suffix, (lead, public) in sorted(ACCOUNT_NAMESPACES.items()):
+        ends = rf"(?:[{_SEGMENT_END}:@]|$)"
+        exempt = "".join(rf"(?!{re.escape(word)}{ends})" for word in sorted(public))
+        segment = rf"{exempt}{re.escape(lead)}[^{_SEGMENT_END}]"
+        alternatives.append(rf"{re.escape(suffix)}{host}(?:v2/+{segment}|(?!v2{ends}){segment})")
     return re.compile(rf"(?<![A-Za-z0-9-])(?:{'|'.join(alternatives)})", re.IGNORECASE)
 
 

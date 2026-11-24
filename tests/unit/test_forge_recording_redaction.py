@@ -2727,7 +2727,6 @@ def test_third_party_links_under_empty_remote_and_public_reference_hosts() -> No
 
     prose = (
         "FROM docker.io/library/python:3.12-slim\n"
-        "Pulling ghcr.io/astral-sh/uv:0.4.0\n"
         'import "golang.org/x/sync/errgroup"\n'
         'import "k8s.io/apimachinery/pkg/apis/meta/v1"\n'
         "https://pypi.org/project/ruff/\n"
@@ -2737,6 +2736,9 @@ def test_third_party_links_under_empty_remote_and_public_reference_hosts() -> No
     )
     assert redact_urls_in_text(prose) == prose
     assert not unredacted_host(prose)
+    image = "Pulling ghcr.io/astral-sh/uv:0.4.0\n"
+    assert redact_urls_in_text(image) == image
+    assert closure.judge(image, closure.Known(())) == closure.Refusal("tenant path")
     raw_ref = _one_call({"url": "https://github.com/own-x/repo-y/pull/42", "body": prose})
     found_ref = needles(
         raw_ref, roles={"zqxlogin": "author"}, remote="git@github.com:own-x/repo-y.git"

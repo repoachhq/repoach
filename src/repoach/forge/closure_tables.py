@@ -463,8 +463,9 @@ PUBLIC_SUFFIXES: frozenset[str] = frozenset(
 
 A suffix is listed only when no host under it is a tenant surface: a console or an API whose
 path names a customer's account (PR #319 round 4 audit). A vendor that runs one under the same
-suffix is listed by its documentation and CDN hosts instead (:data:`PUBLIC_HOSTS`), and a
-tenant route on a listed host is :data:`TENANT_ROUTES`. Audited, every suffix here: the
+suffix is listed by its documentation and CDN hosts instead (:data:`PUBLIC_HOSTS`), a tenant
+or account route on a listed host is :data:`TENANT_ROUTES`, and a listed host whose first path
+segment is an account is :data:`ACCOUNT_NAMESPACES` (round 6). Audited, every suffix here: the
 registries (``crates.io``, ``docker.io``, ``ghcr.io``, ``npmjs.com``, ``npmjs.org``,
 ``npmmirror.com``, ``nuget.org``, ``pypi.org``, ``pythonhosted.org``, ``yarnpkg.com``,
 ``unpkg.com``, ``jsdelivr.net``, ``k8s.io``) name a public package, image or account in their
@@ -498,9 +499,37 @@ hosts and their apex and ``www`` sites (the vendor pages a bot footer links,
 ``https://www.mend.io/``) are public, each exactly; any other host under them is unknown.
 """
 
-TENANT_ROUTES: dict[str, frozenset[str]] = {"stackoverflow.com": frozenset({"c"})}
-"""First path segments that open a tenant surface on a public host, by registrable suffix (PR #319 round 4).
+TENANT_ROUTES: dict[str, frozenset[str]] = {
+    "crates.io": frozenset({"teams", "users"}),
+    "jsdelivr.net": frozenset({"gh"}),
+    "npmjs.com": frozenset({"org", "settings"}),
+    "nuget.org": frozenset({"profiles"}),
+    "pypi.org": frozenset({"org", "user"}),
+    "stackoverflow.com": frozenset({"c"}),
+}
+"""First path segments that open a tenant surface or name an account on a public host, by registrable suffix (PR #319 rounds 4 and 6).
 
 Stack Overflow for Teams serves a private team under ``stackoverflow.com/c/<team>/…``: the
-team and its questions are a customer's, so a URL on that route is not public.
+team and its questions are a customer's, so a URL on that route is not public. The other
+routes name an account in the segment after them, as ``github.com/<owner>`` does (round 6):
+a PyPI user or organisation, a crates.io user or team, a NuGet profile, an npm organisation
+or settings page, and jsDelivr's GitHub proxy (``cdn.jsdelivr.net/gh/<owner>/<repo>``). A
+Stack Overflow profile (``users/<id>/<name>``) is not one: the redactor rewrites a tenant URL
+through the forge route grammar, whose ``users/<u>`` slot keeps the segment after ``<u>``, so
+listing it would write the name rather than refuse it.
+"""
+
+ACCOUNT_NAMESPACES: dict[str, tuple[str, frozenset[str]]] = {
+    "docker.io": ("", frozenset({"library"})),
+    "ghcr.io": ("", frozenset()),
+    "npmjs.com": ("~", frozenset()),
+}
+"""Public hosts whose first path segment is an account, by registrable suffix: its lead and the namespaces no account holds (PR #319 round 6).
+
+The namespace segment is an identity slot, as ``github.com/<owner>`` is: ``ghcr.io/<owner>/…``
+is a GitHub login or organisation, ``docker.io/<namespace>/…`` (``registry-1.docker.io``
+included) a Docker Hub user or organisation, and ``npmjs.com/~<user>`` an npm user. An OCI
+distribution API path names it after ``v2/`` (``ghcr.io/v2/<owner>/<image>/manifests/…``).
+``library`` on ``docker.io`` holds the Docker Official Images and is no account. ``k8s.io``
+is not listed: every path under it is a Kubernetes project, which no account can publish to.
 """

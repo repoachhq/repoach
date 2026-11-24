@@ -1767,7 +1767,7 @@ def test_a_url_userinfo_is_refused_on_every_allowlisted_and_placeholder_host() -
         "git://GIT@forge.example.com/org/project.git",
         "See <https://forge.example.com><a@example.com> (host forge.example.com)",
         "DATABASE_URL=app:${DB_PASSWORD}@localhost:5432/db",
-        "image ghcr.io/o/r@sha256:abc and https://pypi.org/@scope",
+        "image docker.io/library/r@sha256:abc and https://pypi.org/@scope",
     ):
         assert closure.judge(text, none) is None, text
     for text in (
@@ -1814,7 +1814,22 @@ def test_a_vendor_with_tenant_consoles_is_public_by_its_documentation_hosts_only
         "www.mend.io",
         "www.renovatebot.com",
     } == closure_tables.PUBLIC_HOSTS
-    assert {"stackoverflow.com": frozenset({"c"})} == closure_tables.TENANT_ROUTES
+    assert {
+        "crates.io": frozenset({"teams", "users"}),
+        "jsdelivr.net": frozenset({"gh"}),
+        "npmjs.com": frozenset({"org", "settings"}),
+        "nuget.org": frozenset({"profiles"}),
+        "pypi.org": frozenset({"org", "user"}),
+        "stackoverflow.com": frozenset({"c"}),
+    } == closure_tables.TENANT_ROUTES
+    assert {
+        "docker.io": ("", frozenset({"library"})),
+        "ghcr.io": ("", frozenset()),
+        "npmjs.com": ("~", frozenset()),
+    } == closure_tables.ACCOUNT_NAMESPACES
+    assert set(closure_tables.TENANT_ROUTES) | set(closure_tables.ACCOUNT_NAMESPACES) <= (
+        closure_tables.PUBLIC_SUFFIXES
+    )
     assert not closure_tables.PUBLIC_HOSTS & closure_tables.PUBLIC_SUFFIXES
     for host in closure_tables.PUBLIC_HOSTS:
         assert closure.is_public_host(host) and closure.is_public_host(host.upper() + ".")
@@ -1978,3 +1993,76 @@ def test_a_host_on_an_internationalised_domain_is_read_by_the_ascii_grammar() ->
         "\u2460 \uff11\uff12\uff13 \u00bd",
     ):
         assert closure.judge(text, none) is None, ascii(text)
+
+
+def test_a_container_registry_namespace_is_an_identity_slot() -> None:
+    """D8 (PR #319 round 6, 4684965389): ``ghcr.io/<owner>`` is an account, as ``github.com/<owner>`` is.
+
+    Every namespace of :data:`repoach.forge.closure_tables.ACCOUNT_NAMESPACES` (after an optional
+    OCI ``v2/``) and every account route of :data:`repoach.forge.closure_tables.TENANT_ROUTES` is
+    refused as a ``tenant path`` whatever leads its host; the redactor rewrites such a URL to
+    the placeholder; the bare host, ``docker.io/library`` and a package page stay public.
+    """
+    none = closure.Known(())
+    refused = (
+        "pull ghcr.io/kvnorg/kvnimage:1.0",
+        "COPY --from=ghcr.io/kvnorg/kvnimage /x /x",
+        "see https://ghcr.io/kvnorg/kvnimage",
+        "GET https://ghcr.io/v2/kvnteam/kvnbilling/manifests/latest",
+        "GET https://ghcr.io/v2/kvnteam",
+        "[img](ghcr.io/kvnorg/x)",
+        "ghcr.io:443/kvnorg/x",
+        "//ghcr.io/kvnorg/x",
+        "GHCR.IO/KvnOrg/x",
+        "ghcr.io/kvnorg:latest",
+        "ghcr.io%2Fkvnorg%2Fx",
+        "FROM docker.io/kvnorg/redis:7",
+        "GET https://registry-1.docker.io/v2/kvnteam/app/manifests/latest",
+        "docker.io/libraryx/python",
+        "https://www.npmjs.com/~kvnuser",
+        "https://www.npmjs.com/org/kvnorg",
+        "https://pypi.org/user/kvnuser/",
+        "https://pypi.org/org/kvnorg/",
+        "https://crates.io/users/kvnuser",
+        "https://crates.io/teams/github:kvnorg:core",
+        "https://www.nuget.org/profiles/kvnuser",
+        "https://cdn.jsdelivr.net/gh/kvnuser/kvnrepo@1/x.js",
+    )
+    for text in refused:
+        assert closure.judge(text, none) == closure.Refusal("tenant path"), text
+    for text in (
+        "ghcr.io",
+        "see ghcr.io/ for images",
+        "ghcr.io/v2/",
+        "FROM docker.io/library/python:3.12-slim",
+        "FROM docker.io/Library/python",
+        "GET https://registry-1.docker.io/v2/library/nginx/manifests/latest",
+        "docker login https://docker.io/v2/",
+        "https://www.npmjs.com/package/typescript",
+        "https://www.npmjs.com/~",
+        "https://pypi.org/project/ruff/",
+        "https://crates.io/crates/serde",
+        "https://www.nuget.org/packages/Newtonsoft.Json",
+        "https://cdn.jsdelivr.net/npm/lodash@4/x.js",
+        "k8s.io/client-go/kubernetes",
+        "xghcr.io/kvnorg/x",
+    ):
+        assert closure.judge(text, none) is None, text
+    assert closure.is_tenant_path("ghcr.io", "/kvnorg/x")
+    assert closure.is_tenant_path("GHCR.io.", "//kvnorg")
+    assert closure.is_tenant_path("ghcr.io", "/v2/kvnorg/x/manifests/1")
+    assert closure.is_tenant_path("registry-1.docker.io", "/v2/kvnorg/app")
+    assert closure.is_tenant_path("www.npmjs.com", "/~kvnuser")
+    assert closure.is_tenant_path("pypi.org", "/user/kvnuser/")
+    assert not closure.is_tenant_path("ghcr.io", "/v2/")
+    assert not closure.is_tenant_path("ghcr.io", "")
+    assert not closure.is_tenant_path("registry-1.docker.io", "/v2/library/nginx")
+    assert not closure.is_tenant_path("docker.io", "/library/python")
+    assert not closure.is_tenant_path("www.npmjs.com", "/package/x")
+    assert not closure.is_tenant_path("www.npmjs.com", "/~")
+    assert not closure.is_tenant_path("xghcr.io", "/kvnorg")
+    rewritten = recording.redact_urls_in_text("see https://ghcr.io/kvnorg/kvnimage now")
+    assert rewritten == "see https://forge.example.com/org/project now"
+    started = time.perf_counter()
+    assert not closure.has_tenant_path("a." * 20000 + "ghcr.io")
+    assert time.perf_counter() - started < 2.0
