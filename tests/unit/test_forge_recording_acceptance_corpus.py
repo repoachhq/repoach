@@ -10282,6 +10282,94 @@ ROWS: tuple[Row, ...] = (
         markers=("kvnbilling",),
     ),
     Row(
+        id="v27_code_block_api_path_is_prose_NG4_16",
+        source="verify026/cells26.py",
+        inp=Sample(body="```\n$ gh api repos/kvnteam/kvnbilling/pulls/5/comments\n```"),
+        outcome=Written(text="```\n$ gh api repos/kvnteam/kvnbilling/pulls/5/comments\n```"),
+        residual=True,
+    ),
+    Row(
+        id="v27_gitlab_body_api_path_is_prose_NG4_16",
+        source="verify026/cells26.py",
+        inp=Sample(
+            forge="gitlab",
+            remote=f"git@{FAKE_HOST}:{FAKE_NS}/{FAKE_REPO}.git",
+            body="mirror repos/kvnteam/kvnbilling/pulls/5 broke",
+        ),
+        outcome=Written(text="mirror repos/kvnteam/kvnbilling/pulls/5 broke"),
+        residual=True,
+    ),
+    Row(
+        id="v27_raw_stdout_led_by_an_api_path_is_prose_NG4_16",
+        source="verify025/cells25.py",
+        inp=Sample(raw_text_stdout="repos/kvnteam/kvnbilling/pulls/5/comments\n+++ b/x\n"),
+        outcome=Written(text="repos/kvnteam/kvnbilling/pulls/5/comments\n+++ b/x\n"),
+        residual=True,
+    ),
+    Row(
+        id="v27_stderr_api_path_in_an_error_line_is_replaced",
+        source="verify026/cells26.py",
+        inp=Sample(stderr="HTTP 404: Not Found (repos/kvnteam/kvnbilling/pulls/5/comments)"),
+        outcome=Written(text="HTTP 404: Not Found (repos/org/project/pulls/5/comments)"),
+        markers=("kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v27_method_positional_arg_api_path_is_replaced",
+        source="verify025/cells25.py",
+        inp=Sample(top_args=(42, {"api": ["repos/kvnteam/kvnbilling/pulls/5/comments"]})),
+        outcome=Written(text='[42, {"api": ["repos/org/project/pulls/5/comments"]}]'),
+        markers=("kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v27_stdin_api_path_to_a_file_with_a_fragment_is_replaced",
+        source="verify026/cells26.py",
+        inp=Sample(stdin="GET repos/kvnteam/kvnbilling/contents/README.md#L3"),
+        outcome=Written(text="GET repos/org/project/contents/README.md#L3"),
+        markers=("kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v27_stdin_file_cited_in_a_sentence_is_ordinary",
+        source="verify026/cells26.py",
+        inp=Sample(stdin="repos/payments/ledger/releases/v1.md documents the ledger release"),
+        outcome=Written(text="repos/payments/ledger/releases/v1.md documents the ledger release"),
+    ),
+    Row(
+        id="v27_body_directory_path_under_repos_is_ordinary",
+        source="verify026/cells26.py",
+        inp=Sample(body="repos/payments/ledger/releases/v1.md documents the ledger for payments"),
+        outcome=Written(
+            text="repos/payments/ledger/releases/v1.md documents the ledger for payments"
+        ),
+    ),
+    Row(
+        id="v27_review_path_directory_under_repos_is_ordinary",
+        source="verify026/cells26.py",
+        inp=Sample(
+            body="the payments team owns ledger",
+            extra_item={"path": "repos/payments/ledger/releases/v1.md"},
+        ),
+        outcome=Written(
+            text="the payments team owns ledger",
+            fields=(("path", "repos/payments/ledger/releases/v1.md"),),
+        ),
+    ),
+    Row(
+        id="v27_code_block_directory_path_under_repos_is_ordinary",
+        source="verify026/cells26.py",
+        inp=Sample(body="```\n$ cat repos/frontend/src/tags/index.ts\n```\nthe src file"),
+        outcome=Written(text="```\n$ cat repos/frontend/src/tags/index.ts\n```\nthe src file"),
+    ),
+    Row(
+        id="v27_monorepo_layout_under_repos_is_ordinary",
+        source="verify026/cells26.py",
+        inp=Sample(
+            body="monorepo: repos/alpha/beta/releases/notes.md and repos/gamma/delta/tags/list.md"
+        ),
+        outcome=Written(
+            text="monorepo: repos/alpha/beta/releases/notes.md and repos/gamma/delta/tags/list.md"
+        ),
+    ),
+    Row(
         id="v26_text_api_path_with_a_file_after_the_repository_is_ordinary",
         source="fix026/probe_rows.py",
         inp=Sample(body="repos/kvnwork/kvnfiles/main.py stays where kvnwork keeps it"),
@@ -10744,16 +10832,16 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
     assert all(_is_planted(row) for row in residual)
     refused = [row for row in ROWS if isinstance(row.outcome, Refused)]
     assert (len(ROWS), len(planted), len(ordinary), len(refused), len(residual)) == (
-        872,
-        603,
-        269,
+        883,
+        609,
+        274,
         74,
-        22,
+        25,
     )
     assert all(not row.residual for row in refused)
     prose = [row for row in ROWS if "NG4_16" in row.id]
-    assert len(prose) == 4 and all(row.residual for row in prose)
-    assert {_position(row.inp) for row in prose} == {"body"}
+    assert len(prose) == 7 and all(row.residual for row in prose)
+    assert {_position(row.inp) for row in prose} == {"body", "stdout"}
     assert sum("path" in row.inp.extra_item for row in prose) == 1
     assert [row.id for row in ROWS if row.url_field_class] == [
         "v26_url_field_namespace_keeps_its_class_before_an_argv_repository"

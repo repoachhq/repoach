@@ -6031,8 +6031,111 @@ def test_an_api_path_is_read_in_the_structured_sources_of_a_call_only() -> None:
     ]
 
 
+def test_an_api_path_cited_in_prose_is_the_named_residual_ng4_16() -> None:
+    """NG4-16 (0.27): an API path cited in prose names no one and is written as it stands: a body, a code block, a review path, a raw stdout, and a file a sentence cites inside a structured source; the same path as a call (a query, a fragment, a closing delimiter or nothing after it) is read."""
+    path = "repos/kvnteam/kvnbilling/pulls/5/comments"
+    for raw, text in (
+        (_one_call([{"body": f"{path} returns 404"}]), f"{path} returns 404"),
+        (_one_call([{"body": "see", "path": path}]), path),
+        (_one_call(f"{path}\n+++ b/x\n"), path),
+    ):
+        found = needles(raw, roles={})
+        assert _kinds(found, "segment") == [], raw
+        assert recording.replace_known(text, found) == text
+    read = recording._api_path_projects
+    owner = [("kvnpay", "kvnledger")]
+    for text in (
+        "repos/kvnpay/kvnledger/releases/v1.md documents the release",
+        "repos/kvnpay/kvnledger/tags/index.ts lists the tags",
+        "repos/kvnpay/kvnledger/contents/main.tf, then more",
+        "repos/kvnpay/kvnledger/contents/main.tf: the file",
+        "repos/kvnpay/kvnledger/contents/main.tf; the file",
+        "repos/kvnpay/kvnledger/contents/main.tf! the file",
+        "repos/kvnpay/kvnledger/contents/main.tf. The file",
+        "repos/kvnpay/kvnledger/contents/A.Yaml\tholds it",
+        "repos/kvnpay/kvnledger/contents/a.b12345 holds it",
+        "repos/kvnpay/kvnledger/contents/a.b holds it",
+        "repos/kvnpay/kvnledger/contents/a.md  holds it",
+    ):
+        assert read(text) == [], text
+    for text in (
+        "GET repos/kvnpay/kvnledger/contents/README.md",
+        "GET repos/kvnpay/kvnledger/contents/README.md#L3",
+        "GET repos/kvnpay/kvnledger/contents/README.md?ref=main for it",
+        "HTTP 404 (repos/kvnpay/kvnledger/contents/README.md)",
+        "repos/kvnpay/kvnledger/contents/README.md.",
+        "repos/kvnpay/kvnledger/contents/README.md ",
+        "repos/kvnpay/kvnledger/contents/README.md -- (the readme)",
+        "repos/kvnpay/kvnledger/contents/a.b123456 holds it",
+        "repos/kvnpay/kvnledger/contents/a.1b holds it",
+        "repos/kvnpay/kvnledger/contents/ab holds it",
+        "repos/kvnpay/kvnledger/pulls/5 returned 404",
+        "repos/kvnpay/kvnledger/contents/x.md/raw holds it",
+    ):
+        assert read(text) == owner, text
 
 
+def test_the_api_path_reader_reads_a_whole_path_between_its_bounds() -> None:
+    """D7 (0.27, verify026 X01-X16): the API path starts at a boundary (not after ``%``, ``.``, ``_``, ``~`` or ``-``), one ``api/v<N>/`` prefix of any width, a one-character owner keeps its repository, the route word is the next segment (not across a space), trimmed of prose punctuation and casefolded, a ``.git`` owner is learnt as written, a reserved owner in any case is not learnt, and a percent-encoded owner is learnt in its decoded form only."""
+    for lead in ("%", ".", "_", "~", "-", "x", "9", "src/"):
+        found = needles(_stderr_call(f"{lead}repos/kvnteam/kvnbilling/pulls/1 fails"), roles={})
+        assert _kinds(found, "segment") == [], lead
+    for text, segments in (
+        ("api/v3/api/v3/repos/kvnteam/kvnbilling/pulls/1", []),
+        ("api/v10/repos/kvnteam/kvnbilling/pulls/1", ["kvnteam", "kvnbilling"]),
+        ("repos/k/kvnbilling/pulls/1", ["kvnbilling"]),
+        ("repos/kvnteam/kvnbilling issues are open", []),
+        ("repos/kvnteam/kvnbilling/pulls: 404", ["kvnteam", "kvnbilling"]),
+        ("repos/kvnteam/kvnbilling/pulls; 404", ["kvnteam", "kvnbilling"]),
+        ("repos/kvnteam/kvnbilling/iſsues fails", ["kvnteam", "kvnbilling"]),
+        ("repos/kvnteam.git/kvnbilling/pulls fails", ["kvnteam.git", "kvnbilling"]),
+        ("repos/Settings/kvnbilling/pulls/5", ["kvnbilling"]),
+        ("repos/SETTINGS/kvnbilling/pulls/5", ["kvnbilling"]),
+        ("repos/kvn%5Fteam/kvnbilling/pulls/1", ["kvn_team", "kvnbilling"]),
+    ):
+        found = needles(_stderr_call(text), roles={})
+        assert _kinds(found, "segment") == segments, text
+    found = needles(_stderr_call("repos/kvnteam.git/kvnbilling/pulls"), roles={})
+    assert recording.replace_known("repos/kvnteam.git/kvnbilling/pulls", found) == (
+        "repos/org/project/pulls"
+    )
+    found = needles(_stderr_call("repos/Settings/kvnbilling/pulls/5"), roles={})
+    assert recording.replace_known("the Settings page of kvnbilling", found) == (
+        "the Settings page of project"
+    )
+
+
+def test_inside_a_source_the_first_reading_in_recording_order_keeps_the_class() -> None:
+    """D7 (0.27, verify026 X21, X22): inside one source the readings follow the recording, the first exchange and the first item first, so a value two readings name keeps the class of the first one in that order."""
+    remote = "git@git.zqcorp.io:zqgroup/zqmainrepo.git"
+    web = "https://git.zqcorp.io/kvnalpha/kvnbeta/-/merge_requests/1"
+    web2 = "https://git.zqcorp.io/kvnbeta/kvnalpha/-/merge_requests/2"
+    for raw in (
+        _one_call([{"web_url": web, "body": "x"}, {"web_url": web2, "body": "x"}]),
+        _one_call([{"web_url": web, "body": "x"}]) + _one_call([{"web_url": web2, "body": "x"}]),
+        _stderr_call("repos/kvnalpha/kvnbeta/pulls/1")
+        + _stderr_call("repos/kvnbeta/kvnalpha/pulls/2"),
+        [
+            [_one_call([{"body": "x"}])[0]],
+            ["repos/kvnalpha/kvnbeta/pulls/1"],
+            {"k": "repos/kvnbeta/kvnalpha/pulls/2"},
+        ],
+    ):
+        found = needles(raw, roles={}, remote=remote)
+        assert recording.replace_known("the kvnalpha and kvnbeta work", found) == (
+            "the org and project work"
+        ), raw
+
+
+def test_a_url_field_on_a_single_label_host_learns_the_host() -> None:
+    """D7 (0.27, verify026 X26): a URL field's host that is not public is a value even when it has a single label (``http://intranet/…``), which no text reader learns; its path is read as the route grammar reads it."""
+    found = needles(
+        _one_call([{"html_url": "http://intranet/kvnteam/kvnbilling", "body": "x"}]), roles={}
+    )
+    assert "intranet" in _kinds(found, "host")
+    assert _kinds(found, "segment") == ["kvnteam", "kvnbilling"]
+    found = needles(_one_call([{"body": "see http://intranet/kvnteam/kvnbilling"}]), roles={})
+    assert "intranet" not in _kinds(found, "host")
 
 
 def test_every_exchange_argv_is_read_by_construction() -> None:
