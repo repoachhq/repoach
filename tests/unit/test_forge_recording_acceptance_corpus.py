@@ -10326,6 +10326,11 @@ def _position(inp: Sample) -> str:
     return "body"
 
 
+def _planted_text(inp: Sample) -> str:
+    """The raw text a residual row plants at its position: its raw stdout, or its body (0.27)."""
+    return inp.raw_text_stdout if inp.raw_text_stdout is not None else inp.body
+
+
 def _items(inp: Sample) -> list[dict[str, Any]]:
     """The raw JSON answer of the recorded call (``None`` for a raw text answer)."""
     user_key = "login" if inp.forge == "github" else "username"
@@ -10487,7 +10492,7 @@ def _written_parts(row: Row, fixture: dict[str, Any]) -> tuple[str, str | None, 
         item = json.loads(call["stdout"])[0]
         if inp.title is not None:
             title = str(item["title"])
-        for key in ("headRefName", "source_branch", "baseRefName", "target_branch"):
+        for key in ("headRefName", "source_branch", "baseRefName", "target_branch", "path"):
             if key in item:
                 fields[key] = str(item[key])
     if pos == "stdout":
@@ -10741,7 +10746,7 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
     ]
     for row in residual:
         assert isinstance(row.outcome, Written) and not row.markers, row.id
-        assert row.outcome.text == row.inp.body, row.id
+        assert row.outcome.text == _planted_text(row.inp), row.id
     for row in ordinary:
         assert isinstance(row.outcome, Written) and not row.markers, row.id
     unmarked = [
