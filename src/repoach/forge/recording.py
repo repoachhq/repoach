@@ -2513,43 +2513,58 @@ Transcribed from the ``paths`` of GitHub's REST OpenAPI description
 (``github/rest-api-description``, ``descriptions/api.github.com/api.github.com.json``,
 read 2026-11-23), whose endpoints https://docs.github.com/en/rest documents:
 every ``/repos/{owner}/{repo}/<word>`` path, with
-``/repos/{template_owner}/{template_repo}/generate``. A text path
-``repos/<o>/<r>/<word>/…`` names a repository only when ``<word>`` is one of
-them, so ``repos/frontend/main.py`` or ``repos/public/index.html`` stays a
-file path.
+``/repos/{template_owner}/{template_repo}/generate``. An API path
+``repos/<o>/<r>/<word>/…`` of a structured source names a repository only
+when ``<word>`` is one of them, so ``repos/frontend/main.py`` or
+``repos/public/index.html`` stays a file path.
 """
 
-_TEXT_API_PATH_RE = re.compile(
+_API_PATH_RE = re.compile(
     r"(?<![A-Za-z0-9_.~%/-])/?(?:api/v[0-9]+/+)?repos/+(?P<owner>[A-Za-z0-9_.-]+)/+(?P<repo>[A-Za-z0-9_.-]+)",
     re.I,
 )
-"""A GitHub-form API path in text, ``[/][api/v<N>/]repos/<owner>/<repo>``, in any case, not inside a longer path or a URL (0.26).
+"""A GitHub-form API path, ``[/][api/v<N>/]repos/<owner>/<repo>``, in any case, not inside a longer path or a URL (0.26).
 
 GitHub Enterprise serves it under ``api/v3/``, Gitea under ``api/v1/``.
 """
 
-_TEXT_API_ROUTE_END = "/" + _PATH_END
-"""Characters that end the route word read after ``repos/<owner>/<repo>/`` in text (0.26)."""
+_API_ROUTE_END = "/" + _PATH_END
+"""Characters that end the route word read after ``repos/<owner>/<repo>/`` (0.26)."""
+
+_FILE_NAME_RE = re.compile(r"\.[A-Za-z][A-Za-z0-9]{0,5}$")
+"""The extension that ends a file name, ``index.ts``, ``notes.md`` (0.27)."""
+
+_SENTENCE_AFTER_RE = re.compile(r"[.,:;!]?\s+\w")
+"""What follows a path cited in a sentence: optional punctuation, a space, then a word (0.27)."""
 
 
-def _text_api_projects(text: str) -> list[tuple[str, str]]:
-    """The ``(owner, repository)`` each GitHub API path of ``text`` names, read as text (0.26).
+def _api_path_projects(text: str) -> list[tuple[str, str]]:
+    """The ``(owner, repository)`` each GitHub API path of a structured string names (0.26, 0.27).
 
     ``[/][api/v<N>/]repos/<owner>/<repo>/<word>…`` names a repository only
     when ``<word>`` is a sub-resource of GitHub's REST repository
     endpoints (:data:`_GITHUB_REPO_API_ROUTES`); a bare
     ``repos/<owner>/<repo>`` and any other word (``main.py``, ``src``) is
-    ordinary text. The route grammar of text applies: an owner that is a
-    reserved route word (:data:`_RESERVED_ROUTE_WORDS`), a tool literal,
-    a placeholder or a number is not learnt (``""``), its repository
-    still is. A path inside a URL is the host reader's.
+    ordinary text. A path whose last segment is a file name
+    (:data:`_FILE_NAME_RE`) followed by more words of a sentence
+    (:data:`_SENTENCE_AFTER_RE`) is a file cited in prose, even inside a
+    structured source, and names no one (NG4-16, 0.27); followed by a
+    query, a fragment, a closing delimiter or nothing it is a call. The
+    route grammar applies: an owner that is a reserved route word
+    (:data:`_RESERVED_ROUTE_WORDS`, in any case), a tool literal, a
+    placeholder or a number is not learnt (``""``), its repository still
+    is. A path inside a URL is the host reader's.
     """
     found: list[tuple[str, str]] = []
-    for match in _TEXT_API_PATH_RE.finditer(text):
+    for match in _API_PATH_RE.finditer(text):
         rest = text[match.end() :].lstrip("/")
-        stop = next((i for i, c in enumerate(rest) if c in _TEXT_API_ROUTE_END), len(rest))
+        stop = next((i for i, c in enumerate(rest) if c in _API_ROUTE_END), len(rest))
         route = rest[:stop].rstrip(_URL_TRIM_TAIL)
         if route.casefold() not in _GITHUB_REPO_API_ROUTES:
+            continue
+        end = next((i for i, c in enumerate(rest) if c in _PATH_END), len(rest))
+        path = rest[:end].rstrip(_URL_TRIM_TAIL)
+        if _FILE_NAME_RE.search(path) and _SENTENCE_AFTER_RE.match(rest, len(path)):
             continue
         owner, repository = match.group("owner"), _bare(match.group("repo"))
         if not _names_a_value(repository):
@@ -2559,8 +2574,52 @@ def _text_api_projects(text: str) -> list[tuple[str, str]]:
     return found
 
 
+_PROSE_KEYS: frozenset[str] = frozenset({"body", "description", "path", "new_path", "old_path"})
+"""The keys whose value is prose, never a structured source (0.27, the owner's structure/prose decision).
+
+A comment's or a change request's body (GitHub ``body``, GitLab's
+merge request ``description`` and note ``body``) and a review comment's
+file path (GitHub ``path``, GitLab ``position.new_path``/``old_path``):
+the keys :mod:`repoach.forge.github` and :mod:`repoach.forge.gitlab`
+read as a body or a review path. A code block is inside a body.
+"""
+
+
+def _structured_strings(node: object) -> list[str]:
+    """Every string of the structured sources of the recorded calls, in recording order (0.27).
+
+    The structured sources are an exchange's argv, stdin and stderr, the
+    field values of its JSON stdout, and the method's positional and
+    keyword arguments; a JSON string among them is walked inside, keys
+    included. Prose is not one: the value of a :data:`_PROSE_KEYS` key at
+    any depth, and an exchange's stdout that is not JSON (a diff, a raw
+    answer). An exchange is an object with an ``args`` list and a
+    ``stdout``, as :func:`_argv_strings` reads it.
+    """
+    if isinstance(node, str):
+        decoded = decode_json_values(node) if node.lstrip()[:1] in ("{", "[") else None
+        if decoded is None:
+            return [node]
+        return [s for v in decoded for s in _structured_strings(v)]
+    if isinstance(node, dict):
+        exchange = "stdout" in node and isinstance(node.get("args"), list)
+        found: list[str] = []
+        for key, item in node.items():
+            if key in _PROSE_KEYS:
+                continue
+            found.append(str(key))
+            if exchange and key == "stdout" and isinstance(item, str):
+                found += [s for v in decode_json_values(item) or [] for s in _structured_strings(v)]
+                continue
+            found += _structured_strings(item)
+        return found
+    if isinstance(node, list):
+        return [s for v in node for s in _structured_strings(v)]
+    return []
+
+
 def _names_a_value(segment: str) -> bool:
-    """Whether a text API path segment may name someone: not empty, a tool literal, a number or a placeholder."""
+    """Whether an API path segment may name someone: not empty, a tool literal, a number or a placeholder."""
     return bool(
         segment
         and not CLI_PLACEHOLDER_RE.fullmatch(segment)
@@ -2574,8 +2633,9 @@ PROVENANCE: tuple[tuple[str, str], ...] = (
     ("url_field", "route"),
     ("argv", "repository"),
     ("text", "text"),
+    ("structured", "api_path"),
 )
-"""THE rule of which source names an identity, and how (0.26): ``(source, reading)``, in learning order.
+"""THE rule of which source names an identity, and how (0.26, 0.27): ``(source, reading)``, in learning order.
 
 Every namespace and repository :func:`known_values` learns from a path
 comes from one row, and no reading runs outside it:
@@ -2595,16 +2655,24 @@ comes from one row, and no reading runs outside it:
 - ``text``: every string of the fixture (:func:`fixture_strings`), the
   three sources above included. Reading ``text``: soft, never refusing
   a recording: the hosts and the paths after them
-  (:func:`repoach.forge.closure.hosts`, :func:`_follow_segments`), a
-  GitLab ``projects/<group>%2F<repo>`` token (:data:`_ENCODED_PROJECT_RE`),
-  and a GitHub API path ``repos/<o>/<r>/<route>`` whose route word is a
-  REST repository sub-resource (:func:`_text_api_projects`).
+  (:func:`repoach.forge.closure.hosts`, :func:`_follow_segments`) and a
+  GitLab ``projects/<group>%2F<repo>`` token (:data:`_ENCODED_PROJECT_RE`).
+  A GitHub API path is not read there (0.25, 0.27).
+- ``structured``: a string of the structured sources of a recorded call
+  (:func:`_structured_strings`): the argv, the stdin, the stderr, the
+  field values of a JSON stdout and the method's arguments, never prose
+  (a body, a review path, a raw stdout: :data:`_PROSE_KEYS`). Reading
+  ``api_path``: soft, a GitHub API path ``repos/<o>/<r>/<route>`` whose
+  route word is a REST repository sub-resource
+  (:func:`_api_path_projects`), in every decoded form. An API path cited
+  in prose names no one (NG4-16, the owner's decision of 2026-11-24).
 
-The order is the learning order: a value two rows name keeps the class
-of the first, so a value a URL field names as a namespace stays ``org``
-when an argv path names it as a repository. Logins, names, mailboxes and
-user and repository ids are structured fields read by their keys, not
-paths, and are outside this table.
+The order is the learning order, and inside a source the recording's
+order (the first exchange, the first item, the first field): a value two
+readings name keeps the class of the first, so a value a URL field names
+as a namespace stays ``org`` when an argv path names it as a repository.
+Logins, names, mailboxes and user and repository ids are structured
+fields read by their keys, not paths, and are outside this table.
 """
 
 
@@ -2693,10 +2761,11 @@ def known_values(
     keeps as it stands is written as the grammar writes any other. Which
     source names a namespace or a repository, and how, is
     :data:`PROVENANCE` (0.26) and nothing else: an argv API path is an
-    argv string of a recorded call (:func:`_argv_strings`), and a body, a
-    field or a review comment's ``path`` led by ``repos/`` or
-    ``projects/`` is text, read by the text readers only, a GitHub API
-    path through a REST route word (:func:`_text_api_projects`) among them.
+    argv string of a recorded call (:func:`_argv_strings`), a GitHub API
+    path is read through a REST route word in the structured sources of
+    a call only (:func:`_api_path_projects`, 0.27), and a body or a
+    review comment's ``path`` led by ``repos/`` or ``projects/`` is prose,
+    read by the text readers only (NG4-16).
 
     Args:
         raw: The exchanges as the forge printed them, the method's
@@ -2847,7 +2916,10 @@ def known_values(
                 )
                 if follow:
                     _segments(follow, hard=False)
-            for owner, repository in _text_api_projects(form):
+
+    def _api_path(text: str) -> None:
+        for form in closure.decoded_forms(text):
+            for owner, repository in _api_path_projects(form):
                 _add("segment", owner, PLACEHOLDER_NAMESPACE, hard=False)
                 _add("segment", repository, PLACEHOLDER_PROJECT, hard=False)
 
@@ -2856,11 +2928,13 @@ def known_values(
         "url_field": url_fields,
         "argv": [_api_project(t) for t in _argv_strings(raw)],
         "text": [t for _p, t in strings],
+        "structured": _structured_strings(raw),
     }
     readings: dict[str, Callable[[Any], None]] = {
         "repository": _repository,
         "route": _route,
         "text": _text,
+        "api_path": _api_path,
     }
     for source, reading in PROVENANCE:
         for item in sources[source]:

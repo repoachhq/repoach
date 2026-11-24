@@ -10227,11 +10227,11 @@ ROWS: tuple[Row, ...] = (
         markers=(FAKE_HOST, "kvnteam", "kvnsub", "kvnbilling"),
     ),
     Row(
-        id="v26_body_led_by_a_github_api_path_with_a_rest_route_is_replaced",
+        id="v27_body_led_by_a_github_api_path_is_prose_NG4_16",
         source="verify025/cells25.py",
         inp=Sample(body="repos/kvnteam/kvnbilling/pulls/5/comments returns 404 since monday"),
-        outcome=Written(text="repos/org/project/pulls/5/comments returns 404 since monday"),
-        markers=("kvnteam", "kvnbilling"),
+        outcome=Written(text="repos/kvnteam/kvnbilling/pulls/5/comments returns 404 since monday"),
+        residual=True,
     ),
     Row(
         id="v26_method_kwargs_github_api_path_with_a_rest_route_is_replaced",
@@ -10248,26 +10248,36 @@ ROWS: tuple[Row, ...] = (
         markers=("kvnteam", "kvnbilling"),
     ),
     Row(
-        id="v26_json_string_in_a_body_with_a_leading_slash_api_path_is_replaced",
+        id="v27_json_string_in_a_body_is_prose_NG4_16",
         source="verify025/cells25.py",
         inp=Sample(body='{"endpoint": "/repos/kvnteam/kvnbilling/branches/main/protection"}'),
-        outcome=Written(text='{"endpoint": "/repos/org/project/branches/main/protection"}'),
-        markers=("kvnteam", "kvnbilling"),
+        outcome=Written(text='{"endpoint": "/repos/kvnteam/kvnbilling/branches/main/protection"}'),
+        residual=True,
     ),
     Row(
-        id="v26_review_path_field_github_api_path_with_a_rest_route_is_replaced",
+        id="v27_review_path_field_api_path_is_prose_NG4_16",
         source="verify025/cells25.py",
         inp=Sample(
             body="see the file",
             extra_item={"path": "repos/kvnteam/kvnbilling/pulls/5/comments"},
         ),
-        outcome=Written(text="see the file"),
-        markers=("kvnteam", "kvnbilling"),
+        outcome=Written(
+            text="see the file",
+            fields=(("path", "repos/kvnteam/kvnbilling/pulls/5/comments"),),
+        ),
+        residual=True,
     ),
     Row(
-        id="v26_text_api_path_with_a_reserved_owner_learns_the_repository_only",
+        id="v27_reserved_owner_api_path_in_a_body_is_prose_NG4_16",
         source="verify025/cells25.py",
         inp=Sample(body="repos/settings/kvnbilling/pulls/5 returns 404 on the settings page"),
+        outcome=Written(text="repos/settings/kvnbilling/pulls/5 returns 404 on the settings page"),
+        residual=True,
+    ),
+    Row(
+        id="v27_stderr_api_path_with_a_reserved_owner_learns_the_repository_only",
+        source="verify025/cells25.py",
+        inp=Sample(stderr="repos/settings/kvnbilling/pulls/5 returns 404 on the settings page"),
         outcome=Written(text="repos/settings/project/pulls/5 returns 404 on the settings page"),
         markers=("kvnbilling",),
     ),
@@ -10734,13 +10744,17 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
     assert all(_is_planted(row) for row in residual)
     refused = [row for row in ROWS if isinstance(row.outcome, Refused)]
     assert (len(ROWS), len(planted), len(ordinary), len(refused), len(residual)) == (
-        871,
-        602,
+        872,
+        603,
         269,
         74,
-        18,
+        22,
     )
     assert all(not row.residual for row in refused)
+    prose = [row for row in ROWS if "NG4_16" in row.id]
+    assert len(prose) == 4 and all(row.residual for row in prose)
+    assert {_position(row.inp) for row in prose} == {"body"}
+    assert sum("path" in row.inp.extra_item for row in prose) == 1
     assert [row.id for row in ROWS if row.url_field_class] == [
         "v26_url_field_namespace_keeps_its_class_before_an_argv_repository"
     ]

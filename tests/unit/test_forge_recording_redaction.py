@@ -1642,6 +1642,8 @@ ALLOWED_CASE_SENSITIVE: dict[str, frozenset[str]] = {
             "_API_PROJECT_RE",
             "RECORDED_SOURCE_HEAD_RE",
             "_NAME_WORD_RE",
+            "_FILE_NAME_RE",
+            "_SENTENCE_AFTER_RE",
         }
     ),
     "record_forge_fixture": frozenset({"HOME_PATH_RE"}),
@@ -5822,28 +5824,27 @@ def test_only_an_argv_string_is_read_as_an_api_path() -> None:
 
 
 def test_the_provenance_table_is_the_one_rule_of_what_names_an_identity() -> None:
-    """D7 (0.26): :data:`recording.PROVENANCE` maps each source to one reading, in learning order, and :func:`known_values` learns a path's namespace and repository through it alone: every ``_segments`` call stands in a reader the table dispatches, and the argv and text API readers run once, as sources of the table."""
+    """D7 (0.26, 0.27): :data:`recording.PROVENANCE` maps each source to one reading, in learning order, and :func:`known_values` learns a path's namespace and repository through it alone: every ``_segments`` call and every ``_add("segment", …)`` stands in a reader the table dispatches (or in ``_segments``, which only they call), and the argv, structured and API path readers run once, as sources and readings of the table."""
     assert recording.PROVENANCE == (
         ("remote", "repository"),
         ("url_field", "route"),
         ("argv", "repository"),
         ("text", "text"),
+        ("structured", "api_path"),
     )
     tree = ast.parse(textwrap.dedent(inspect.getsource(recording.known_values)))
     function = tree.body[0]
     assert isinstance(function, ast.FunctionDef)
-    readers = {
-        node.name: node
-        for node in function.body
-        if isinstance(node, ast.FunctionDef) and node.name in ("_repository", "_route", "_text")
-    }
-    assert set(readers) == {"_repository", "_route", "_text"}
-    inside = {
-        id(call)
-        for reader in readers.values()
-        for call in ast.walk(reader)
-        if isinstance(call, ast.Call)
-    }
+    names = ("_repository", "_route", "_text", "_api_path")
+    defs = {node.name: node for node in function.body if isinstance(node, ast.FunctionDef)}
+    readers = {name: defs[name] for name in names if name in defs}
+    assert set(readers) == set(names)
+
+    def _ids(nodes: list[ast.FunctionDef]) -> set[int]:
+        return {id(call) for node in nodes for call in ast.walk(node) if isinstance(call, ast.Call)}
+
+    inside = _ids(list(readers.values()))
+    learning = inside | _ids([defs["_segments"]])
 
     def _calls(name: str) -> list[ast.Call]:
         return [
@@ -5856,9 +5857,21 @@ def test_the_provenance_table_is_the_one_rule_of_what_names_an_identity() -> Non
 
     segments = _calls("_segments")
     assert segments and all(id(call) in inside for call in segments)
+    adds = [
+        call
+        for call in _calls("_add")
+        if call.args and isinstance(call.args[0], ast.Constant) and call.args[0].value == "segment"
+    ]
+    assert adds and all(id(call) in learning for call in adds)
+    assert all(
+        isinstance(call.args[0], ast.Constant) and isinstance(call.args[0].value, str)
+        for call in _calls("_add")
+    )
     assert len(_calls("_api_project")) == 1 and id(_calls("_api_project")[0]) not in inside
-    assert len(_calls("_text_api_projects")) == 1
-    assert id(_calls("_text_api_projects")[0]) in inside
+    assert len(_calls("_structured_strings")) == 1
+    assert id(_calls("_structured_strings")[0]) not in inside
+    assert len(_calls("_api_path_projects")) == 1
+    assert id(_calls("_api_path_projects")[0]) in _ids([readers["_api_path"]])
     dicts = [node for node in ast.walk(function) if isinstance(node, ast.Dict)]
     keys = [
         {k.value for k in node.keys if isinstance(k, ast.Constant)}
@@ -5869,9 +5882,9 @@ def test_the_provenance_table_is_the_one_rule_of_what_names_an_identity() -> Non
     assert {reading for _, reading in recording.PROVENANCE} in keys
 
 
-def test_a_text_github_api_path_names_a_repository_only_through_a_rest_route() -> None:
-    """D7 source 3 (0.26): in text, ``[/][api/v<N>/]repos/<o>/<r>/<word>`` names a repository only when ``<word>`` is a sub-resource of GitHub's REST repository endpoints; a bare ``repos/<o>/<r>``, a file path or a directory under ``repos/`` is ordinary text, a reserved, literal or numeric owner is not learnt and its repository is, and a path inside a longer path or a URL is not this reader's."""
-    read = recording._text_api_projects
+def test_a_github_api_path_names_a_repository_only_through_a_rest_route() -> None:
+    """D7 (0.26, 0.27): ``[/][api/v<N>/]repos/<o>/<r>/<word>`` of a structured string names a repository only when ``<word>`` is a sub-resource of GitHub's REST repository endpoints; a bare ``repos/<o>/<r>``, a file path or a directory under ``repos/`` is ordinary text, a reserved, literal or numeric owner is not learnt and its repository is, and a path inside a longer path or a URL is not this reader's."""
+    read = recording._api_path_projects
     assert read("repos/kvnteam/kvnbilling/pulls/5/comments returns 404") == [
         ("kvnteam", "kvnbilling")
     ]
@@ -5923,32 +5936,103 @@ def test_a_text_github_api_path_names_a_repository_only_through_a_rest_route() -
         recording._GITHUB_REPO_API_ROUTES
     )
     assert all(word == word.casefold() for word in recording._GITHUB_REPO_API_ROUTES)
-    remote = "git@github.com:zqgroup/zqmainrepo.git"
-    for raw in (
-        _one_call({"body": "repos/kvnteam/kvnbilling/pulls/5/comments returns 404"}),
-        [_one_call({"body": "ok"}), [42], {"endpoint": "repos/kvnteam/kvnbilling/pulls/5"}],
-        [
-            {**_one_call({"body": "ok"})[0], "stdin": "repos/kvnteam/kvnbilling/pulls/5"},
-        ],
-    ):
-        found = needles(raw, roles={}, remote=remote)
-        assert _kinds(found, "segment") == ["zqgroup", "zqmainrepo", "kvnteam", "kvnbilling"]
-        written = recording.replace_known("see repos/kvnteam/kvnbilling/pulls/5 now", found)
-        assert written == "see repos/org/project/pulls/5 now"
     found = needles(
-        _one_call({"body": "repos/settings/kvnbilling/pulls/5 and the settings page"}),
-        roles={},
+        _stderr_call("repos/settings/kvnbilling/pulls/5 and the settings page"), roles={}
     )
     assert _kinds(found, "segment") == ["kvnbilling"]
-    found = needles(_one_call({"body": "repos/zq/kvnbilling/pulls/1 is short"}), roles={})
+    found = needles(_stderr_call("repos/zq/kvnbilling/pulls/1 is short"), roles={})
     assert _kinds(found, "segment") == ["kvnbilling"]
     escaped = "see repos\\/kvnteam\\/kvnbilling\\/pulls\\/5"
-    found = needles(_one_call({"body": escaped}), roles={})
+    found = needles(_stderr_call(escaped), roles={})
     assert _kinds(found, "segment") == ["kvnteam", "kvnbilling"]
     assert recording.replace_known(escaped, found) == "see repos\\/org\\/project\\/pulls\\/5"
     for text in ("repos/kvnteam/kvnbilling/main.py stays", "repos/kvnteam/kvnbilling stays"):
-        found = needles(_one_call({"body": text}), roles={})
+        found = needles(_stderr_call(text), roles={})
         assert _kinds(found, "segment") == [], text
+
+
+def _stderr_call(stderr: str, *, stdin: str | None = None) -> list[dict[str, Any]]:
+    """One call answering a JSON body ``ok`` whose stderr (and stdin) the test sets."""
+    return [{**_one_call([{"body": "ok"}])[0], "stderr": stderr, "stdin": stdin}]
+
+
+def test_an_api_path_is_read_in_the_structured_sources_of_a_call_only() -> None:
+    """D7 (0.27, the owner's structure/prose decision): a GitHub API path names a repository in the argv, the stdin (raw or JSON), the stderr, the field values of a JSON stdout and the method's positional and keyword arguments, nested or JSON-encoded; never in prose, a body, a merge request description, a review comment's ``path``/``new_path``/``old_path``, a code block or a raw stdout (NG4-16)."""
+    remote = "git@github.com:zqgroup/zqmainrepo.git"
+    path = "repos/kvnteam/kvnbilling/pulls/5/comments"
+    exchange = _one_call([{"body": "ok"}])[0]
+    structured = (
+        [[{**exchange, "args": ["api", f"--input={path}"]}], [], {}],
+        [[exchange], [42], {"endpoint": path}],
+        [[exchange], [42, path], {}],
+        [[exchange], [42, {"api": [path]}], {}],
+        [[exchange], [42, json.dumps({"api": path})], {}],
+        _stderr_call("ok", stdin=f"GET {path}"),
+        _stderr_call("ok", stdin=json.dumps({"endpoint": path, "x": 1})),
+        _stderr_call(f"HTTP 404: Not Found ({path})"),
+        _one_call([{"body": "ok", "endpoint": path}]),
+        _one_call({"data": {"pr": {"body": "ok", "resource": f"/{path}"}}}),
+    )
+    for raw in structured:
+        found = needles(raw, roles={}, remote=remote)
+        assert _kinds(found, "segment") == ["zqgroup", "zqmainrepo", "kvnteam", "kvnbilling"], raw
+        written = recording.replace_known(f"see {path} now", found)
+        assert written == "see repos/org/project/pulls/5/comments now"
+    prose = (
+        _one_call([{"body": f"{path} returns 404 since monday"}]),
+        _one_call([{"body": f"```\n$ gh api {path}\n```"}]),
+        _one_call([{"body": json.dumps({"req": {"endpoint": path}})}]),
+        _one_call([{"body": "ok", "path": path}]),
+        _one_call([{"description": f"calling {path} fails"}]),
+        _one_call([{"body": "ok", "position": {"new_path": path, "old_path": path}}]),
+        _one_call(f"error: {path}\n"),
+        [[exchange], [42, {"body": path}], {"path": path}],
+    )
+    for raw in prose:
+        found = needles(raw, roles={}, remote=remote)
+        assert _kinds(found, "segment") == ["zqgroup", "zqmainrepo"], raw
+    assert recording._structured_strings(
+        [
+            [{**exchange, "stdout": json.dumps([{"body": "b", "k": "v"}]), "stderr": "e"}],
+            [42, {"path": "p", "x": ["y"]}],
+            {"z": '{"w": 1, "body": "q"}'},
+        ]
+    ) == [
+        "args",
+        "api",
+        "x",
+        "returncode",
+        "stdin",
+        "stderr",
+        "e",
+        "stdout",
+        "k",
+        "v",
+        "x",
+        "y",
+        "z",
+        "w",
+    ]
+    assert recording._structured_strings([{"args": ["a"], "stdout": "diff --git a/x"}]) == [
+        "args",
+        "a",
+        "stdout",
+    ]
+    assert recording._structured_strings([{"stdout": "raw"}]) == ["stdout", "raw"]
+    assert recording._structured_strings([{"args": "a", "stdout": "raw"}]) == [
+        "args",
+        "a",
+        "stdout",
+        "raw",
+    ]
+    assert recording._structured_strings([{"args": [], "stdout": 7}, 8, None]) == [
+        "args",
+        "stdout",
+    ]
+
+
+
+
 
 
 def test_every_exchange_argv_is_read_by_construction() -> None:
