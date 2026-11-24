@@ -1648,3 +1648,13 @@ def test_a_unicode_local_part_and_a_userinfo_lead_their_host() -> None:
         "a/=@acme.io",
     ):
         assert closure.judge(text, none) is None, text
+
+
+def test_the_userinfo_scan_stops_at_the_previous_at_and_stays_linear() -> None:
+    """D8 (0.28, PR #319): a run of ``=@a`` reads each character back once, not once per ``@``."""
+    started = time.perf_counter()
+    assert closure.judge("x://" + "=@a" * 20000, closure.Known(())) is None
+    assert time.perf_counter() - started < 2.0
+    assert closure.judge("clone https://u:p@ss@acme.io/x now", closure.Known(())) == (
+        closure.Refusal("unknown host")
+    )

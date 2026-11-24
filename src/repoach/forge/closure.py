@@ -754,9 +754,13 @@ def _led(text: str, start: int) -> bool:
 
 
 def _userinfo_before(text: str, at: int) -> bool:
-    """Whether the ``@`` at ``at`` ends a URL's userinfo: ``<scheme>://`` then no space and no ``/``."""
+    """Whether the ``@`` at ``at`` ends a URL's userinfo: ``<scheme>://`` then no space, ``/`` or ``@``.
+
+    A userinfo holds no unescaped ``@`` (RFC 3986), so the scan back stops at the previous one:
+    each character is read back once over all the ``@`` of a text, and the reader stays linear.
+    """
     begin = at
-    while begin > 0 and not text[begin - 1].isspace() and text[begin - 1] != "/":
+    while begin > 0 and not text[begin - 1].isspace() and text[begin - 1] not in "/@":
         begin -= 1
     return text.endswith("://", 0, begin) and _scheme_before(text, begin - 3)
 
