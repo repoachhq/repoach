@@ -34,7 +34,14 @@ class DenylistError(Exception):
 
 
 def denylist_file(config_dir: Path | None = None) -> Path:
-    """The deny-list file: ``personal-denylist`` under ``config_dir``, by default ``user_config_dir()``."""
+    """The deny-list file: ``personal-denylist`` under ``config_dir``, by default ``user_config_dir()``.
+
+    Args:
+        config_dir: The configuration directory; ``None`` reads ``user_config_dir()``.
+
+    Returns:
+        The file's path, whether or not it exists.
+    """
     return (config_dir if config_dir is not None else user_config_dir()) / DENYLIST_FILE_NAME
 
 
@@ -126,7 +133,14 @@ def _read_entries(config_dir: Path | None) -> tuple[Denylist, bool]:
 
 
 def denylist_patterns(entries: list[str]) -> list[re.Pattern[str]]:
-    """SP-NO-PERSONAL-DATA-GATE D1 ``denylist``: each entry a whole token (:func:`repoach.forge.closure.token_pattern`)."""
+    """SP-NO-PERSONAL-DATA-GATE D1 ``denylist``: each entry a whole token (:func:`repoach.forge.closure.token_pattern`).
+
+    Args:
+        entries: The deny-list entries, in order.
+
+    Returns:
+        One compiled pattern per entry, in the same order.
+    """
     return [closure.token_pattern(e) for e in entries]
 
 
@@ -137,6 +151,13 @@ def denylist_hit(text: str, patterns: list[re.Pattern[str]]) -> int | None:
     (:func:`repoach.forge.closure.forms_of`), literals kept: decoded, casefolded
     and with the account number of every node id it holds, wherever the
     node id stands, so an entry holding a numeric user id catches its node ids.
+
+    Args:
+        text: One string to judge.
+        patterns: :func:`denylist_patterns` of the entries.
+
+    Returns:
+        The 1-based ordinal of the first entry found, or ``None``.
     """
     forms = closure.forms_of(text)
     for n, pattern in enumerate(patterns, 1):

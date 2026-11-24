@@ -60,7 +60,14 @@ def generic_class(text: str) -> str | None:
 
 
 def decoded_answers(calls: list[dict[str, Any]]) -> list[tuple[str, object]]:
-    """``(path, decoded stdout value)`` of every JSON answer, in recording order."""
+    """``(path, decoded stdout value)`` of every JSON answer, in recording order.
+
+    Args:
+        calls: The recorded exchanges; a stdout that is not JSON yields nothing.
+
+    Returns:
+        ``exchanges[<i>].stdout`` (with ``[<k>]`` when a stdout holds several values) and the value.
+    """
     out: list[tuple[str, object]] = []
     for i, call in enumerate(calls):
         values = decode_json_values(call["stdout"]) or []
