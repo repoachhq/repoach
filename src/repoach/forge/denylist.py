@@ -16,7 +16,11 @@ from repoach.core.paths import user_config_dir
 from repoach.forge import closure
 
 DENYLIST_ENV = "REPOACH_PERSONAL_DENYLIST"
-"""SP-NO-PERSONAL-DATA-GATE D3: the deny-list in CI, newline- or comma-separated."""
+"""SP-NO-PERSONAL-DATA-GATE D3: the deny-list in CI, one entry per line; a comma is refused.
+
+The runner masks a secret's whole value and each of its lines, never the parts of a line a
+comma separates, so a comma-separated value would leave its entries unmasked one by one.
+"""
 
 DENYLIST_FILE_NAME = "personal-denylist"
 """SP-NO-PERSONAL-DATA-GATE D3: the deny-list file under ``user_config_dir()``, one entry per line."""
@@ -77,7 +81,7 @@ def read_denylist(config_dir: Path | None = None) -> Denylist:
 
     A copy of that gate's reader (it lands later; not imported): the file
     :func:`denylist_file`, one entry per line with ``#`` comments, and
-    :data:`DENYLIST_ENV`, newline- or comma-separated. Both live outside the tree;
+    :data:`DENYLIST_ENV`, one entry per line. Both live outside the tree;
     no entry is ever printed or written, and the frame that raises binds
     none: the entries are read in :func:`_read_entries` and judged by the
     opaque :class:`Denylist`.
@@ -93,28 +97,32 @@ def read_denylist(config_dir: Path | None = None) -> Denylist:
         :class:`Denylist`; empty when neither source exists.
 
     Raises:
-        DenylistError: An entry shorter than :data:`DENYLIST_MIN_LENGTH`, by ordinal.
+        DenylistError: An entry shorter than :data:`DENYLIST_MIN_LENGTH`, by
+            ordinal, or a comma in :data:`DENYLIST_ENV`.
     """
-    denylist = _read_entries(config_dir)
+    denylist, comma = _read_entries(config_dir)
+    if comma:
+        raise DenylistError(f"deny-list variable {DENYLIST_ENV}: a comma; one entry per line")
     short = denylist.short_entry()
     if short is not None:
         raise DenylistError(f"deny-list entry {short}: too short")
     return denylist
 
 
-def _read_entries(config_dir: Path | None) -> Denylist:
-    """The merged entries, opaque; never raises on content."""
+def _read_entries(config_dir: Path | None) -> tuple[Denylist, bool]:
+    """The merged entries, opaque, and whether :data:`DENYLIST_ENV` holds a comma; never raises on content."""
     raw: list[str] = []
     path = denylist_file(config_dir)
     if path.is_file():
         for line in path.read_text(encoding="utf-8").splitlines():
             raw.append(line.split("#", 1)[0])
-    raw += re.split(r"[\n,]", os.environ.get(DENYLIST_ENV, ""))
+    variable = os.environ.get(DENYLIST_ENV, "")
+    raw += variable.split("\n")
     entries: list[str] = []
     for item in (r.strip() for r in raw):
         if item and item not in entries:
             entries.append(item)
-    return Denylist(tuple(entries))
+    return Denylist(tuple(entries)), "," in variable
 
 
 def denylist_patterns(entries: list[str]) -> list[re.Pattern[str]]:

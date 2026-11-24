@@ -693,7 +693,13 @@ def test_denylist_is_read_from_the_file_and_the_variable_and_never_printed(
     monkeypatch.setenv(deny_list.DENYLIST_ENV, "abc")
     with pytest.raises(rec.DenylistError, match=r"^deny-list entry 3: too short$") as short:
         rec.read_denylist()
-    for info, entry in ((short, "abc"),):
+    monkeypatch.setenv(deny_list.DENYLIST_ENV, "someone-host,someone-handle")
+    with pytest.raises(
+        rec.DenylistError,
+        match=r"^deny-list variable REPOACH_PERSONAL_DENYLIST: a comma; one entry per line$",
+    ) as comma:
+        rec.read_denylist()
+    for info, entry in ((short, "abc"), (comma, "someone-host")):
         bound = [
             name
             for frame, _line in traceback.walk_tb(info.tb.tb_next)
