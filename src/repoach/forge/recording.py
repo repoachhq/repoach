@@ -17,10 +17,11 @@ from __future__ import annotations
 import base64
 import functools
 import inspect
+import itertools
 import json
 import re
 import string
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
@@ -1517,6 +1518,120 @@ def login_values(payload: object, path: str = "") -> list[tuple[str, str]]:
     if isinstance(payload, list):
         return [hit for i, v in enumerate(payload) for hit in login_values(v, f"{path}[{i}]")]
     return []
+
+
+def login_sightings(values: Iterable[object]) -> list[tuple[str, bool]]:
+    """Every login ``values`` name, in order: ``(login, False)`` under a login key, ``(login, True)`` as a mention.
+
+    Args:
+        values: Decoded JSON values (recorded answers, a fixture's nodes), read in order; each
+            gives its :func:`login_values`, then its :func:`mentions`.
+
+    Returns:
+        The sightings, repeats kept; :func:`assign_roles` reads the first appearance of each.
+    """
+    found: list[tuple[str, bool]] = []
+    for value in values:
+        found += [(login, False) for _path, login in login_values(value)]
+        found += [(login, True) for login in mentions(value)]
+    return found
+
+
+def _class_word(kind: str, n: int) -> str:
+    """The class word of the ``n``-th account of ``kind``: ``author``, then ``author-2``."""
+    return kind if n == 1 else f"{kind}-{n}"
+
+
+def _nothing_held(_word: str) -> bool:
+    """No class word is taken yet: a live recording starts from a blank page."""
+    return False
+
+
+def assign_roles(
+    sightings: Iterable[tuple[str, bool]],
+    *,
+    bot: str = "",
+    maintainer: str | None = None,
+    author: str | None = None,
+    held: Callable[[str], bool] = _nothing_held,
+) -> dict[str, str]:
+    """Login → class word for one recording: the one role builder, live and offline (D2, D4).
+
+    Precedence: the configured ``bot`` (``bot``), the ``is_maintainer`` login (``maintainer``),
+    the change request's ``author`` (``author``); then every further login of ``sightings`` in
+    order of first appearance, compared casefolded as forges compare logins: the next
+    ``bot-<n>`` for a ``[bot]`` login, the next ``service`` for a GitLab project bot and the next
+    ``author-<n>`` otherwise. A login of :data:`NON_PERSON_LOGINS` or already a class word is
+    kept. A login seen only as a mention is keyed ``@<login>`` (:data:`MENTION_ONLY_PREFIX`), so
+    only its ``@<handle>`` form is replaced, unless ``<login>[bot]`` is a login of the recording:
+    then the mention is that bot's stem and shares its word when :func:`bot_stem` reads one,
+    and names no one otherwise (``@ci`` beside ``ci[bot]``). Words are handed out only once
+    every sighting is read, so a stem met before its bot takes no word of its own.
+
+    Args:
+        sightings: ``(login, is_mention)`` in recording order (:func:`login_sightings`).
+        bot: The configured bot login, ``""`` when none.
+        maintainer: The login an ``is_maintainer`` call asks about, if any.
+        author: The change request's author, if known; ``author`` is spent on it either way.
+        held: Whether a class word is already taken: the offline transform passes the words its
+            fixture holds (and ``author``, its change request's), so a new login never merges
+            with one.
+
+    Returns:
+        Each login (a mention-only one keyed ``@<login>``) mapped to its class word.
+    """
+    roles: dict[str, str] = {}
+    following = {"bot": 1, "author": 1, "service": 1}
+
+    def _next(kind: str) -> str:
+        n = next(n for n in itertools.count(following[kind]) if not held(_class_word(kind, n)))
+        following[kind] = n + 1
+        return _class_word(kind, n)
+
+    def _key_of(login: str) -> str | None:
+        folded = login.casefold()
+        return next(
+            (k for k in roles if k.removeprefix(MENTION_ONLY_PREFIX).casefold() == folded), None
+        )
+
+    if bot and not is_classified_login(bot):
+        roles[bot] = _next("bot")
+    if maintainer and _key_of(maintainer) is None and not is_classified_login(maintainer):
+        roles[maintainer] = "maintainer"
+    if author:
+        word = _next("author")
+        if _key_of(author) is None and not is_classified_login(author):
+            roles[author] = word
+    spelled: dict[str, str] = {}
+    mention_only: dict[str, bool] = {}
+    for login, mention in sightings:
+        if not login or is_classified_login(login):
+            continue
+        first = spelled.setdefault(login.casefold(), login)
+        mention_only[first] = mention_only.get(first, True) and mention
+    bots = {
+        login.casefold()[:-5]: login
+        for login in [*roles, *mention_only]
+        if login.casefold().endswith("[bot]")
+    }
+    stems: dict[str, str] = {}
+    for login in [k for k, only in mention_only.items() if only and k.casefold() in bots]:
+        del mention_only[login]
+        if bot_stem(bots[login.casefold()]) is not None:
+            stems[login] = bots[login.casefold()]
+    for login, only in mention_only.items():
+        if _key_of(login) is not None:
+            continue
+        if GITLAB_PROJECT_BOT_RE.match(login):
+            kind = "service"
+        else:
+            kind = "bot" if login.casefold().endswith("[bot]") else "author"
+        roles[MENTION_ONLY_PREFIX + login if only else login] = _next(kind)
+    for stem, bot_login in stems.items():
+        bot_key = _key_of(bot_login)
+        if bot_key is not None and _key_of(stem) is None:
+            roles[stem] = roles[bot_key]
+    return roles
 
 
 def decode_json_values(text: str) -> list[object] | None:

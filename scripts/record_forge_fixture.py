@@ -79,9 +79,6 @@ from repoach.forge.fixture_judge import (
 )
 from repoach.forge.protocol import Forge, ForgeError
 from repoach.forge.recording import (
-    GITLAB_PROJECT_BOT_RE,
-    MENTION_ONLY_PREFIX,
-    NON_PERSON_LOGINS,
     SYNTHETIC_IDS_KEY,
     SYNTHETIC_PROJECT_IDS_KEY,
     Exchange,
@@ -90,17 +87,15 @@ from repoach.forge.recording import (
     ReplaySpawn,
     SyntheticIdsExhaustedError,
     UserIdMap,
-    bot_stem,
+    assign_roles,
     classify_logins,
     coerce_call,
     declared_project_ids,
     declared_user_ids,
     decode_json_values,
     dump_fixture,
-    is_classified_login,
     known_values,
-    login_values,
-    mentions,
+    login_sightings,
     raw_logins,
     recorded_source,
     redact_stdout,
@@ -170,21 +165,11 @@ def build_roles(
     author: str | None,
     also: list[str] | tuple[str, ...] = (),
 ) -> dict[str, str]:
-    """Login → class word for one recording, stable across argv and stdout.
+    """Login → class word for one live recording, through the one role builder.
 
-    Precedence: the configured bot (``bot``), the ``is_maintainer``
-    login (``maintainer``), the change request's author (``author``);
-    then every further login of the recorded answers, and every
-    ``@<handle>`` mentioned in their free text
-    (:func:`repoach.forge.recording.mentions`), in order of first
-    appearance: the next ``bot-<n>`` for a ``[bot]`` login, the next
-    ``service`` for a GitLab project bot and the next ``author-<n>``
-    otherwise. A login of :data:`repoach.forge.recording.NON_PERSON_LOGINS`
-    or already a class word is kept. A login is compared casefolded, as
-    forges compare logins. A login known only from a mention is keyed
-    ``@<login>`` (:data:`repoach.forge.recording.MENTION_ONLY_PREFIX`), so
-    only its ``@<handle>`` form is replaced; seen later as a login, it is
-    re-keyed with the same word.
+    The recorded answers are read in order (:func:`repoach.forge.fixture_judge.decoded_answers`,
+    :func:`repoach.forge.recording.login_sightings`), then ``also``; the words are handed out by
+    :func:`repoach.forge.recording.assign_roles`, which the offline transform shares.
 
     Args:
         calls: The recorded exchanges, as the forge printed them.
@@ -196,64 +181,9 @@ def build_roles(
     Returns:
         Each login (a mention-only one keyed ``@<login>``) mapped to its class word.
     """
-    roles: dict[str, str] = {}
-    following = {"bot": 1, "author": 1, "service": 1}
-
-    def _next(kind: str) -> str:
-        n = following[kind]
-        following[kind] = n + 1
-        return kind if n == 1 else f"{kind}-{n}"
-
-    def _key_of(login: str) -> str | None:
-        folded = login.casefold()
-        for key in roles:
-            if key.removeprefix(MENTION_ONLY_PREFIX).casefold() == folded:
-                return key
-        return None
-
-    def _add(login: str, *, mention: bool) -> None:
-        if not login or is_classified_login(login):
-            return
-        bot_key = _key_of(f"{login}[bot]") if mention else None
-        if bot_key is not None:
-            if bot_stem(bot_key) is not None and _key_of(login) is None:
-                roles[login] = roles[bot_key]
-            return
-        key = _key_of(login)
-        if key is not None:
-            if not mention and key.startswith(MENTION_ONLY_PREFIX):
-                roles[login] = roles.pop(key)
-            return
-        promoted = None
-        if not mention and login.casefold().endswith("[bot]"):
-            stem_key = _key_of(login[:-5])
-            if stem_key is not None and stem_key.startswith(MENTION_ONLY_PREFIX):
-                promoted = roles.pop(stem_key)
-        if GITLAB_PROJECT_BOT_RE.match(login):
-            word = _next("service")
-        else:
-            word = _next("bot" if login.casefold().endswith("[bot]") else "author")
-        roles[MENTION_ONLY_PREFIX + login if mention else login] = word
-        stem = bot_stem(login) if promoted is not None else None
-        if stem is not None:
-            roles[stem] = word
-
-    if bot and bot not in NON_PERSON_LOGINS:
-        roles[bot] = _next("bot")
-    if maintainer and _key_of(maintainer) is None and not is_classified_login(maintainer):
-        roles[maintainer] = "maintainer"
-    if author:
-        word = _next("author")
-        if _key_of(author) is None and not is_classified_login(author):
-            roles[author] = word
-    for _path, value in decoded_answers(calls):
-        for _key, login in login_values(value):
-            _add(login, mention=False)
-        for login in mentions(value):
-            _add(login, mention=True)
-    for login in also:
-        _add(login, mention=False)
-    return roles
+    sightings = login_sightings(value for _path, value in decoded_answers(calls))
+    sightings += [(login, False) for login in also]
+    return assign_roles(sightings, bot=bot, maintainer=maintainer, author=author)
 
 
 def classify_calls(calls: list[dict[str, Any]], roles: dict[str, str]) -> list[dict[str, Any]]:

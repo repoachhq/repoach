@@ -2909,7 +2909,7 @@ def test_short_bot_stems_placeholder_bots_and_offline_bot_parity() -> None:
             )
         ],
     }
-    assert redact_fixtures.legacy_roles(fx_upper_bot) == {
+    assert redact_fixtures.fixture_roles(fx_upper_bot) == {
         "Dependabot[BOT]": "bot",
         "dependabot": "bot",
     }
@@ -2928,7 +2928,7 @@ def test_short_bot_stems_placeholder_bots_and_offline_bot_parity() -> None:
             _exchange([{"user": {"login": "renovate[bot]", "id": 29139614}, "body": "ok"}]),
         ],
     }
-    assert redact_fixtures.legacy_roles(fx_mention_first) == {
+    assert redact_fixtures.fixture_roles(fx_mention_first) == {
         "renovate[bot]": "bot",
         "renovate": "bot",
     }
@@ -4644,27 +4644,27 @@ def test_offline_and_live_roles_give_a_bot_stem_its_own_word_only_when_mentioned
     bot = {"user": {"login": "zqbot[bot]"}, "body": "ok"}
     mention = {"body": "cc @zqbot please"}
     both = {"zqbot[bot]": "bot", "zqbot": "bot"}
-    assert redact_fixtures.legacy_roles(_roles_data(bot, mention)) == both
-    assert redact_fixtures.legacy_roles(_roles_data(mention, bot)) == both
-    assert redact_fixtures.legacy_roles(_roles_data(bot)) == {"zqbot[bot]": "bot"}
-    assert redact_fixtures.legacy_roles(_roles_data(mention)) == {"@zqbot": "author-2"}
-    assert redact_fixtures.legacy_roles(
+    assert redact_fixtures.fixture_roles(_roles_data(bot, mention)) == both
+    assert redact_fixtures.fixture_roles(_roles_data(mention, bot)) == both
+    assert redact_fixtures.fixture_roles(_roles_data(bot)) == {"zqbot[bot]": "bot"}
+    assert redact_fixtures.fixture_roles(_roles_data(mention)) == {"@zqbot": "author-2"}
+    assert redact_fixtures.fixture_roles(
         _roles_data({"user": {"login": "ci[bot]"}, "body": "cc @ci"})
     ) == {"ci[bot]": "bot"}
-    assert redact_fixtures.legacy_roles(
+    assert redact_fixtures.fixture_roles(
         _roles_data({"user": {"login": "project[bot]"}, "body": "cc @project"})
     ) == {"project[bot]": "bot"}
-    assert redact_fixtures.legacy_roles(
+    assert redact_fixtures.fixture_roles(
         _roles_data({"user": {"login": "Dependabot[BOT]"}, "body": "cc @dependabot"})
     ) == {"Dependabot[BOT]": "bot", "dependabot": "bot"}
-    assert redact_fixtures.legacy_roles(
+    assert redact_fixtures.fixture_roles(
         _roles_data({"user": {"login": "zqbot[bot]"}, "body": "cc @ZQBOT"})
     ) == {"zqbot[bot]": "bot", "ZQBOT": "bot"}
-    two = redact_fixtures.legacy_roles(
+    two = redact_fixtures.fixture_roles(
         _roles_data({"user": {"login": "zqone[bot]"}}, {"user": {"login": "zqtwo[bot]"}})
     )
     assert two == {"zqone[bot]": "bot", "zqtwo[bot]": "bot-2"}
-    gitlab = redact_fixtures.legacy_roles(
+    gitlab = redact_fixtures.fixture_roles(
         _roles_data({"user": {"login": "project_88442211_bot_a1b2c3d4e5f6"}})
     )
     assert gitlab == {"project_88442211_bot_a1b2c3d4e5f6": "service"}
@@ -5036,7 +5036,12 @@ def test_replay_names_the_bot_and_the_error_the_redacted_fixture_raises(
 def test_build_roles_keeps_a_mention_when_a_longer_login_follows_and_skips_the_known_author() -> (
     None
 ):
-    """D2: only a ``[bot]`` login promotes its mention-only stem, and an author already named is not added twice."""
+    """D2: only a ``[bot]`` login promotes its mention-only stem, and an author already named is not added twice.
+
+    The stem is keyed as the mention spells it, met before or after its bot, live as offline
+    (one role builder since PR #319 round 4); keys are compared casefolded, so the spelling
+    replaces nothing differently.
+    """
     mention = {"args": [], "stdout": json.dumps({"body": "cc @zqname"})}
     other = {"args": [], "stdout": json.dumps({"user": {"login": "zqname12345"}})}
     assert rec.build_roles([mention, other], bot="", maintainer=None, author=None) == {
@@ -5046,7 +5051,11 @@ def test_build_roles_keeps_a_mention_when_a_longer_login_follows_and_skips_the_k
     upper = {"args": [], "stdout": json.dumps({"user": {"login": "ZQName[BOT]"}})}
     assert rec.build_roles([mention, upper], bot="", maintainer=None, author=None) == {
         "ZQName[BOT]": "bot",
-        "ZQName": "bot",
+        "zqname": "bot",
+    }
+    assert rec.build_roles([upper, mention], bot="", maintainer=None, author=None) == {
+        "ZQName[BOT]": "bot",
+        "zqname": "bot",
     }
     assert rec.build_roles([], bot="", maintainer=None, author="repoach-bot") == {}
     assert rec.build_roles([other], bot="", maintainer=None, author="repoach-bot") == {
@@ -5064,22 +5073,26 @@ def test_offline_roles_by_enumeration_of_orders_numbering_and_mention_text() -> 
     """D4: the order a stem and its bot are met in, the numbering after a stem, longer logins first, mention-only words."""
     short_mention = {"body": "cc @ci"}
     short_bot = {"user": {"login": "ci[bot]"}}
-    assert redact_fixtures.legacy_roles(_roles_data(short_mention, short_bot)) == {"ci[bot]": "bot"}
-    assert redact_fixtures.legacy_roles(_roles_data(short_bot, short_mention)) == {"ci[bot]": "bot"}
+    assert redact_fixtures.fixture_roles(_roles_data(short_mention, short_bot)) == {
+        "ci[bot]": "bot"
+    }
+    assert redact_fixtures.fixture_roles(_roles_data(short_bot, short_mention)) == {
+        "ci[bot]": "bot"
+    }
     bot = {"user": {"login": "zqbot[bot]"}, "body": "cc @zqbot"}
     other = {"user": {"login": "zqother"}}
-    assert redact_fixtures.legacy_roles(_roles_data(bot, other)) == {
+    assert redact_fixtures.fixture_roles(_roles_data(bot, other)) == {
         "zqbot[bot]": "bot",
         "zqother": "author-2",
         "zqbot": "bot",
     }
-    assert redact_fixtures.legacy_roles(_roles_data(other, bot)) == {
+    assert redact_fixtures.fixture_roles(_roles_data(other, bot)) == {
         "zqother": "author-2",
         "zqbot[bot]": "bot",
         "zqbot": "bot",
     }
     upper_mention = _roles_data({"user": {"login": "zqbot[bot]"}}, {"body": "cc @ZQBOT"})
-    assert redact_fixtures.legacy_roles(upper_mention) == {"zqbot[bot]": "bot", "ZQBOT": "bot"}
+    assert redact_fixtures.fixture_roles(upper_mention) == {"zqbot[bot]": "bot", "ZQBOT": "bot"}
     mention_text = redact_fixtures._mention_text
     assert mention_text("zqname-x and zqname", {"zqname": "author", "zqname-x": "author-2"}) == (
         "author-2 and author"
@@ -5179,16 +5192,16 @@ def test_offline_words_skip_the_ones_the_fixture_already_holds_and_the_head_is_n
     held = _roles_data(
         {"user": {"login": "author"}}, {"user": {"login": "author-2"}}, {"user": {"login": "zqnew"}}
     )
-    assert redact_fixtures.legacy_roles(held) == {"zqnew": "author-3"}
+    assert redact_fixtures.fixture_roles(held) == {"zqnew": "author-3"}
     bots = _roles_data(
         {"user": {"login": "bot"}},
         {"user": {"login": "zqone[bot]"}},
         {"user": {"login": "zqtwo[bot]"}},
     )
-    assert redact_fixtures.legacy_roles(bots) == {"zqone[bot]": "bot-2", "zqtwo[bot]": "bot-3"}
+    assert redact_fixtures.fixture_roles(bots) == {"zqone[bot]": "bot-2", "zqtwo[bot]": "bot-3"}
     services = _roles_data({"user": {"login": "project_88442211_bot_a1b2c3d4e5f6"}})
     services["bot_username"] = "repoach-bot"
-    assert redact_fixtures.legacy_roles(services) == {
+    assert redact_fixtures.fixture_roles(services) == {
         "project_88442211_bot_a1b2c3d4e5f6": "service"
     }
     padded = {
@@ -5201,7 +5214,7 @@ def test_offline_words_skip_the_ones_the_fixture_already_holds_and_the_head_is_n
             }
         ],
     }
-    assert redact_fixtures.legacy_roles(padded) == {"zqpadded": "author-2"}
+    assert redact_fixtures.fixture_roles(padded) == {"zqpadded": "author-2"}
     assert (
         redact_fixtures._mention_text(
             "zqname-x and zqname", {"zqname": "author-10", "zqname-x": "bot"}
@@ -5227,14 +5240,14 @@ def test_offline_stems_touch_only_the_mention_of_their_own_bot() -> None:
     """D4: a mention is a stem only when ``<mention>[bot]`` is a login of the fixture, whatever else is mentioned."""
     mention = {"body": "cc @zqname"}
     long_login = {"user": {"login": "zqname12345"}}
-    assert redact_fixtures.legacy_roles(_roles_data(mention, long_login)) == {
+    assert redact_fixtures.fixture_roles(_roles_data(mention, long_login)) == {
         "@zqname": "author-2",
         "zqname12345": "author-3",
     }
     elsewhere = _roles_data({"body": "cc @zqother"}, {"user": {"login": "zqbot[bot]"}})
-    assert redact_fixtures.legacy_roles(elsewhere) == {"@zqother": "author-2", "zqbot[bot]": "bot"}
+    assert redact_fixtures.fixture_roles(elsewhere) == {"@zqother": "author-2", "zqbot[bot]": "bot"}
     plain = _roles_data({"user": {"login": "zqplain"}}, {"user": {"login": "zqbot[bot]"}})
-    assert redact_fixtures.legacy_roles(plain) == {"zqplain": "author-2", "zqbot[bot]": "bot"}
+    assert redact_fixtures.fixture_roles(plain) == {"zqplain": "author-2", "zqbot[bot]": "bot"}
 
 
 def test_known_values_read_encoded_forms_and_replace_them_without_a_stray_percent() -> None:
@@ -6879,13 +6892,13 @@ def test_offline_roles_read_the_logins_under_the_keys_the_redaction_drops() -> N
     dropped = recording.raw_logins([raw["calls"], None, None])
     assert dropped == ["zqauthor", "zqassignee", "zqmerger"]
     redacted = redact_fixtures._exchanges(raw)
-    assert redact_fixtures.legacy_roles(redacted) == {"zqauthor": "author-2"}
-    assert redact_fixtures.legacy_roles(redacted, also=dropped) == {
+    assert redact_fixtures.fixture_roles(redacted) == {"zqauthor": "author-2"}
+    assert redact_fixtures.fixture_roles(redacted, also=dropped) == {
         "zqauthor": "author-2",
         "zqassignee": "author-3",
         "zqmerger": "author-4",
     }
-    assert redact_fixtures.legacy_roles(
+    assert redact_fixtures.fixture_roles(
         redacted, also=["author", "github-actions[bot]", "zqauthor"]
     ) == {"zqauthor": "author-2"}
     prose = _roles_data(
@@ -6917,7 +6930,7 @@ def test_offline_redaction_rewrites_urls_in_arguments_keyword_arguments_and_resu
 
 
 def test_offline_roles_walk_the_keyword_arguments_and_refuse_positional_logins() -> None:
-    """D4 (0.18): ``kwargs`` keeps its keys, so ``legacy_roles`` reads a login there itself; ``args`` members are never renamed, so a login there is refused."""
+    """D4 (0.18): ``kwargs`` keeps its keys, so ``fixture_roles`` reads a login there itself; ``args`` members are never renamed, so a login there is refused."""
     data = {
         "forge": "github",
         "method": "m",
@@ -7129,3 +7142,57 @@ def test_an_omitted_deny_list_is_the_maintainers_and_never_an_empty_one(
     ):
         parameter = inspect.signature(function).parameters["denylist"]
         assert parameter.default is None, function.__name__
+
+
+def test_live_and_offline_roles_come_from_one_builder(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PR #319 round 4: ``recording.assign_roles`` is the one role builder; the scripts only read.
+
+    The live recorder reads the recorded answers, the offline transform the committed fixture;
+    both hand the sightings to the same builder, so they cannot drift. On the same answers the
+    offline words equal the live ones with the change request's author named, ``author`` being
+    that author's in a committed fixture.
+    """
+    assert not hasattr(redact_fixtures, "legacy_roles")
+    assert not hasattr(redact_fixtures, "_unclassified_logins")
+    bot = {"user": {"login": "zqbot[bot]"}, "body": "ok"}
+    mention = {"body": "cc @zqbot and @zqhandle please"}
+    other = {"user": {"login": "zqother"}}
+    service = {"user": {"login": "project_88442211_bot_a1b2c3d4e5f6"}}
+    upper = {"user": {"login": "ZQOther"}, "body": "cc @ZQBOT"}
+    for answers in (
+        [mention, bot, other],
+        [other, mention, bot],
+        [bot, service, upper, mention],
+        [service, other, upper],
+        [mention],
+    ):
+        calls = [{"args": [], "stdout": json.dumps(a)} for a in answers]
+        live = rec.build_roles(calls, bot="", maintainer=None, author="zqauthor")
+        live.pop("zqauthor")
+        assert redact_fixtures.fixture_roles(_roles_data(*answers)) == live, answers
+    calls = [{"args": [], "stdout": json.dumps(a)} for a in (mention, bot, other)]
+    assert rec.build_roles(calls, bot="", maintainer=None, author=None) == {
+        "zqbot[bot]": "bot",
+        "zqbot": "bot",
+        "@zqhandle": "author",
+        "zqother": "author-2",
+    }
+    seen: list[str] = []
+    real = recording.assign_roles
+
+    def _spy(*a: Any, **kw: Any) -> dict[str, str]:
+        seen.append("called")
+        return real(*a, **kw)
+
+    monkeypatch.setattr(rec, "assign_roles", _spy)
+    monkeypatch.setattr(redact_fixtures, "assign_roles", _spy)
+    rec.build_roles(calls, bot="", maintainer=None, author=None)
+    redact_fixtures.fixture_roles(_roles_data(mention))
+    assert seen == ["called", "called"]
+    assert recording.login_sightings([mention, other]) == [
+        ("zqbot", True),
+        ("zqhandle", True),
+        ("zqother", False),
+    ]
+    taken = recording.assign_roles([("zqnew", False)], held=lambda word: word in {"author"})
+    assert taken == {"zqnew": "author-2"}

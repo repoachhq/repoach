@@ -49,7 +49,6 @@ second run changes nothing, which
 from __future__ import annotations
 
 import argparse
-import itertools
 import json
 import re
 import sys
@@ -62,7 +61,6 @@ from repoach.forge import closure
 from repoach.forge.denylist import Denylist, DenylistError, read_denylist
 from repoach.forge.fixture_judge import UnclassifiedValueError, refuse_unclassified
 from repoach.forge.recording import (
-    GITLAB_PROJECT_BOT_RE,
     LOGIN_KEYS,
     MENTION_ONLY_PREFIX,
     RECORDED_SOURCE_HEAD_RE,
@@ -76,16 +74,14 @@ from repoach.forge.recording import (
     NeedleError,
     SyntheticIdsExhaustedError,
     UserIdMap,
+    assign_roles,
     bot_mention_stem,
-    bot_stem,
     declared_project_ids,
     declared_user_ids,
     decode_json_values,
-    is_classified_login,
     known_values,
-    login_values,
+    login_sightings,
     mention_pattern,
-    mentions,
     outside_literals,
     raw_logins,
     recorded_source,
@@ -160,97 +156,54 @@ def _exchanges(node: object) -> Any:
     return node
 
 
-def _unclassified_logins(data: dict[str, object], also: Sequence[str] = ()) -> dict[str, bool]:
-    """Every login of ``data`` that is not a class word nor a non-person login → whether it is mention-only.
+def _answer_nodes(data: dict[str, object]) -> list[object]:
+    """Every node of a fixture the roles read, in order: the fixture, then each JSON value inside it.
 
-    In order of first appearance: the bot login first, then the logins
-    under login keys and the ``@<handle>`` mentions in free text, JSON
-    stdout walked inside, then ``also``. A login also seen under a login
-    key, in ``also`` or as the bot is not mention-only.
+    A string is entered only when it is a JSON text, under a ``stdout`` key or in a list; every
+    other node is listed, then its children, depth first.
     """
-    found: dict[str, bool] = {}
-
-    def _add(login: str, *, mention: bool) -> None:
-        if login and not is_classified_login(login):
-            found[login] = found.get(login, True) and mention
-
-    bot = data.get("bot_username")
-    if isinstance(bot, str):
-        _add(bot, mention=False)
+    nodes: list[object] = []
     stack: list[object] = [data]
     while stack:
         node = stack.pop(0)
         if isinstance(node, str):
             if node.lstrip()[:1] in ("{", "["):
                 stack[:0] = decode_json_values(node) or []
-        else:
-            for _path, login in login_values(node):
-                _add(login, mention=False)
-            for login in mentions(node):
-                _add(login, mention=True)
-            if isinstance(node, dict):
-                stack[:0] = [v for k, v in node.items() if not isinstance(v, str) or k == "stdout"]
-            elif isinstance(node, list):
-                stack[:0] = list(node)
-    for login in also:
-        _add(login, mention=False)
-    for bot_login in [k for k in found if k.casefold().endswith("[bot]")]:
-        stem = bot_login[:-5].casefold()
-        for k in [k for k, mention_only in found.items() if mention_only and k.casefold() == stem]:
-            if bot_stem(bot_login) is None:
-                del found[k]
-            else:
-                found[k] = False
-    return found
+            continue
+        nodes.append(node)
+        if isinstance(node, dict):
+            stack[:0] = [v for k, v in node.items() if not isinstance(v, str) or k == "stdout"]
+        elif isinstance(node, list):
+            stack[:0] = list(node)
+    return nodes
 
 
-def _word(kind: str, n: int) -> str:
-    """The class word of the ``n``-th account of ``kind``: ``author``, then ``author-2``."""
-    return kind if n == 1 else f"{kind}-{n}"
+def fixture_roles(data: dict[str, object], also: Sequence[str] = ()) -> dict[str, str]:
+    """Login → class word for one committed fixture, through the one role builder.
 
+    The fixture's own logins and mentions (:func:`_answer_nodes`,
+    :func:`repoach.forge.recording.login_sightings`), then ``also``, go to
+    :func:`repoach.forge.recording.assign_roles` with its ``bot_username`` as the bot. A
+    committed fixture already holds class words, so a word it holds is taken, and ``author``
+    is its change request's: a new login gets the next word the fixture lacks
+    (``author-2`` first).
 
-def legacy_roles(data: dict[str, object], also: Sequence[str] = ()) -> dict[str, str]:
-    """Each unclassified login of ``data`` and of ``also`` → the next class word the fixture lacks.
+    Args:
+        data: The fixture, its exchanges redacted by the convenience layer.
+        also: The logins the raw answers carry under keys the redaction drops
+            (:func:`repoach.forge.recording.raw_logins`), as the live recorder reads them.
 
-    ``also`` holds the logins the raw answers carry under keys the redaction
-    drops (:func:`repoach.forge.recording.raw_logins`), as the live recorder reads them.
-
-    The bot login becomes ``bot``, another ``[bot]`` login ``bot-<n>``, a
-    GitLab project bot ``service`` (then ``service-<n>``), any other login
-    ``author-<n>`` (from 2). A mention-only login is keyed ``@<login>``
-    (:data:`repoach.forge.recording.MENTION_ONLY_PREFIX`): only its
-    ``@<handle>`` form is replaced.
+    Returns:
+        Each login (a mention-only one keyed ``@<login>``) mapped to its class word.
     """
     text = json.dumps(data)
-    roles: dict[str, str] = {}
-    following = {"author": 2, "service": 1, "bot": 1}
+
+    def _held(word: str) -> bool:
+        return word == "author" or re.search(rf'"{re.escape(word)}\\*"', text) is not None
+
+    sightings = login_sightings(_answer_nodes(data)) + [(login, False) for login in also]
     bot = data.get("bot_username")
-    unclassified = _unclassified_logins(data, also)
-    siblings = {b.casefold(): b for b in unclassified}
-    stems = {
-        k: siblings[f"{k.casefold()}[bot]"]
-        for k, mention_only in unclassified.items()
-        if not mention_only and f"{k.casefold()}[bot]" in siblings
-    }
-    for login, mention_only in unclassified.items():
-        if login not in stems:
-            if login == bot or login.casefold().endswith("[bot]"):
-                kind = "bot"
-            elif GITLAB_PROJECT_BOT_RE.match(login):
-                kind = "service"
-            else:
-                kind = "author"
-            n = next(
-                n
-                for n in itertools.count(following[kind])
-                if not re.search(rf'"{re.escape(_word(kind, n))}\\*"', text)
-            )
-            following[kind] = n + 1
-            word = _word(kind, n)
-            roles[MENTION_ONLY_PREFIX + login if mention_only else login] = word
-    for stem, bot_login in stems.items():
-        roles[stem] = roles[bot_login]
-    return roles
+    return assign_roles(sightings, bot=bot if isinstance(bot, str) else "", held=_held)
 
 
 def _mention_text(text: str, roles: dict[str, str]) -> str:
@@ -522,7 +475,7 @@ def _redact_fixture(
     for key in ("args", "kwargs", "result"):
         if key in out:
             out[key] = redact_urls_in_value(out[key])
-    roles = legacy_roles(out, also=raw_logins(data.get("calls")))
+    roles = fixture_roles(out, also=raw_logins(data.get("calls")))
     if roles:
         out = _rename(out, roles)
     out = _remap_ids(out, ids, forge, keep)
