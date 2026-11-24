@@ -10781,6 +10781,24 @@ ROWS: tuple[Row, ...] = (
         outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
     ),
     Row(
+        id="r5_token_with_a_percent_escaped_delimiter_is_refused",
+        source="PR #319 review round 5 (4683464687)",
+        inp=Sample(body="token gh" + "p%5FA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8 leaked"),
+        outcome=Refused("secret-shaped value at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r5_token_with_a_entity_escaped_delimiter_is_refused",
+        source="PR #319 review round 5 (4683464687)",
+        inp=Sample(body="token gh" + "p&#95;A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8 leaked"),
+        outcome=Refused("secret-shaped value at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r5_token_with_a_string_escape_escaped_delimiter_is_refused",
+        source="PR #319 review round 5 (4683464687)",
+        inp=Sample(body="token gh" + "p\\u005fA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8 leaked"),
+        outcome=Refused("secret-shaped value at exchanges[0].stdout[0].body"),
+    ),
+    Row(
         id="r5_tenant_path_bare_is_refused",
         source="PR #319 review round 5 (4683464700)",
         inp=Sample(body="see stackoverflow.com/c/kvnteam77 for the setting"),
@@ -11256,10 +11274,10 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
     refused = [row for row in ROWS if isinstance(row.outcome, Refused)]
     bounded = [row for row in ROWS if isinstance(row.outcome, Bounded)]
     assert (len(ROWS), len(planted), len(ordinary), len(refused), len(bounded)) == (
-        931,
-        639,
+        934,
+        642,
         292,
-        92,
+        95,
         2,
     )
     assert len(residual) == 25

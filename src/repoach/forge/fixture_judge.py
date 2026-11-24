@@ -61,6 +61,26 @@ def generic_class(text: str) -> str | None:
     return "home_path" if any(HOME_PATH_RE.search(form) for form in forms) else None
 
 
+def has_secret_token(text: str) -> bool:
+    r"""Whether a forge token shape (:data:`repoach.forge.recording.SECRET_TOKEN_PATTERNS`) is in ``text``.
+
+    Judged in every decoded form of ``text`` (:func:`repoach.forge.closure.decoded_forms`, the one
+    decoder the home-path rule and the deny-list read), so a token whose prefix or delimiter is
+    percent-, entity- or string-escaped (``ghp%5F…``, ``ghp&#95;…``, ``ghp_…``) counts.
+
+    Args:
+        text: One string of the fixture.
+
+    Returns:
+        ``True`` when a decoded form holds a token shape.
+    """
+    return any(
+        pattern.search(form)
+        for form in closure.decoded_forms(text)
+        for pattern in SECRET_TOKEN_PATTERNS
+    )
+
+
 def decoded_answers(calls: list[dict[str, Any]]) -> list[tuple[str, object]]:
     """``(path, decoded stdout value)`` of every JSON answer, in recording order.
 
@@ -123,7 +143,7 @@ def refuse_unclassified(
         entry = deny.hit(text)
         if entry is not None:
             raise UnclassifiedValueError(f"deny-list entry {entry} at {path}")
-        if any(pattern.search(text) for pattern in SECRET_TOKEN_PATTERNS):
+        if has_secret_token(text):
             raise UnclassifiedValueError(f"secret-shaped value at {path}")
         if path in CONSTANT_FIELDS:
             continue

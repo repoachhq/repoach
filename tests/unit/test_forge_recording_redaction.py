@@ -7331,3 +7331,31 @@ def test_the_recorders_public_functions_document_their_arguments_and_value() -> 
             elif any(f"    {a}:" not in doc for a in arguments):
                 missing.append(f"{rel}:{node.name} (an argument)")
     assert missing == []
+
+
+def test_a_token_is_refused_in_every_decoded_form(tmp_path: Path) -> None:
+    """D3 (PR #319 round 5, 4683464687): the token shapes are judged on the one decoder's forms.
+
+    The home-path rule and the deny-list already read :func:`repoach.forge.closure.decoded_forms`;
+    the token scan reads the same forms, so a percent-, entity- or string-escaped delimiter or
+    prefix hides no token, and no second decoder exists.
+    """
+    token = "gh" + "p_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
+    for hidden in (
+        token,
+        token.replace("_", "%5F"),
+        token.replace("_", "%5f"),
+        token.replace("_", "&#95;"),
+        token.replace("_", "&#x5f;"),
+        token.replace("_", "\\u005f"),
+        token.replace("_", "\\x5f"),
+        token.replace("p", "%70", 1),
+        token.replace("_", "%255F"),
+    ):
+        assert fixture_judge.has_secret_token(f"token {hidden} leaked"), hidden
+        fixture = _placed(f"token {hidden} leaked", "prose")
+        with pytest.raises(fixture_judge.UnclassifiedValueError, match=r"^secret-shaped value at "):
+            fixture_judge.refuse_unclassified(fixture, NO_DENYLIST)
+    assert not fixture_judge.has_secret_token("use a ghp_ token from settings")
+    source = inspect.getsource(fixture_judge.has_secret_token)
+    assert "closure.decoded_forms(text)" in source and "unquote" not in source
