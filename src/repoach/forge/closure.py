@@ -714,15 +714,40 @@ def _bracketed(text: str) -> list[tuple[int, int, ipaddress.IPv6Address]]:
     return found
 
 
+_PUNYCODE_LABEL = re.compile(r"xn--[a-z0-9-]+", re.I)
+"""An IDNA A-label (RFC 5890): a top-level domain such as ``xn--p1ai`` is a last label."""
+
+
 def _label_run(run: str) -> list[str] | None:
+    """The labels of a dotted host name, its last label letters or an IDNA ``xn--`` label, else ``None``."""
     body = run[:-1] if run.endswith(".") else run
     labels = body.split(".")
     if len(labels) < 2 or not all(_LABEL.fullmatch(label) for label in labels):
         return None
     last = labels[-1]
+    if _PUNYCODE_LABEL.fullmatch(last):
+        return labels
     if len(last) < 2 or not (last.isascii() and last.isalpha()):
         return None
     return labels
+
+
+def _dotless_authority(text: str, start: int, host: str) -> bool:
+    """Whether ``host`` at ``start`` is a one-label host: right after ``<scheme>://``, the whole authority.
+
+    ``https://gitlab/ns/repo`` names a machine; ``ssh://git@<host>`` does not name ``git``, so an
+    authority holding an ``@`` (a userinfo) is never read here.
+    """
+    if "." in host or not _LABEL.fullmatch(host):
+        return False
+    if not (text.endswith("://", 0, start) and _scheme_before(text, start - 3)):
+        return False
+    end = start
+    while end < len(text) and not text[end].isspace() and text[end] not in "/?#":
+        if text[end] == "@":
+            return False
+        end += 1
+    return True
 
 
 def _local_before(text: str, at: int) -> str:
@@ -850,6 +875,8 @@ def hosts(text: str) -> list[Host]:
         labels = _label_run(run)
         host = run[:-1] if run.endswith(".") else run
         if labels is None:
+            if _dotless_authority(text, start, host):
+                found.append(Host(host, True, start, end))
             continue
         if led:
             found.append(Host(host, True, start, end))

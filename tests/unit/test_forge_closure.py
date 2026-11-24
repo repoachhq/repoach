@@ -1672,3 +1672,26 @@ def test_the_userinfo_scan_stops_at_the_previous_at_and_stays_linear() -> None:
     assert closure.judge("clone https://u:p@ss@acme.io/x now", closure.Known(())) == (
         closure.Refusal("unknown host")
     )
+
+
+def test_a_one_label_authority_and_an_idna_last_label_are_hosts() -> None:
+    """D8 (0.28, PR #319): ``https://gitlab/ns/repo`` and ``xn--`` top-level domains name a machine."""
+    none = closure.Known(())
+    for text in (
+        "clone https://gitlab/ns/repo now",
+        "see http://intranet:8080/x",
+        "clone https://git.xn--p1ai/ns/repo now",
+        "write to x@mail.xn--p1ai today",
+    ):
+        assert closure.judge(text, none) is not None, text
+    assert [h.host for h in closure.hosts("open https://gitlab/ns/repo")] == ["gitlab"]
+    assert [(b.local, b.host) for b in closure.mailboxes("x@mail.xn--p1ai")] == [
+        ("x", "mail.xn--p1ai")
+    ]
+    for text in (
+        "ssh://git@forge.example.com/org/project.git",
+        "http://localhost/x",
+        "see gitlab/ns/repo",
+        "x@y",
+    ):
+        assert closure.judge(text, none) is None, text

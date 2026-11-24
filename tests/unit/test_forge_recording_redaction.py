@@ -6396,14 +6396,17 @@ def test_inside_a_source_the_first_reading_in_recording_order_keeps_the_class() 
 
 
 def test_a_url_field_on_a_single_label_host_learns_the_host() -> None:
-    """D7 (0.27, verify026 X26): a URL field's host that is not public is a value even when it has a single label (``http://intranet/…``), which no text reader learns; its path is read as the route grammar reads it."""
+    """D7 (0.27, verify026 X26): a URL field's host that is not public is a value even when it has a single label (``http://intranet/…``), its path is read as the route grammar reads it; since PR #319 the oracle reads a one-label authority after a scheme in text too."""
     found = needles(
         _one_call([{"html_url": "http://intranet/kvnteam/kvnbilling", "body": "x"}]), roles={}
     )
     assert "intranet" in _kinds(found, "host")
     assert _kinds(found, "segment") == ["kvnteam", "kvnbilling"]
     found = needles(_one_call([{"body": "see http://intranet/kvnteam/kvnbilling"}]), roles={})
-    assert "intranet" not in _kinds(found, "host")
+    assert "intranet" in _kinds(found, "host")
+    assert (
+        recording.replace_known("see http://intranet/x", found) == "see http://forge.example.com/x"
+    )
 
 
 def test_every_exchange_argv_is_read_by_construction() -> None:
