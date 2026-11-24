@@ -1331,7 +1331,7 @@ def test_a_bracketed_ipv6_literal_is_judged_like_an_ipv4_address() -> None:
         ("[1::]", "1::"),
         ("[0001:0002:0003:0004:0005:0006:0007:0008]", "1:2:3:4:5:6:7:8"),
     ):
-        assert str(closure._ipv6(text)) == expected, text
+        assert closure._ipv6(text) == ipaddress.IPv6Address(expected), text
     for text in (
         "[1:2]",
         "[1:2:3:4:5:6:7]",
@@ -1567,8 +1567,8 @@ def test_an_ipv6_zone_id_is_part_of_the_literal_and_an_ipv4_tail_is_read() -> No
         assert [(h.host, h.led, h.literal) for h in found] == [(host, True, True)], text
         assert closure.judge(text, closure.Known(())) == closure.Refusal("unknown host"), text
     assert closure.hosts("see [fe80::1%] and [fe80::1%e/th0] and [fe80::1%25]") == []
-    assert str(closure._ipv6("[::ffff:51.15.20.30]")) == "::ffff:330f:141e"
-    assert str(closure._ipv6("[1:2:3:4:5:6:1.2.3.4]")) == "1:2:3:4:5:6:102:304"
+    assert closure._ipv6("[::ffff:51.15.20.30]") == ipaddress.IPv6Address("::ffff:330f:141e")
+    assert closure._ipv6("[1:2:3:4:5:6:1.2.3.4]") == ipaddress.IPv6Address("1:2:3:4:5:6:102:304")
     for text in ("[1.2.3.4]", "[::ffff:1.2.3]", "[::ffff:999.1.1.1]", "[1:2:3:4:5:6:7:1.2.3.4]"):
         assert closure._ipv6(text) is None, text
     assert closure.public_addresses("ssh [::ffff:51.15.20.30]") == ["[::ffff:51.15.20.30]"]
