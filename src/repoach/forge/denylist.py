@@ -104,10 +104,14 @@ def read_denylist(config_dir: Path | None = None) -> Denylist:
         :class:`Denylist`; empty when neither source exists.
 
     Raises:
-        DenylistError: An entry shorter than :data:`DENYLIST_MIN_LENGTH`, by
-            ordinal, or a comma in :data:`DENYLIST_ENV`.
+        DenylistError: The file exists but cannot be read (a dangling symlink, a directory, a
+            permission, an encoding or any other ``OSError``), an entry shorter than
+            :data:`DENYLIST_MIN_LENGTH`, by ordinal, or a comma in :data:`DENYLIST_ENV`. It never
+            reads as an empty list, and the message names the reason, never an entry.
     """
-    denylist, comma = _read_entries(config_dir)
+    denylist, comma, unreadable = _read_entries(config_dir)
+    if unreadable:
+        raise DenylistError(f"deny-list file {DENYLIST_FILE_NAME}: {unreadable}")
     if comma:
         raise DenylistError(f"deny-list variable {DENYLIST_ENV}: a comma; one entry per line")
     short = denylist.short_entry()
@@ -116,12 +120,26 @@ def read_denylist(config_dir: Path | None = None) -> Denylist:
     return denylist
 
 
-def _read_entries(config_dir: Path | None) -> tuple[Denylist, bool]:
-    """The merged entries, opaque, and whether :data:`DENYLIST_ENV` holds a comma; never raises on content."""
+def _read_entries(config_dir: Path | None) -> tuple[Denylist, bool, str]:
+    """The merged entries, opaque, whether :data:`DENYLIST_ENV` holds a comma, and why the file cannot be read.
+
+    Never raises: the file is absent (``""``), read, or named unreadable by a reason that holds
+    no entry, so the frame that raises (:func:`read_denylist`) binds none.
+    """
     raw: list[str] = []
     path = denylist_file(config_dir)
-    if path.is_file():
-        for line in path.read_text(encoding="utf-8").splitlines():
+    try:
+        present = path.is_symlink() or path.exists()
+        regular = present and path.is_file()
+        text = path.read_text(encoding="utf-8") if regular else ""
+    except UnicodeDecodeError:
+        return Denylist(), False, "not UTF-8"
+    except OSError as exc:
+        return Denylist(), False, f"cannot be read ({type(exc).__name__})"
+    if present and not regular:
+        return Denylist(), False, "exists but is not a regular file"
+    if present:
+        for line in text.splitlines():
             raw.append(line.split("#", 1)[0])
     variable = os.environ.get(DENYLIST_ENV, "")
     raw += variable.split("\n")
@@ -129,7 +147,7 @@ def _read_entries(config_dir: Path | None) -> tuple[Denylist, bool]:
     for item in (r.strip() for r in raw):
         if item and item not in entries:
             entries.append(item)
-    return Denylist(tuple(entries)), "," in variable
+    return Denylist(tuple(entries)), "," in variable, ""
 
 
 def denylist_patterns(entries: list[str]) -> list[re.Pattern[str]]:

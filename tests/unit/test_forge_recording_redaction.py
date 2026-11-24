@@ -7359,3 +7359,47 @@ def test_a_token_is_refused_in_every_decoded_form(tmp_path: Path) -> None:
     assert not fixture_judge.has_secret_token("use a ghp_ token from settings")
     source = inspect.getsource(fixture_judge.has_secret_token)
     assert "closure.decoded_forms(text)" in source and "unquote" not in source
+
+
+def test_an_unreadable_denylist_file_is_a_named_refusal_never_an_empty_list(tmp_path: Path) -> None:
+    """D3 (PR #319 round 5): a deny-list file that exists but cannot be read fails closed.
+
+    A dangling symlink, a directory, an unreadable file and a file that is no UTF-8 each raise
+    :class:`repoach.forge.denylist.DenylistError` naming the reason and the file name, never an
+    entry; an absent file is no entry.
+    """
+    entry = "zqunreadable" + "4713"
+    os.environ.pop(deny_list.DENYLIST_ENV, None)
+
+    def _dangling(path: Path) -> None:
+        path.symlink_to(path.parent / "nowhere")
+
+    def _loop(path: Path) -> None:
+        path.symlink_to(path)
+
+    def _unreadable(path: Path) -> None:
+        path.write_text(entry + "\n")
+        path.chmod(0)
+
+    cases: list[tuple[str, Any, str]] = [
+        ("dangling", _dangling, "exists but is not a regular file"),
+        ("loop", _loop, "exists but is not a regular file"),
+        ("directory", lambda path: path.mkdir(), "exists but is not a regular file"),
+        ("utf8", lambda path: path.write_bytes(entry.encode() + b"\n\xff\xfe"), "not UTF-8"),
+    ]
+    if os.geteuid() != 0:
+        cases.append(("mode000", _unreadable, "cannot be read (PermissionError)"))
+    for name, make, reason in cases:
+        config = tmp_path / name
+        config.mkdir()
+        make(deny_list.denylist_file(config))
+        with pytest.raises(deny_list.DenylistError) as info:
+            deny_list.read_denylist(config)
+        message = str(info.value)
+        assert message == f"deny-list file {deny_list.DENYLIST_FILE_NAME}: {reason}", name
+        assert entry not in message and info.value.__cause__ is None, name
+        if name == "mode000":
+            deny_list.denylist_file(config).chmod(0o600)
+    absent = tmp_path / "absent"
+    absent.mkdir()
+    assert len(deny_list.read_denylist(absent)) == 0
