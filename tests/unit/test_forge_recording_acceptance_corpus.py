@@ -10724,8 +10724,11 @@ def _top_args(inp: Sample) -> list[Any]:
     return args
 
 
-def _fake_forge(inp: Sample, tmp_path: Path) -> Forge:
-    """A forge whose protocol method issues the row's argv and whose binary answers the row's stdout."""
+def _fake_forge(inp: Sample, tmp_path: Path, bot: str | None = None) -> Forge:
+    """A forge whose protocol method issues the row's argv and whose binary answers the row's stdout.
+
+    ``bot`` is the ``bot_username`` the recorder's replay asks :func:`select_forge` for.
+    """
     binary = tmp_path / ("gh" if inp.forge == "github" else "glab")
     binary.write_text("")
     fixed_argv = _argv(inp)
@@ -10754,7 +10757,7 @@ def _fake_forge(inp: Sample, tmp_path: Path) -> Forge:
                 res = self._spawn([str(binary), *_issued(extra)], input_data=inp.stdin)
                 return Diff(text=res.stdout, files=diff_files(res.stdout))
 
-        forge: Any = _FakeGitHub(cwd=tmp_path, gh_path=str(binary), bot_login=inp.bot)
+        forge: Any = _FakeGitHub(cwd=tmp_path, gh_path=str(binary), bot_login=bot or inp.bot)
     else:
 
         class _FakeGitLab(GitLabForge):
@@ -10768,7 +10771,7 @@ def _fake_forge(inp: Sample, tmp_path: Path) -> Forge:
                 res = self._spawn([str(binary), *_issued(extra)], input_data=inp.stdin)
                 return Diff(text=res.stdout, files=diff_files(res.stdout))
 
-        forge = _FakeGitLab(cwd=tmp_path, glab_path=str(binary), bot_username=inp.bot)
+        forge = _FakeGitLab(cwd=tmp_path, glab_path=str(binary), bot_username=bot or inp.bot)
     forge._spawn = _spawn
     return forge
 
@@ -10779,7 +10782,9 @@ def _record_live(
     """Run the row through ``record()``: the public live path, every helper real but the forge."""
     inp = row.inp
     monkeypatch.setenv(deny_list.DENYLIST_ENV, "\n".join(inp.deny))
-    monkeypatch.setattr(REC, "select_forge", lambda **_kw: _fake_forge(inp, tmp_path))
+    monkeypatch.setattr(
+        REC, "select_forge", lambda **kw: _fake_forge(inp, tmp_path, kw.get("bot_username"))
+    )
     monkeypatch.setattr(REC, "origin_url", lambda _cwd: inp.remote)
     monkeypatch.setattr(REC, "_author_of", lambda *_a: inp.author)
     out_root = tmp_path / "out" / row.id

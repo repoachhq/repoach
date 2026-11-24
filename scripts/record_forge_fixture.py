@@ -328,14 +328,6 @@ def origin_url(cwd: Path) -> str:
     return done.stdout.strip() if done.returncode == 0 else ""
 
 
-def _set_bot(forge: Forge, login: str) -> None:
-    """Give a forge the recording's classified bot login."""
-    if hasattr(forge, "_bot_login"):
-        forge._bot_login = login
-    else:
-        forge._bot_username = login
-
-
 def _author_of(forge: Forge, method: str, args: list[Any]) -> str | None:
     """The change request's author, read without recording, when ``args[0]`` is its number."""
     if not args or not isinstance(args[0], int) or isinstance(args[0], bool):
@@ -360,9 +352,7 @@ def _replay(
     normalize: Callable[[str], str] | None = None,
 ) -> tuple[object, str | None]:
     """Recompute the result from the redacted exchanges so the fixture stays self-consistent."""
-    forge = select_forge(override=forge_name, cwd=cwd)
-    if bot is not None:
-        _set_bot(forge, bot)
+    forge = select_forge(override=forge_name, cwd=cwd, bot_username=bot)
     forge._spawn = ReplaySpawn([Exchange.from_json(c) for c in calls], normalize)
     try:
         return serialize_result(getattr(forge, method)(*typed_args, **typed_kwargs)), None

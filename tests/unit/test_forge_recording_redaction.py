@@ -413,9 +413,9 @@ def test_logins_are_classified_in_stdout_and_argv_with_a_stable_mapping() -> Non
     }
 
 
-def _fake_forge(stdout: str, tmp_path: Path) -> Forge:
-    """A GitHub forge, bot ``review-agent-x``, whose every call answers ``stdout``."""
-    forge = _build("github", tmp_path, "review-agent-x")
+def _fake_forge(stdout: str, tmp_path: Path, bot: str | None = None) -> Forge:
+    """A GitHub forge, bot ``review-agent-x`` unless the replay asks for ``bot``, answering ``stdout``."""
+    forge = _build("github", tmp_path, bot or "review-agent-x")
 
     def _spawn(argv: list[str], *, input_data: str | None = None) -> CommandResult:
         return CommandResult(returncode=0, stdout=stdout, stderr="", argv=list(argv))
@@ -443,7 +443,9 @@ def _run_main(
     _no_denylist(monkeypatch, tmp_path)
     if denylist is not None:
         monkeypatch.setenv(deny_list.DENYLIST_ENV, denylist)
-    monkeypatch.setattr(rec, "select_forge", lambda **_kw: _fake_forge(stdout, tmp_path))
+    monkeypatch.setattr(
+        rec, "select_forge", lambda **kw: _fake_forge(stdout, tmp_path, kw.get("bot_username"))
+    )
     if roles is not None:
         monkeypatch.setattr(rec, "build_roles", lambda *_a, **_kw: dict(roles))
     out = tmp_path / "out"
@@ -1740,10 +1742,10 @@ rec = importlib.util.module_from_spec(spec)
 sys.modules["record_forge_fixture"] = rec
 spec.loader.exec_module(rec)
 tmp = Path(sys.argv[2])
-def build(**_kw):
+def build(**kw):
     binary = tmp / "gh"
     binary.write_text("")
-    forge = GitHubForge(cwd=tmp, gh_path=str(binary), bot_login="review-agent-x")
+    forge = GitHubForge(cwd=tmp, gh_path=str(binary), bot_login=kw.get("bot_username") or "review-agent-x")
     forge._spawn = lambda argv, *, input_data=None: CommandResult(
         returncode=0, stdout=sys.argv[3], stderr="", argv=list(argv))
     return forge
@@ -4741,7 +4743,7 @@ def _record_through(
 ) -> dict[str, Any]:
     """Run :func:`rec.record` against ``forge`` and read the fixture back."""
     _no_denylist(monkeypatch, tmp_path)
-    monkeypatch.setattr(rec, "select_forge", lambda **_kw: forge)
+    monkeypatch.setattr(rec, "select_forge", lambda **kw: _as_bot(forge, kw.get("bot_username")))
     monkeypatch.setattr(rec, "origin_url", lambda _cwd: remote)
     monkeypatch.setattr(rec, "_author_of", lambda *_a: author)
     path = rec.record(
@@ -4755,6 +4757,13 @@ def _record_through(
         out_root=tmp_path / "out",
     )
     return cast(dict[str, Any], json.loads(path.read_text()))
+
+
+def _as_bot(forge: Forge, bot: str | None) -> Forge:
+    """``forge`` as :func:`select_forge` builds it for ``bot_username=bot``: the test's stand-in."""
+    if bot is not None:
+        cast(Any, forge)._bot_login = bot
+    return forge
 
 
 def _github_answering(tmp_path: Path, answers: list[CommandResult]) -> Forge:
@@ -4882,8 +4891,11 @@ def test_replay_names_the_bot_and_the_error_the_redacted_fixture_raises(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The replay of the redacted exchanges sets the classified bot, reports a forge error by its class and disagrees by exit."""
+    asked: list[str | None] = []
     forge = _build("github", tmp_path, "repoach-bot")
-    monkeypatch.setattr(rec, "select_forge", lambda **_kw: forge)
+    monkeypatch.setattr(
+        rec, "select_forge", lambda **kw: asked.append(kw.get("bot_username")) or forge
+    )
     probe = _build("github", tmp_path, "repoach-bot")
     recorder = recording.RecordingSpawn(
         inner=lambda argv, *, input_data=None: CommandResult(1, "", "boom", list(argv))
@@ -4894,11 +4906,8 @@ def test_replay_names_the_bot_and_the_error_the_redacted_fixture_raises(
     failing = [e.to_json() for e in recorder.exchanges]
     result, raises = rec._replay("github", tmp_path, "pull_request", [7], {}, failing, "zqbotword")
     assert (result, raises) == (None, "ForgeError") or raises is not None
-    assert forge._bot_login == "zqbotword"
-    other = _build("github", tmp_path, "repoach-bot")
-    monkeypatch.setattr(rec, "select_forge", lambda **_kw: other)
     rec._replay("github", tmp_path, "pull_request", [7], {}, failing, None)
-    assert other._bot_login == "repoach-bot"
+    assert asked == ["zqbotword", None]
     assert fixture_judge.generic_class("a /home/zqperson/x") == "home_path"
     with pytest.raises(
         rec.UnclassifiedValueError, match=r"^unclassified: exchanges\[0\]\.stdout\.user\.login$"
