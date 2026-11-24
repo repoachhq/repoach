@@ -537,6 +537,7 @@ def run(root: Path, *, check: bool, denylist: Denylist | None = None) -> list[Pa
         SyntheticIdsExhaustedError: The corpus needs a number past the synthetic range.
         NeedleError: A needle the oracle cannot judge.
         ResidualValueError: A redacted fixture still holds a needle.
+        DenylistError: ``denylist`` is ``None`` and the maintainer's deny-list is malformed.
     """
     deny = read_denylist() if denylist is None else denylist
     paths = sorted(root.rglob("*.json"))

@@ -104,6 +104,7 @@ def refuse_unclassified(
 
     Raises:
         UnclassifiedValueError: Naming a reason, a kind, an ordinal and the key path, never the value.
+        DenylistError: ``denylist`` is ``None`` and the maintainer's deny-list is malformed.
     """
     calls: list[dict[str, Any]] = list(fixture.get("calls") or [])
     for path, value in decoded_answers(calls):

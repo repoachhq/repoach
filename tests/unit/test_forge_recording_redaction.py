@@ -7196,3 +7196,93 @@ def test_live_and_offline_roles_come_from_one_builder(monkeypatch: pytest.Monkey
     ]
     taken = recording.assign_roles([("zqnew", False)], held=lambda word: word in {"author"})
     assert taken == {"zqnew": "author-2"}
+
+
+def _raises_names(function: Any) -> set[str]:
+    """The exception names a Google ``Raises:`` section lists, their module path dropped."""
+    doc = inspect.getdoc(function) or ""
+    section = doc.split("Raises:", 1)[1] if "Raises:" in doc else ""
+    return {m.rsplit(".", 1)[-1] for m in re.findall(r"^    ([A-Za-z_.]+):", section, re.M)}
+
+
+def _caught_by_main(module: ModuleType) -> set[str]:
+    """The exception names the ``except`` clauses of ``module.main`` catch."""
+    tree = ast.parse(inspect.getsource(module.main))
+    names: set[str] = set()
+    for handler in (n for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler)):
+        kinds = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+        names |= {k.attr if isinstance(k, ast.Attribute) else k.id for k in kinds}
+    return names
+
+
+def test_every_exception_main_catches_is_one_the_entry_point_documents() -> None:
+    """PR #319 round 4: ``record()`` and ``run()`` list every exception that can escape them.
+
+    Each script's ``main`` catches what its entry point raises; a name caught there and missing
+    from the entry point's ``Raises:`` is an undocumented escape.
+    """
+    assert _caught_by_main(rec) <= _raises_names(rec.record)
+    assert _caught_by_main(redact_fixtures) <= _raises_names(redact_fixtures.run)
+    assert {
+        "SystemExit",
+        "UnclassifiedValueError",
+        "DenylistError",
+        "SyntheticIdsExhaustedError",
+        "NeedleError",
+        "ForgeError",
+        "ConfigError",
+        "TypeError",
+    } == _raises_names(rec.record)
+    for function in (
+        redact_fixtures.redact_fixture,
+        redact_fixtures.fixture_known,
+        recording.known_values,
+        fixture_judge.refuse_unclassified,
+    ):
+        assert "DenylistError" in _raises_names(function), function.__name__
+
+
+def test_record_refuses_an_unknown_method_and_a_replay_that_issues_another_call(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """PR #319 round 4: neither escapes as an ``AttributeError`` or an ``AssertionError``; nothing is written."""
+    _no_denylist(monkeypatch, tmp_path)
+    for method in ("no_such_method", "_spawn", "available_methods"):
+        with pytest.raises(SystemExit, match=r"no protocol method has that name$"):
+            rec.record(
+                forge_name="github",
+                cwd=tmp_path,
+                case="c",
+                method=method,
+                args=[],
+                kwargs={},
+                trim=None,
+                out_root=tmp_path / "out",
+            )
+    forge = GitHubForge(cwd=tmp_path, bot_login="repoach-bot")
+    argv = ["api", "--paginate", "--slurp", "repos/:owner/:repo/issues/7/comments"]
+    forge._spawn = ReplaySpawn([Exchange("gh", argv, None, 0, "[[]]", "")])
+
+    def _mismatch(*_a: Any, **_kw: Any) -> tuple[object, str | None]:
+        raise recording.ReplayMismatchError("unrecorded call: ['api', 'zqprivate']")
+
+    monkeypatch.setattr(rec, "_replay", _mismatch)
+    with pytest.raises(SystemExit) as stopped:
+        _record_through(monkeypatch, tmp_path, forge, method="conversation_comments", args=[7])
+    assert str(stopped.value) == (
+        "refusing to write a fixture whose redacted replay disagrees with the live call"
+    )
+    assert "zqprivate" not in str(stopped.value)
+    assert not (tmp_path / "out").exists()
+
+    def _unavailable(**_kw: Any) -> Forge:
+        raise rec.ForgeError("forge 'github' (from flag) needs the 'gh' CLI on PATH")
+
+    monkeypatch.setattr(rec, "select_forge", _unavailable)
+    assert (
+        rec.main(
+            ["--forge", "github", "--cwd", str(tmp_path), "--case", "c", "--method", "pull_request"]
+        )
+        == 2
+    )
+    assert capsys.readouterr().err.endswith("needs the 'gh' CLI on PATH\n")

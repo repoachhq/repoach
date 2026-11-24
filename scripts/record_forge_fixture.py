@@ -60,6 +60,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import inspect
 import json
 import os
 import subprocess
@@ -84,6 +85,7 @@ from repoach.forge.recording import (
     Exchange,
     NeedleError,
     RecordingSpawn,
+    ReplayMismatchError,
     ReplaySpawn,
     SyntheticIdsExhaustedError,
     UserIdMap,
@@ -374,7 +376,19 @@ def record(
         The fixture path written.
 
     Raises:
+        SystemExit: A write method, a name that is no protocol method, or a redacted replay
+            that disagrees with the live call (it raises otherwise, or issues a call the
+            recording does not hold); nothing is written and the message names no value.
+        TypeError: ``args`` or ``kwargs`` do not fit the method's signature, raised by the
+            live call before anything is recorded.
         UnclassifiedValueError: Anything the judge refuses, ``nesting too deep`` included.
+        DenylistError: The maintainer's deny-list is malformed (an entry too short, a comma).
+        SyntheticIdsExhaustedError: The recording needs a synthetic id past its range.
+        NeedleError: A structured value is a class word or a placeholder.
+        ForgeError: The forge cannot be selected: ``ForgeUnavailableError`` when its CLI is not
+            installed.
+        repoach.project.config.ConfigError: The checkout's ``repoach.toml`` or an environment
+            value is invalid.
     """
     try:
         return _record(
@@ -405,11 +419,13 @@ def _record(
     """:func:`record` without its nesting guard."""
     if method in WRITE_METHODS:
         raise SystemExit(f"refusing to record write method {method!r}: fixtures never post")
+    if method.startswith("_") or not inspect.isfunction(getattr(Forge, method, None)):
+        raise SystemExit(f"refusing to record {method!r}: no protocol method has that name")
+    typed_args, typed_kwargs = coerce_call(method, args, kwargs)
     forge = select_forge(override=forge_name, cwd=cwd)
     author = _author_of(forge, method, args)
     recorder = RecordingSpawn(inner=forge._spawn)
     forge._spawn = recorder
-    typed_args, typed_kwargs = coerce_call(method, args, kwargs)
     live_raises: str | None = None
     try:
         getattr(forge, method)(*typed_args, **typed_kwargs)
@@ -467,13 +483,15 @@ def _record(
         value = classify_logins(redact_urls_in_value(text), roles)
         return str(replace_known(str(projects.apply_projects(value, forge=forge_name)), known))
 
-    result, raises = _replay(
-        forge_name, cwd, method, typed_args, typed_kwargs, calls, bot, _normalize
-    )
-    if raises != live_raises:
-        raise SystemExit(
-            "refusing to write a fixture whose redacted replay disagrees with the live call"
+    disagrees = "refusing to write a fixture whose redacted replay disagrees with the live call"
+    try:
+        result, raises = _replay(
+            forge_name, cwd, method, typed_args, typed_kwargs, calls, bot, _normalize
         )
+    except ReplayMismatchError as exc:
+        raise SystemExit(disagrees) from exc
+    if raises != live_raises:
+        raise SystemExit(disagrees)
     fixture: dict[str, Any] = {
         "forge": forge_name,
         "case": case,
@@ -523,7 +541,13 @@ def main(argv: list[str] | None = None) -> int:
             trim=ns.trim,
             out_root=ns.out,
         )
-    except (UnclassifiedValueError, DenylistError, SyntheticIdsExhaustedError, NeedleError) as exc:
+    except (
+        UnclassifiedValueError,
+        DenylistError,
+        SyntheticIdsExhaustedError,
+        NeedleError,
+        ForgeError,
+    ) as exc:
         sys.stderr.write(f"{exc}\n")
         return 2
     sys.stdout.write(f"{path}\n")
