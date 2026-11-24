@@ -38,6 +38,7 @@ from typing import Any
 
 import pytest
 
+from repoach.forge import denylist as deny_list
 from repoach.forge import recording as rec_mod
 from repoach.forge.github import GitHubForge, comment_from_github
 from repoach.forge.gitlab import GitLabForge, note_to_comment
@@ -10778,7 +10779,7 @@ def _record_live(
 ) -> tuple[str, str, dict[str, Any] | None]:
     """Run the row through ``record()``: the public live path, every helper real but the forge."""
     inp = row.inp
-    monkeypatch.setenv(REC.DENYLIST_ENV, "\n".join(inp.deny))
+    monkeypatch.setenv(deny_list.DENYLIST_ENV, "\n".join(inp.deny))
     monkeypatch.setattr(REC, "select_forge", lambda **_kw: _fake_forge(inp, tmp_path))
     monkeypatch.setattr(REC, "origin_url", lambda _cwd: inp.remote)
     monkeypatch.setattr(REC, "_author_of", lambda *_a: inp.author)

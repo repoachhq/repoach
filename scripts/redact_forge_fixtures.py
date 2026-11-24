@@ -38,7 +38,7 @@ exit 2 with nothing written. A recorded fixture's ``source`` names the forge, ne
 checkout's folder. A repository id becomes a synthetic one in
 ``2001..2999``, declared under ``synthetic_project_ids``. Every fixture is
 judged by the recorder's own judge
-(:func:`record_forge_fixture.refuse_unclassified`, the closure oracle
+(:func:`repoach.forge.fixture_judge.refuse_unclassified`, the closure oracle
 :func:`repoach.forge.closure.judge`) against the known values of its own
 structured fields, the public forges' hosts and the deny-list before any
 file is written; a refusal is exit 2 and nothing is written. A
@@ -49,18 +49,18 @@ second run changes nothing, which
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import itertools
 import json
 import re
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from types import ModuleType
-from typing import Any, Protocol
+from typing import Any
 
 from repoach.core.logging import route_default_logs_to_stderr
 from repoach.forge import closure
+from repoach.forge.denylist import Denylist, DenylistError, read_denylist
+from repoach.forge.fixture_judge import UnclassifiedValueError, refuse_unclassified
 from repoach.forge.recording import (
     GITLAB_PROJECT_BOT_RE,
     LOGIN_KEYS,
@@ -100,29 +100,6 @@ from repoach.forge.recording import (
 )
 
 FIXTURE_ROOT = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "forge"
-
-RECORDER = "record_forge_fixture"
-"""The recorder script's module name; its deny-list reader is the one this script uses."""
-
-
-def recorder() -> ModuleType:
-    """The recorder script as a module, the one already loaded when there is one.
-
-    The deny-list reader lives there (SP-NO-PERSONAL-DATA-GATE D3's copy);
-    reusing a loaded module keeps one :class:`DenylistError` class.
-    """
-    loaded = sys.modules.get(RECORDER)
-    if loaded is not None:
-        return loaded
-    spec = importlib.util.spec_from_file_location(
-        RECORDER, Path(__file__).with_name(f"{RECORDER}.py")
-    )
-    if spec is None or spec.loader is None:
-        raise ImportError(RECORDER)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[RECORDER] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 class ResidualValueError(Exception):
@@ -475,13 +452,20 @@ def redact_fixture(
 
     Raises:
         NeedleError: A structured value that is a class word or placeholder.
-        ResidualValueError: The redacted fixture is refused by :func:`repoach.forge.recording`'s
-            oracle: a known value, an unknown host, a public address, an unknown mailbox, a
-            deny-list entry, a home path or an unclassified login; or ``nesting too deep``.
+        ResidualValueError: The redacted fixture is refused by the closure oracle
+            (:func:`repoach.forge.closure.judge`, through
+            :func:`repoach.forge.fixture_judge.refuse_unclassified`): a known value, an
+            unknown host, a public address, an unknown mailbox, a deny-list entry, a home
+            path or an unclassified login; or ``nesting too deep``.
     """
     try:
         return _redact_fixture(
-            data, ids, forge=forge, projects=projects, remote=remote, denylist=denylist
+            data,
+            ids,
+            forge=forge,
+            projects=projects,
+            remote=remote,
+            denylist=denylist,
         )
     except RecursionError as exc:
         raise ResidualValueError("nesting too deep: the fixture cannot be walked") from exc
@@ -530,8 +514,8 @@ def _redact_fixture(
     if list(data) == sorted(data):
         out = dict(sorted(out.items()))
     try:
-        recorder().refuse_unclassified(out, recorder().Denylist(denylist), known)
-    except recorder().UnclassifiedValueError as exc:
+        refuse_unclassified(out, Denylist(denylist), known)
+    except UnclassifiedValueError as exc:
         raise ResidualValueError(str(exc)) from exc
     return out
 
@@ -552,15 +536,7 @@ def corpus_start(
     return max([low - 1, *declared]) + 1
 
 
-class DenylistLike(Protocol):
-    """What :func:`run` needs of the recorder's opaque ``Denylist``."""
-
-    def needle_values(self) -> tuple[str, ...]:
-        """The entries, for the known values only."""
-        ...
-
-
-def run(root: Path, *, check: bool, denylist: DenylistLike | None = None) -> list[Path]:
+def run(root: Path, *, check: bool, denylist: Denylist | None = None) -> list[Path]:
     """Redact every ``*.json`` under ``root``; return the files that changed (or would).
 
     Every file is transformed and judged by the closure oracle
@@ -570,7 +546,7 @@ def run(root: Path, *, check: bool, denylist: DenylistLike | None = None) -> lis
     Args:
         root: The fixture corpus.
         check: Write nothing; only say which files would change.
-        denylist: The deny-list (the recorder's ``read_denylist()`` when ``None``).
+        denylist: The deny-list (:func:`repoach.forge.denylist.read_denylist` when ``None``).
 
     Raises:
         UnknownForgeError: A fixture whose forge cannot be told.
@@ -578,7 +554,7 @@ def run(root: Path, *, check: bool, denylist: DenylistLike | None = None) -> lis
         NeedleError: A needle the oracle cannot judge.
         ResidualValueError: A redacted fixture still holds a needle.
     """
-    deny: DenylistLike = recorder().read_denylist() if denylist is None else denylist
+    deny = read_denylist() if denylist is None else denylist
     paths = sorted(root.rglob("*.json"))
     loaded = [(p, p.read_text(encoding="utf-8")) for p in paths]
     fixtures: list[dict[str, object]] = [json.loads(text) for _p, text in loaded]
@@ -629,7 +605,7 @@ def main(argv: list[str] | None = None) -> int:
         SyntheticIdsExhaustedError,
         NeedleError,
         ResidualValueError,
-        recorder().DenylistError,
+        DenylistError,
     ) as exc:
         sys.stderr.write(f"{exc}\n")
         return 2

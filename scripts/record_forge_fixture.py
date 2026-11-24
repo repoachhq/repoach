@@ -61,8 +61,6 @@ from __future__ import annotations
 import argparse
 import copy
 import json
-import os
-import re
 import subprocess
 import sys
 from collections.abc import Callable
@@ -71,15 +69,18 @@ from pathlib import Path
 from typing import Any
 
 from repoach.core.logging import get_logger, route_default_logs_to_stderr
-from repoach.core.paths import user_config_dir
 from repoach.forge import closure
+from repoach.forge.denylist import DenylistError, read_denylist
+from repoach.forge.fixture_judge import (
+    UnclassifiedValueError,
+    decoded_answers,
+    refuse_unclassified,
+)
 from repoach.forge.protocol import Forge, ForgeError
 from repoach.forge.recording import (
-    CONSTANT_FIELDS,
     GITLAB_PROJECT_BOT_RE,
     MENTION_ONLY_PREFIX,
     NON_PERSON_LOGINS,
-    RECORDED_SOURCE_HEAD_RE,
     SYNTHETIC_IDS_KEY,
     SYNTHETIC_PROJECT_IDS_KEY,
     Exchange,
@@ -108,129 +109,11 @@ from repoach.forge.recording import (
     replace_known,
     replace_known_in_stdout,
     replace_known_in_value,
-    scanned_strings,
     serialize_result,
 )
 from repoach.forge.select import select_forge
 
 _log = get_logger(__name__)
-
-HOME_PATH_RE = re.compile(r"(?<![A-Za-z0-9_$.-])/(home|Users)/[A-Za-z0-9_.-]+(?![A-Za-z0-9_.-])")
-"""Copy of SP-NO-PERSONAL-DATA-GATE D1 ``home_path`` (that lint lands later; not imported)."""
-
-DENYLIST_ENV = "REPOACH_PERSONAL_DENYLIST"
-"""SP-NO-PERSONAL-DATA-GATE D3: the deny-list in CI, newline- or comma-separated."""
-
-DENYLIST_FILE_NAME = "personal-denylist"
-"""SP-NO-PERSONAL-DATA-GATE D3: the deny-list file under ``user_config_dir()``, one entry per line."""
-
-DENYLIST_MIN_LENGTH = 4
-"""SP-NO-PERSONAL-DATA-GATE D3: a shorter entry would match everywhere and is refused."""
-
-
-class UnclassifiedValueError(Exception):
-    """A recorded value is a login with no class word, or matches a generic personal class.
-
-    The message carries the key path, never the value.
-    """
-
-
-class DenylistError(Exception):
-    """The deny-list holds an entry too short to judge with; the message names its ordinal only."""
-
-
-def denylist_file(config_dir: Path | None = None) -> Path:
-    """The deny-list file: ``personal-denylist`` under ``config_dir``, by default ``user_config_dir()``."""
-    return (config_dir if config_dir is not None else user_config_dir()) / DENYLIST_FILE_NAME
-
-
-class Denylist:
-    """The maintainer's deny-list entries, opaque (K8, 0.10).
-
-    Its ``repr`` is a count, so neither a log, a traceback nor ``pytest -l``
-    can show an entry; a caller asks :meth:`hit` for an ordinal and never
-    binds an entry or a pattern to a name of its own.
-    """
-
-    __slots__ = ("_entries", "_patterns")
-
-    def __init__(self, entries: tuple[str, ...] = ()) -> None:
-        self._entries = entries
-        self._patterns = denylist_patterns(list(entries))
-
-    def __repr__(self) -> str:
-        """A count, never an entry."""
-        return f"<denylist: {len(self._entries)} entries>"
-
-    def __len__(self) -> int:
-        """How many entries."""
-        return len(self._entries)
-
-    def hit(self, text: str) -> int | None:
-        """The ordinal of the first entry ``text`` holds (:func:`denylist_hit`), or ``None``."""
-        return denylist_hit(text, self._patterns)
-
-    def needle_values(self) -> tuple[str, ...]:
-        """The entries, for :func:`repoach.forge.recording.known_values` only; never printed."""
-        return self._entries
-
-
-def read_denylist(config_dir: Path | None = None) -> Denylist:
-    """The maintainer's deny-list, from the file and the environment merged (SP-NO-PERSONAL-DATA-GATE D3).
-
-    A copy of that gate's reader (it lands later; not imported): the file
-    :func:`denylist_file`, one entry per line with ``#`` comments, and
-    :data:`DENYLIST_ENV`, newline- or comma-separated. Both live outside
-    the tree; no entry is ever printed or written.
-
-    Args:
-        config_dir: The configuration directory holding the file; ``None``
-            reads ``user_config_dir()``. The test suite passes the real
-            directory, captured before it points ``XDG_CONFIG_HOME`` at a
-            scratch one.
-
-    Returns:
-        The entries in order, duplicates removed, as an opaque
-        :class:`Denylist`; empty when neither source exists.
-
-    Raises:
-        DenylistError: An entry shorter than :data:`DENYLIST_MIN_LENGTH`, by ordinal.
-    """
-    raw: list[str] = []
-    path = denylist_file(config_dir)
-    if path.is_file():
-        for line in path.read_text(encoding="utf-8").splitlines():
-            raw.append(line.split("#", 1)[0])
-    raw += re.split(r"[\n,]", os.environ.get(DENYLIST_ENV, ""))
-    entries: list[str] = []
-    for item in (r.strip() for r in raw):
-        if item and item not in entries:
-            entries.append(item)
-    for n, entry in enumerate(entries, 1):
-        if len(entry) < DENYLIST_MIN_LENGTH:
-            raise DenylistError(f"deny-list entry {n}: too short")
-    return Denylist(tuple(entries))
-
-
-def denylist_patterns(entries: list[str]) -> list[re.Pattern[str]]:
-    """SP-NO-PERSONAL-DATA-GATE D1 ``denylist``: each entry a whole token (:func:`repoach.forge.closure.token_pattern`)."""
-    return [closure.token_pattern(e) for e in entries]
-
-
-def denylist_hit(text: str, patterns: list[re.Pattern[str]]) -> int | None:
-    """The ordinal of the first deny-list entry ``text`` holds, or ``None``.
-
-    ``text`` is judged in every form the closure oracle judges it in
-    (:func:`repoach.forge.closure.forms_of`), literals kept: decoded, casefolded
-    and with the account number of every node id it holds, wherever the
-    node id stands, so an entry holding a numeric user id catches its node ids.
-    """
-    forms = closure.forms_of(text)
-    for n, pattern in enumerate(patterns, 1):
-        if any(pattern.search(form) for form in forms):
-            return n
-    return None
-
 
 WRITE_METHODS = frozenset(
     {
@@ -277,21 +160,6 @@ def _trim_stdout(stdout: str, limit: int) -> str:
     if len(values) > 1 and all(isinstance(v, list) for v in values):
         merged = [item for v in values for item in v if isinstance(v, list)]
     return json.dumps(_trim(merged, limit))
-
-
-def generic_class(text: str) -> str | None:
-    """``home_path`` when ``text`` holds a home directory path, else ``None``."""
-    return "home_path" if HOME_PATH_RE.search(text) else None
-
-
-def _decoded(calls: list[dict[str, Any]]) -> list[tuple[str, object]]:
-    """``(path, decoded stdout value)`` of every JSON answer, in recording order."""
-    out: list[tuple[str, object]] = []
-    for i, call in enumerate(calls):
-        values = decode_json_values(call["stdout"]) or []
-        for k, value in enumerate(values):
-            out.append((f"exchanges[{i}].stdout" + (f"[{k}]" if len(values) > 1 else ""), value))
-    return out
 
 
 def build_roles(
@@ -368,7 +236,7 @@ def build_roles(
         word = _next("author")
         if _key_of(author) is None and not is_classified_login(author):
             roles[author] = word
-    for _path, value in _decoded(calls):
+    for _path, value in decoded_answers(calls):
         for _key, login in login_values(value):
             _add(login, mention=False)
         for login in mentions(value):
@@ -376,54 +244,6 @@ def build_roles(
     for login in also:
         _add(login, mention=False)
     return roles
-
-
-def refuse_unclassified(
-    fixture: dict[str, Any],
-    denylist: Denylist | None = None,
-    known: closure.Known | None = None,
-) -> None:
-    """Raise :class:`UnclassifiedValueError` on any value of the fixture that may name someone (D3, 0.17).
-
-    Every login under a login key must be a class word or a
-    :data:`repoach.forge.recording.NON_PERSON_LOGINS` entry. Then each
-    string of the fixture, in this order, may hold no home path, no
-    deny-list entry and nothing the closure oracle
-    (:func:`repoach.forge.closure.judge`) refuses: a known value, a host
-    that is neither a placeholder nor public, a public address or a mailbox
-    that is neither a placeholder nor a documentation literal.
-
-    Args:
-        fixture: The fixture about to be written; ``calls`` are reported
-            as ``exchanges[<i>]``.
-        denylist: The deny-list (:func:`read_denylist` when ``None``).
-        known: The recording's known values; none when ``None``.
-
-    Raises:
-        UnclassifiedValueError: Naming a reason, a kind, an ordinal and the key path, never the value.
-    """
-    calls: list[dict[str, Any]] = list(fixture.get("calls") or [])
-    for path, value in _decoded(calls):
-        for key_path, login in login_values(value):
-            if login and not is_classified_login(login):
-                raise UnclassifiedValueError(f"unclassified: {path}.{key_path}")
-    deny = read_denylist() if denylist is None else denylist
-    judged = known if known is not None else closure.Known(())
-    for path, text in scanned_strings(fixture):
-        rule = generic_class(text)
-        if rule is not None:
-            raise UnclassifiedValueError(f"generic class {rule} at {path}")
-        entry = deny.hit(text)
-        if entry is not None:
-            raise UnclassifiedValueError(f"deny-list entry {entry} at {path}")
-        if path in CONSTANT_FIELDS:
-            continue
-        if path == "source":
-            text = RECORDED_SOURCE_HEAD_RE.sub("", text)
-        refusal = closure.judge(text, judged)
-        if refusal is not None:
-            where = f" {refusal.kind} {refusal.n}" if refusal.reason == "residual" else ""
-            raise UnclassifiedValueError(f"{refusal.reason}{where} at {path}")
 
 
 def classify_calls(calls: list[dict[str, Any]], roles: dict[str, str]) -> list[dict[str, Any]]:
