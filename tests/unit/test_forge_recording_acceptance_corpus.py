@@ -10480,11 +10480,8 @@ def _method(inp: Sample) -> str:
 
 
 def _top_kwargs(inp: Sample) -> dict[str, Any]:
-    """The method's keyword arguments: the row's, then the stdin the fake method sends."""
-    kwargs = dict(inp.top_kwargs)
-    if inp.stdin is not None:
-        kwargs["stdin"] = inp.stdin
-    return kwargs
+    """The method's keyword arguments, the row's only: the stdin goes to the call, as a real method sends it (0.28)."""
+    return dict(inp.top_kwargs)
 
 
 def _top_args(inp: Sample) -> list[Any]:
@@ -10514,7 +10511,7 @@ def _fake_forge(inp: Sample, tmp_path: Path) -> Forge:
 
         class _FakeGitHub(GitHubForge):
             def conversation_comments(self, number: int, *extra: Any, **_k: Any) -> Any:
-                res = self._spawn([str(binary), *_issued(extra)], input_data=_k.get("stdin"))
+                res = self._spawn([str(binary), *_issued(extra)], input_data=inp.stdin)
                 if inp.second_api_path is not None:
                     self._spawn([str(binary), "api", inp.second_api_path])
                 return [
@@ -10522,7 +10519,7 @@ def _fake_forge(inp: Sample, tmp_path: Path) -> Forge:
                 ]
 
             def diff(self, number: int, *extra: Any, **_k: Any) -> Diff:
-                res = self._spawn([str(binary), *_issued(extra)], input_data=_k.get("stdin"))
+                res = self._spawn([str(binary), *_issued(extra)], input_data=inp.stdin)
                 return Diff(text=res.stdout, files=diff_files(res.stdout))
 
         forge: Any = _FakeGitHub(cwd=tmp_path, gh_path=str(binary), bot_login=inp.bot)
@@ -10530,13 +10527,13 @@ def _fake_forge(inp: Sample, tmp_path: Path) -> Forge:
 
         class _FakeGitLab(GitLabForge):
             def conversation_comments(self, number: int, *extra: Any, **_k: Any) -> Any:
-                res = self._spawn([str(binary), *_issued(extra)], input_data=_k.get("stdin"))
+                res = self._spawn([str(binary), *_issued(extra)], input_data=inp.stdin)
                 if inp.second_api_path is not None:
                     self._spawn([str(binary), "api", inp.second_api_path])
                 return [note_to_comment(n) for n in json.loads(res.stdout) if isinstance(n, dict)]
 
             def diff(self, number: int, *extra: Any, **_k: Any) -> Diff:
-                res = self._spawn([str(binary), *_issued(extra)], input_data=_k.get("stdin"))
+                res = self._spawn([str(binary), *_issued(extra)], input_data=inp.stdin)
                 return Diff(text=res.stdout, files=diff_files(res.stdout))
 
         forge = _FakeGitLab(cwd=tmp_path, glab_path=str(binary), bot_username=inp.bot)
