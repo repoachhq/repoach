@@ -31,7 +31,7 @@ from pydantic import BaseModel
 from ..core.logging import get_logger
 from ..core.redaction import SECRET_VALUE_PATTERNS
 from . import closure, protocol
-from .denylist import Denylist
+from .denylist import Denylist, read_denylist
 from .protocol import InlineCommentDraft, MergeMethod, ReviewDraft
 from .recording_tables import (
     GITHUB_REPO_API_ROUTES,
@@ -2290,7 +2290,8 @@ def known_values(
         roles: The recording's login -> class word.
         remote: The checkout's ``origin`` remote, ``""`` when it has none.
         denylist: The deny-list, opaque (:class:`repoach.forge.denylist.Denylist`) or as entries;
-            judged, never replaced, and unwrapped only here.
+            judged, never replaced, and unwrapped only here. ``None`` reads the maintainer's
+            (:func:`repoach.forge.denylist.read_denylist`): only an explicit empty one is empty.
         min_length: The shortest value a structured source may hold; the
             offline transform passes 1 for logins and segments.
         ids: The user-id map the structured pass filled; a fresh one when ``None``.
@@ -2307,6 +2308,8 @@ def known_values(
     Raises:
         NeedleError: A structured value shorter than ``min_length`` or equal
             to a class word or placeholder, by kind and ordinal.
+        DenylistError: ``denylist`` is ``None`` and the maintainer's deny-list is malformed.
+        SyntheticIdsExhaustedError: An id needs a synthetic number past its range.
     """
     ids = ids if ids is not None else UserIdMap()
     projects = projects if projects is not None else UserIdMap.for_projects()
@@ -2502,9 +2505,21 @@ def known_values(
 
 
 def _needle_entries(denylist: Denylist | tuple[str, ...] | None) -> tuple[str, ...]:
-    """The deny-list entries for :func:`known_values`, unwrapped from the opaque reader at the last call."""
+    """The deny-list entries for :func:`known_values`, unwrapped from the opaque reader at the last call.
+
+    Fails closed: ``None`` is the maintainer's deny-list, never an empty one.
+
+    Args:
+        denylist: The deny-list, its entries, or ``None``.
+
+    Returns:
+        The entries in order.
+
+    Raises:
+        DenylistError: ``denylist`` is ``None`` and the maintainer's deny-list is malformed.
+    """
     if denylist is None:
-        return ()
+        return read_denylist().needle_values()
     if isinstance(denylist, Denylist):
         return denylist.needle_values()
     return denylist

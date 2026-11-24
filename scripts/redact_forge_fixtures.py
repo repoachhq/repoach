@@ -389,8 +389,23 @@ def fixture_known(
     ``remote`` and ``denylist`` are the inputs the live recorder has and a
     committed fixture has not. Declared synthetic ids are never values.
 
+    Args:
+        data: The fixture as committed.
+        roles: The fixture's login -> class word.
+        remote: The checkout's ``origin`` remote, when the caller has one.
+        denylist: The deny-list; the maintainer's
+            (:func:`repoach.forge.denylist.read_denylist`) when ``None``, never an empty one.
+        ids: The corpus's user-id map; a fresh one when ``None``.
+        projects: The corpus's repository-id map; a fresh one when ``None``.
+        forge: ``github`` or ``gitlab``.
+
+    Returns:
+        The fixture's known values (:func:`repoach.forge.recording.known_values`).
+
     Raises:
         NeedleError: A structured value that is a class word or placeholder, by kind and ordinal.
+        DenylistError: ``denylist`` is ``None`` and the maintainer's deny-list is malformed.
+        SyntheticIdsExhaustedError: An id needs a synthetic number past its range.
     """
     raw = [data.get("calls"), data.get("args"), data.get("kwargs")]
     return known_values(
@@ -448,9 +463,25 @@ def redact_fixture(
 
     ``ids`` and ``projects`` are shared across the corpus. A fixture whose
     JSON nests deeper than the readers can walk is refused like the live
-    recorder refuses it (0.21, B3), never crashed on.
+    recorder refuses it (0.21, B3), never crashed on. The deny-list fails
+    closed: omitted, it is the maintainer's, as in :func:`run` and
+    :func:`repoach.forge.fixture_judge.refuse_unclassified`; a caller that
+    means no deny-list passes an empty :class:`repoach.forge.denylist.Denylist`.
+
+    Args:
+        data: The fixture as committed.
+        ids: The corpus's user-id map; a fresh one when ``None``.
+        forge: ``github`` or ``gitlab``.
+        projects: The corpus's repository-id map; a fresh one when ``None``.
+        remote: The checkout's ``origin`` remote, when the caller has one.
+        denylist: The deny-list; :func:`repoach.forge.denylist.read_denylist` when ``None``.
+
+    Returns:
+        The redacted fixture, judged by the closure oracle.
 
     Raises:
+        DenylistError: ``denylist`` is ``None`` and the maintainer's deny-list is malformed.
+        SyntheticIdsExhaustedError: An id needs a synthetic number past its range.
         NeedleError: A structured value that is a class word or placeholder.
         ResidualValueError: The redacted fixture is refused by the closure oracle
             (:func:`repoach.forge.closure.judge`, through
@@ -465,7 +496,7 @@ def redact_fixture(
             forge=forge,
             projects=projects,
             remote=remote,
-            denylist=denylist if denylist is not None else Denylist(),
+            denylist=denylist if denylist is not None else read_denylist(),
         )
     except RecursionError as exc:
         raise ResidualValueError("nesting too deep: the fixture cannot be walked") from exc
