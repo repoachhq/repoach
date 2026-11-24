@@ -19,7 +19,6 @@ import inspect
 import json
 import os
 import re
-import shlex
 import shutil
 import string
 import subprocess
@@ -7657,7 +7656,7 @@ def test_a_script_exports_its_own_names_only() -> None:
         if not exported:
             continue
         declaring += 1
-        rel = path.relative_to(ROOT).as_posix()
+        rel = path.name
         assert set(exported) <= own, (rel, sorted(set(exported) - own))
         assert not set(exported) & imported, rel
     assert declaring == 2
@@ -7747,10 +7746,10 @@ def test_the_denylist_test_is_collected_by_its_own_ci_step_only() -> None:
     assert node.rpartition("::")[2] == test_fixtures_hold_no_denylisted_value.__name__
     workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text("utf-8"))
     steps = {s.get("name"): s for s in workflow["jobs"]["test"]["steps"]}
-    main = shlex.split(steps["Pytest"]["run"])
-    assert main[:3] == ["pytest", "-q", "tests/unit"]
-    assert [main[i + 1] for i, arg in enumerate(main) if arg == "--deselect"] == [node]
-    assert shlex.split(steps["Pytest — fixture deny-list"]["run"]) == ["pytest", "-q", node]
+    main = str(steps["Pytest"]["run"]).strip()
+    assert main.startswith("pytest -q tests/unit ")
+    assert main.count("--deselect") == 1 and main.endswith(f" --deselect {node}")
+    assert str(steps["Pytest — fixture deny-list"]["run"]).strip() == f"pytest -q {node}"
     collecting = [
         name
         for name, step in steps.items()
