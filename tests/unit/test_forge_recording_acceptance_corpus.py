@@ -10,7 +10,9 @@ through ``redact_fixture`` of ``scripts/redact_forge_fixtures.py``
   exchange argv), the exact ``title`` when the input has one, named
   item fields such as ``headRefName``, and no planted marker surviving
   anywhere in the written fixture (casefolded);
-- ``Refused``: the refusal's reason prefix, nothing written.
+- ``Refused``: the refusal's reason prefix, nothing written;
+- ``Bounded``: past the interpreter's bound (0.21, B3), written as it
+  stands or refused with the reason prefix, never a crash.
 
 Sources: every row of ``tests/unit/test_forge_recording_regression_corpus.py``
 (rounds 5 to 9), every planted survivor, refusal and corruption of
@@ -123,6 +125,13 @@ class Refused:
 
 
 @dataclass(frozen=True)
+class Bounded:
+    """Past the readers' bound, which is the interpreter's: written as it stands, or refused with this prefix."""
+
+    prefix: str
+
+
+@dataclass(frozen=True)
 class Row:
     """One acceptance row: an id, its source probe, its input and its one outcome.
 
@@ -137,7 +146,7 @@ class Row:
     id: str
     source: str
     inp: Sample
-    outcome: Written | Refused
+    outcome: Written | Refused | Bounded
     markers: tuple[str, ...] = ()
     residual: bool = False
     url_field_class: bool = False
@@ -9726,16 +9735,16 @@ ROWS: tuple[Row, ...] = (
         outcome=Written(text="[" * 20000 + "]" * 20000),
     ),
     Row(
-        id="v21_nesting_decodable_not_walkable_in_body_refused",
+        id="v21_nesting_decodable_not_walkable_in_body_bounded",
         source="fable021/probe2.py",
         inp=Sample(body="[" * 990 + "]" * 990),
-        outcome=Refused(prefix="nesting too deep"),
+        outcome=Bounded(prefix="nesting too deep"),
     ),
     Row(
-        id="v21_nesting_decodable_not_walkable_in_stdout_refused",
+        id="v21_nesting_decodable_not_walkable_in_stdout_bounded",
         source="fable021/probe2.py",
         inp=Sample(raw_text_stdout='{"a":' * 990 + "1" + "}" * 990),
-        outcome=Refused(prefix="nesting too deep"),
+        outcome=Bounded(prefix="nesting too deep"),
     ),
     Row(
         id="v22_gitlab_web_ide_route_identity_replaced",
@@ -10834,6 +10843,10 @@ def _judge_live(row: Row, status: str, msg: str, fixture: dict[str, Any] | None)
     """Every way the live outcome differs from the row's one expected outcome."""
     problems: list[str] = []
     outcome = row.outcome
+    if isinstance(outcome, Bounded):
+        if status == "REFUSED":
+            return [] if msg.startswith(outcome.prefix) else [f"expected prefix {outcome.prefix!r}"]
+        outcome = Written(text=_planted_text(row.inp))
     if isinstance(outcome, Refused):
         if status != "REFUSED":
             return [f"expected REFUSED {outcome.prefix!r}, got {status}"]
@@ -10986,7 +10999,7 @@ def _judge_offline(row: Row, live: dict[str, Any]) -> list[str]:
 
 def _judge_offline_refusal(row: Row, live_msg: str) -> list[str]:
     """An offline transform of the raw recording refuses with the same reason prefix."""
-    assert isinstance(row.outcome, Refused)
+    assert isinstance(row.outcome, (Refused, Bounded))
     inp = row.inp
     raw_fixture: dict[str, Any] = {
         "forge": inp.forge,
@@ -11034,6 +11047,18 @@ def _offline_prefix_problems(prefix: str, message: str) -> list[str]:
     return []
 
 
+def _judge_offline_bounded(row: Row, msg: str, fixture: dict[str, Any] | None) -> list[str]:
+    """A bounded row offline: either outcome of the interpreter's bound, a refusal with the row's prefix."""
+    assert isinstance(row.outcome, Bounded)
+    try:
+        if fixture is not None:
+            return _judge_offline(row, fixture)
+        problems = _judge_offline_refusal(row, msg)
+    except OFF.ResidualValueError as exc:
+        return _offline_prefix_problems(row.outcome.prefix, str(exc))
+    return [p for p in problems if p != "offline: the raw recording was not refused"]
+
+
 FAILURES: list[tuple[str, list[str]]] = []
 
 
@@ -11051,13 +11076,15 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
     assert residual
     assert all(_is_planted(row) for row in residual)
     refused = [row for row in ROWS if isinstance(row.outcome, Refused)]
-    assert (len(ROWS), len(planted), len(ordinary), len(refused), len(residual)) == (
+    bounded = [row for row in ROWS if isinstance(row.outcome, Bounded)]
+    assert (len(ROWS), len(planted), len(ordinary), len(refused), len(bounded)) == (
         905,
         614,
         291,
-        74,
-        25,
+        72,
+        2,
     )
+    assert len(residual) == 25
     assert all(not row.residual for row in refused)
     prose = [row for row in ROWS if "NG4_16" in row.id]
     assert len(prose) == 7 and all(row.residual for row in prose)
@@ -11092,7 +11119,9 @@ def test_acceptance_corpus_live_and_offline(
         problems = _judge_live(row, status, msg, fixture)
         if not problems:
             try:
-                if fixture is not None:
+                if isinstance(row.outcome, Bounded):
+                    problems += _judge_offline_bounded(row, msg, fixture)
+                elif fixture is not None:
                     problems += _judge_offline(row, fixture)
                 else:
                     problems += _judge_offline_refusal(row, msg)

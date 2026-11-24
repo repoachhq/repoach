@@ -6753,7 +6753,7 @@ def test_a_mention_only_handle_equal_to_a_language_word_is_the_documented_residu
 def test_the_recorder_never_raises_on_a_recording_nested_past_the_readers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """D3 (0.21, B3): a text the decoder cannot decode is text; a value the readers cannot walk is refused, never a crash."""
+    """D3 (0.21, B3; 0.28 g): undecodable text is text; a reader's overflow is refused; 990 deep is bounded, never a crash."""
     assert recording.decode_json_values("[" * 20000) is None
     assert recording.decode_json_values("[" * 20000 + "]" * 20000) is None
     assert recording.decode_json_values('{"a":' * 20000 + "1" + "}" * 20000) is None
@@ -6776,16 +6776,24 @@ def test_the_recorder_never_raises_on_a_recording_nested_past_the_readers(
         "result": None,
         "raises": None,
     }
-    with pytest.raises(redact_fixtures.ResidualValueError, match=r"^nesting too deep"):
-        redact_fixtures.redact_fixture(fixture, forge="github")
+    try:
+        bounded = redact_fixtures.redact_fixture(fixture, forge="github")
+    except redact_fixtures.ResidualValueError as exc:
+        assert str(exc).startswith("nesting too deep")
+    else:
+        assert bounded["calls"][0]["stdout"] == deep
     shallow = {**fixture, "calls": [{**_exchange([]), "stdout": "[" * 20000}]}
     assert redact_fixtures.redact_fixture(shallow, forge="github")["calls"][0]["stdout"] == (
         "[" * 20000
     )
 
-    def _overflow(**_kw: Any) -> Path:
+    def _overflow(*_a: Any, **_kw: Any) -> Path:
         raise RecursionError("maximum recursion depth exceeded")
 
+    with monkeypatch.context() as patched:
+        patched.setattr(redact_fixtures, "_redact_fixture", _overflow)
+        with pytest.raises(redact_fixtures.ResidualValueError, match=r"^nesting too deep"):
+            redact_fixtures.redact_fixture(fixture, forge="github")
     monkeypatch.setattr(rec, "_record", _overflow)
     with pytest.raises(rec.UnclassifiedValueError, match=r"^nesting too deep"):
         rec.record(
