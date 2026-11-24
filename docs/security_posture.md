@@ -180,7 +180,9 @@ letter or digit (`josé@<host>`), or a URL's userinfo from `<scheme>://` to the
 `@` whatever it ends with (`https://u:p=@<host>`); a fixture is refused when
 any string it writes, the method's arguments and argv included, carries a
 token-shaped value, or a home path in any decoded form (`/home/<x>`,
-`/Users/<x>`, `/var/home/<x>`, `C:\Users\<x>`). The deny-list reader and the last judge before a write
+`/Users/<x>`, `/var/home/<x>`, `C:\Users\<x>`), live or offline; a host is also a
+one-label authority after `<scheme>://` (`https://gitlab/…`) or a name whose last
+label is an IDNA `xn--` label. The deny-list reader and the last judge before a write
 live in `repoach.forge.denylist` and `repoach.forge.fixture_judge`, shared by
 the live recorder and the offline transform.
 
