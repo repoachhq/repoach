@@ -2,8 +2,8 @@
 
 Every row runs through the public ``record`` path of
 ``scripts/record_forge_fixture.py`` against a fake forge (live) and
-through ``redact_fixture`` of ``scripts/redact_forge_fixtures.py``
-(offline). Each row carries exactly one expected outcome:
+through :func:`repoach.forge.fixture_pipeline.redact_fixture`, the offline
+transform ``scripts/redact_forge_fixtures.py`` runs (offline). Each row carries exactly one expected outcome:
 
 - ``Written``: the exact text at the row's position (``body``, ``title``,
   raw ``stdout``, ``stderr``, ``stdin``, ``args``, ``kwargs`` or the
@@ -39,6 +39,7 @@ from typing import Any
 import pytest
 
 from repoach.forge import denylist as deny_list
+from repoach.forge import fixture_pipeline
 from repoach.forge import recording as rec_mod
 from repoach.forge.github import GitHubForge, comment_from_github
 from repoach.forge.gitlab import GitLabForge, note_to_comment
@@ -62,7 +63,7 @@ def _load_script(name: str) -> ModuleType:
 
 
 REC = _load_script("record_forge_fixture")
-OFF = _load_script("redact_forge_fixtures")
+OFF = fixture_pipeline
 
 FAKE_LOGIN = "zqxjdoe7"
 FAKE_LOGIN_2 = "zqreviewer"

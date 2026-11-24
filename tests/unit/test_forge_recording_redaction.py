@@ -33,7 +33,14 @@ import pytest
 import yaml
 from structlog.testing import capture_logs
 
-from repoach.forge import closure, closure_tables, fixture_judge, recording, recording_tables
+from repoach.forge import (
+    closure,
+    closure_tables,
+    fixture_judge,
+    fixture_pipeline,
+    recording,
+    recording_tables,
+)
 from repoach.forge import denylist as deny_list
 from repoach.forge.github import GitHubForge
 from repoach.forge.gitlab import GitLabForge
@@ -593,7 +600,7 @@ def test_recorder_writes_class_words_and_a_replayed_result(
 
 def test_existing_fixtures_are_a_fixed_point_of_the_redaction() -> None:
     """G4 as amended: the committed fixtures are what the recorder's redaction leaves them."""
-    assert redact_fixtures.run(FIXTURES, check=True) == []
+    assert fixture_pipeline.redact_corpus(FIXTURES, check=True) == []
     real_host = re.compile(r"https?://([a-z0-9.-]+\.)?(github|gitlab)\.com/(?!en/|ee/)")
     hits = [p.name for p in sorted(FIXTURES.rglob("*.json")) if real_host.search(p.read_text())]
     assert hits == []
@@ -775,7 +782,7 @@ def test_recorded_source_names_the_forge_and_the_refusal_covers_it(
         ("synthetic: a documented shape", "synthetic: a documented shape"),
     ):
         assert (
-            redact_fixtures.redact_fixture(
+            fixture_pipeline.redact_fixture(
                 {"source": before}, forge="gitlab", denylist=NO_DENYLIST
             )["source"]
             == after
@@ -818,7 +825,7 @@ def test_an_unknown_mention_in_free_text_becomes_a_class_word(
         "forge": "github",
         "calls": [_exchange([{"user": {"login": "author"}, "body": "cc @x-handle"}])],
     }
-    out = redact_fixtures.redact_fixture(fixture, forge="github", denylist=NO_DENYLIST)
+    out = fixture_pipeline.redact_fixture(fixture, forge="github", denylist=NO_DENYLIST)
     assert "x-handle" not in json.dumps(out) and "cc @author-2" in out["calls"][0]["stdout"]
 
 
@@ -838,13 +845,13 @@ def test_non_person_logins_are_kept_and_every_other_login_is_classified() -> Non
         "dependabot[bot]": "bot",
     }
     fixture = {"forge": "github", "bot_username": "repoach-bot", "calls": [_exchange(answers)]}
-    out = redact_fixtures.redact_fixture(fixture, forge="github", denylist=NO_DENYLIST)
+    out = fixture_pipeline.redact_fixture(fixture, forge="github", denylist=NO_DENYLIST)
     logins = re.findall(r'"(?:login|username)": "([^"]+)"', out["calls"][0]["stdout"])
     assert out["bot_username"] == "repoach-bot"
     assert logins == ["github-actions[bot]", "author-2", "service", "bot"]
     mine = {**fixture, "bot_username": "my-review-bot"}
     assert (
-        redact_fixtures.redact_fixture(mine, forge="github", denylist=NO_DENYLIST)["bot_username"]
+        fixture_pipeline.redact_fixture(mine, forge="github", denylist=NO_DENYLIST)["bot_username"]
         == "bot"
     )
 
@@ -909,8 +916,8 @@ def _corpus(tmp_path: Path, name: str, files: dict[str, dict[str, Any]]) -> dict
     for rel, data in files.items():
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(json.dumps(data))
-    redact_fixtures.run(root, check=False)
-    assert redact_fixtures.run(root, check=True) == []
+    fixture_pipeline.redact_corpus(root, check=False)
+    assert fixture_pipeline.redact_corpus(root, check=True) == []
     return {rel: json.loads((root / rel).read_text()) for rel in files}
 
 
@@ -984,9 +991,9 @@ def test_an_own_id_equal_to_a_user_id_is_refused_not_written(tmp_path: Path) -> 
     )
     (root / "github" / "r.json").write_text(json.dumps(data))
     with pytest.raises(
-        redact_fixtures.ResidualValueError, match=r"^residual id 1 at github/r\.json"
+        fixture_pipeline.ResidualValueError, match=r"^residual id 1 at github/r\.json"
     ):
-        redact_fixtures.run(root, check=False, denylist=deny_list.Denylist())
+        fixture_pipeline.redact_corpus(root, check=False, denylist=deny_list.Denylist())
 
 
 def test_offline_sequence_is_one_per_corpus_and_starts_after_every_declared_id(
@@ -1068,7 +1075,7 @@ def test_offline_transform_remaps_a_result_id_with_its_account() -> None:
         [approvals],
         [{"author": "author-2", "id": 4321987, "state": "APPROVED"}],
     )
-    out = redact_fixtures.redact_fixture(fixture, forge="gitlab", denylist=NO_DENYLIST)
+    out = fixture_pipeline.redact_fixture(fixture, forge="gitlab", denylist=NO_DENYLIST)
     assert json.loads(out["calls"][0]["stdout"])["approved_by"][0]["user"]["id"] == 1001
     assert out["result"] == [{"author": "author-2", "id": 1001, "state": "APPROVED"}]
     assert out[SYNTHETIC_IDS_KEY] == [1001]
@@ -1109,7 +1116,7 @@ def test_a_mention_is_a_handle_not_a_decorator_nor_a_dotted_name_and_replaces_on
         "args": ["repos/:owner/:repo/pulls/7"],
         "calls": [_exchange([{"user": {"login": "author"}, "body": body, "diff": clean}])],
     }
-    redacted = redact_fixtures.redact_fixture(fixture, forge="github", denylist=NO_DENYLIST)
+    redacted = fixture_pipeline.redact_fixture(fixture, forge="github", denylist=NO_DENYLIST)
     answer = json.loads(redacted["calls"][0]["stdout"])[0]
     assert (
         answer["body"]
@@ -1121,8 +1128,8 @@ def test_a_mention_is_a_handle_not_a_decorator_nor_a_dotted_name_and_replaces_on
         **fixture,
         "calls": [_exchange([{"user": {"login": "author"}, "body": body, "diff": diff}])],
     }
-    with pytest.raises(redact_fixtures.ResidualValueError, match=r"^residual login 1 at "):
-        redact_fixtures.redact_fixture(bare, forge="github", denylist=NO_DENYLIST)
+    with pytest.raises(fixture_pipeline.ResidualValueError, match=r"^residual login 1 at "):
+        fixture_pipeline.redact_fixture(bare, forge="github", denylist=NO_DENYLIST)
 
     stdout = json.dumps(
         [[{"id": 9, "user": {"login": "q-handle"}, "state": "APPROVED", "body": body}]]
@@ -1179,7 +1186,7 @@ def test_an_scp_or_ssh_remote_gets_the_placeholder_host_namespace_and_project() 
             )
 
     fixture = {"forge": "gitlab", "calls": [_exchange({"body": "clone git@gitlab.com:g/r.git"})]}
-    out = redact_fixtures.redact_fixture(fixture, forge="gitlab", denylist=NO_DENYLIST)
+    out = fixture_pipeline.redact_fixture(fixture, forge="gitlab", denylist=NO_DENYLIST)
     assert (
         json.loads(out["calls"][0]["stdout"])["body"]
         == "clone git@forge.example.com:org/project.git"
@@ -1612,10 +1619,10 @@ def test_every_refusal_class_of_the_recorder_exits_2_and_writes_nothing(
 @pytest.mark.parametrize(
     "error",
     [
-        redact_fixtures.UnknownForgeError,
+        fixture_pipeline.UnknownForgeError,
         SyntheticIdsExhaustedError,
         NeedleError,
-        redact_fixtures.ResidualValueError,
+        fixture_pipeline.ResidualValueError,
         rec.DenylistError,
     ],
 )
@@ -1630,7 +1637,7 @@ def test_every_refusal_class_of_the_offline_transform_exits_2_and_writes_nothing
     def _refuse(_root: Path, **_kw: object) -> list[Path]:
         raise error("refused at gitlab/a.json")
 
-    monkeypatch.setattr(redact_fixtures, "run", _refuse)
+    monkeypatch.setattr(redact_fixtures, "redact_corpus", _refuse)
     assert redact_fixtures.main([str(tmp_path)]) == 2
     err = capsys.readouterr()
     assert (err.out, err.err) == ("", "refused at gitlab/a.json\n")
@@ -1644,7 +1651,7 @@ def test_offline_transform_writes_nothing_when_one_file_refuses(tmp_path: Path) 
         [{"author": {"login": "someone-x"}, "url": "https://github.com/o/r/pull/1"}],
     )
     seconds = (
-        ("unknown", "zzz/b.json", {"calls": []}, redact_fixtures.UnknownForgeError),
+        ("unknown", "zzz/b.json", {"calls": []}, fixture_pipeline.UnknownForgeError),
         (
             "residual",
             "github/b.json",
@@ -1653,7 +1660,7 @@ def test_offline_transform_writes_nothing_when_one_file_refuses(tmp_path: Path) 
                 "pull_request",
                 [{"author": {"login": "someone-y"}, "body": "by zqdenyval"}],
             ),
-            redact_fixtures.ResidualValueError,
+            fixture_pipeline.ResidualValueError,
         ),
     )
     for name, rel, second, error in seconds:
@@ -1663,13 +1670,15 @@ def test_offline_transform_writes_nothing_when_one_file_refuses(tmp_path: Path) 
             (root / path).write_text(json.dumps(data))
         before = (root / "github" / "a.json").read_bytes()
         with pytest.raises(error):
-            redact_fixtures.run(root, check=False, denylist=deny_list.Denylist(("zqdenyval",)))
+            fixture_pipeline.redact_corpus(
+                root, check=False, denylist=deny_list.Denylist(("zqdenyval",))
+            )
         assert (root / "github" / "a.json").read_bytes() == before
     with pytest.raises(
-        redact_fixtures.ResidualValueError,
+        fixture_pipeline.ResidualValueError,
         match=r"^deny-list entry 1 at github/b\.json:exchanges\[0\]\.stdout\.body$",
     ):
-        redact_fixtures.run(
+        fixture_pipeline.redact_corpus(
             tmp_path / "residual", check=True, denylist=deny_list.Denylist(("zqdenyval",))
         )
 
@@ -1710,6 +1719,7 @@ ALLOWED_CASE_SENSITIVE: dict[str, frozenset[str]] = {
     "fixture_judge": frozenset({"HOME_PATH_RE"}),
     "denylist": frozenset(),
     "redact_forge_fixtures": frozenset(),
+    "fixture_pipeline": frozenset(),
     "closure": frozenset(
         {
             "_RUN",
@@ -1728,7 +1738,15 @@ ALLOWED_CASE_SENSITIVE: dict[str, frozenset[str]] = {
 
 def test_case_insensitive_patterns_are_flagged() -> None:
     """I2 (0.10): every module-level recogniser of a scheme, host or login is ``re.I``; the exceptions are named."""
-    for module in (recording, rec, redact_fixtures, closure, fixture_judge, deny_list):
+    for module in (
+        recording,
+        rec,
+        redact_fixtures,
+        fixture_pipeline,
+        closure,
+        fixture_judge,
+        deny_list,
+    ):
         name = module.__name__.rsplit(".", 1)[-1]
         imported = {id(v) for v in vars(recording).values()} if module is not recording else set()
         patterns = {
@@ -1858,8 +1876,10 @@ def test_an_offline_refusal_binds_no_deny_list_entry_in_a_frame(tmp_path: Path) 
     (corpus / "github").mkdir(parents=True)
     data = _fixture("github", "reviews", [[{"id": 1, "body": f"held {marker} here"}]])
     (corpus / "github" / "a.json").write_text(json.dumps(data))
-    with pytest.raises(redact_fixtures.ResidualValueError, match=r"^deny-list entry 1 at ") as info:
-        redact_fixtures.run(corpus, check=True, denylist=deny_list.Denylist((marker,)))
+    with pytest.raises(
+        fixture_pipeline.ResidualValueError, match=r"^deny-list entry 1 at "
+    ) as info:
+        fixture_pipeline.redact_corpus(corpus, check=True, denylist=deny_list.Denylist((marker,)))
     bound = [
         (frame.f_code.co_name, name)
         for frame, _line in traceback.walk_tb(info.tb)
@@ -2176,7 +2196,7 @@ def test_the_tools_templates_are_not_judged() -> None:
 def test_the_offline_needles_accept_a_short_hand_written_login() -> None:
     """D4 (0.10): the committed corpus may hold a three-letter placeholder login; the offline needles judge it."""
     data = _fixture("github", "reviews", [[{"user": {"login": "bob"}, "body": "hi"}]])
-    found = redact_fixtures.fixture_known(data, denylist=NO_DENYLIST)
+    found = fixture_pipeline.fixture_known(data, denylist=NO_DENYLIST)
     assert ("login", "bob") in found.entries
 
 
@@ -2283,7 +2303,7 @@ def test_call_args_urls_are_redacted_in_both_tools() -> None:
         "https://forge.example.com/org/project/pull/1",
     ]
     fixture = {"forge": "github", "calls": calls}
-    offline = redact_fixtures.redact_fixture(fixture, forge="github", denylist=NO_DENYLIST)
+    offline = fixture_pipeline.redact_fixture(fixture, forge="github", denylist=NO_DENYLIST)
     assert offline["calls"][0]["args"] == out[0]["args"]
 
 
@@ -2555,9 +2575,9 @@ def test_bots_scoped_packages_and_case_insensitive_decorators() -> None:
             )
         ],
     }
-    offline_out = redact_fixtures.redact_fixture(offline_dep, forge="github", denylist=NO_DENYLIST)
+    offline_out = fixture_pipeline.redact_fixture(offline_dep, forge="github", denylist=NO_DENYLIST)
     assert (
-        residual(offline_out, redact_fixtures.fixture_known(offline_dep, denylist=NO_DENYLIST))
+        residual(offline_out, fixture_pipeline.fixture_known(offline_dep, denylist=NO_DENYLIST))
         is None
     )
 
@@ -2611,7 +2631,7 @@ def test_gitlab_api_numeric_project_ids_and_offline_kwargs_and_system_noreply() 
         "result": None,
         "raises": None,
     }
-    red_off = redact_fixtures.redact_fixture(sample_offline, forge="github", denylist=NO_DENYLIST)
+    red_off = fixture_pipeline.redact_fixture(sample_offline, forge="github", denylist=NO_DENYLIST)
     assert red_off["kwargs"] == {
         "note": "https://forge.example.com/org/project/pull/1",
         "api": "https://forge.example.com/api/v4/projects/2001/merge_requests/42",
@@ -2621,10 +2641,10 @@ def test_gitlab_api_numeric_project_ids_and_offline_kwargs_and_system_noreply() 
         "Committer: GitHub <noreply@forge.example.com>; keep noreply@example.com"
     )
     assert (
-        residual(red_off, redact_fixtures.fixture_known(sample_offline, denylist=NO_DENYLIST))
+        residual(red_off, fixture_pipeline.fixture_known(sample_offline, denylist=NO_DENYLIST))
         is None
     )
-    assert redact_fixtures.redact_fixture(red_off, forge="github", denylist=NO_DENYLIST) == red_off
+    assert fixture_pipeline.redact_fixture(red_off, forge="github", denylist=NO_DENYLIST) == red_off
 
     assert redact_urls_in_text("Author: github-actions[bot] <actions@github.com>") == (
         "Author: github-actions[bot] <noreply@forge.example.com>"
@@ -2760,11 +2780,11 @@ def test_public_hosts_strip_userinfo_and_normalize_host_case() -> None:
         "result": None,
         "raises": None,
     }
-    red_docs = redact_fixtures.redact_fixture(fx_docs, forge="github", denylist=NO_DENYLIST)
+    red_docs = fixture_pipeline.redact_fixture(fx_docs, forge="github", denylist=NO_DENYLIST)
     assert json.loads(red_docs["calls"][0]["stdout"])[0]["body"] == (
         "See https://docs.github.com/en/actions and https://docs.gitlab.com/ee/api/"
     )
-    assert residual(red_docs, redact_fixtures.fixture_known(fx_docs, denylist=NO_DENYLIST)) is None
+    assert residual(red_docs, fixture_pipeline.fixture_known(fx_docs, denylist=NO_DENYLIST)) is None
 
 
 def test_prose_punctuation_and_markdown_delimiters_terminate_urls_without_eating() -> None:
@@ -2863,10 +2883,10 @@ def test_short_bot_stems_placeholder_bots_and_offline_bot_parity() -> None:
                 )
             ],
         }
-        red_off = redact_fixtures.redact_fixture(fx_off, forge="github", denylist=NO_DENYLIST)
+        red_off = fixture_pipeline.redact_fixture(fx_off, forge="github", denylist=NO_DENYLIST)
         assert json.loads(red_off["calls"][0]["stdout"])[0]["body"] == "Run @bot check"
         assert (
-            residual(red_off, redact_fixtures.fixture_known(fx_off, denylist=NO_DENYLIST)) is None
+            residual(red_off, fixture_pipeline.fixture_known(fx_off, denylist=NO_DENYLIST)) is None
         )
 
     found_dep = needles([], roles={"dependabot[bot]": "bot", "dependabot": "bot"})
@@ -2893,12 +2913,13 @@ def test_short_bot_stems_placeholder_bots_and_offline_bot_parity() -> None:
             )
         ],
     }
-    red_proj = redact_fixtures.redact_fixture(fx_proj_bot, forge="github", denylist=NO_DENYLIST)
+    red_proj = fixture_pipeline.redact_fixture(fx_proj_bot, forge="github", denylist=NO_DENYLIST)
     assert json.loads(red_proj["calls"][0]["stdout"])[0]["body"] == (
         "See https://forge.example.com/org/project/pull/1 and @bot"
     )
     assert (
-        residual(red_proj, redact_fixtures.fixture_known(fx_proj_bot, denylist=NO_DENYLIST)) is None
+        residual(red_proj, fixture_pipeline.fixture_known(fx_proj_bot, denylist=NO_DENYLIST))
+        is None
     )
 
     fx_upper_bot = {
@@ -2914,15 +2935,15 @@ def test_short_bot_stems_placeholder_bots_and_offline_bot_parity() -> None:
             )
         ],
     }
-    assert redact_fixtures.fixture_roles(fx_upper_bot) == {
+    assert fixture_pipeline.fixture_roles(fx_upper_bot) == {
         "Dependabot[BOT]": "bot",
         "dependabot": "bot",
     }
-    red_upper = redact_fixtures.redact_fixture(fx_upper_bot, forge="github", denylist=NO_DENYLIST)
+    red_upper = fixture_pipeline.redact_fixture(fx_upper_bot, forge="github", denylist=NO_DENYLIST)
     assert json.loads(red_upper["calls"][0]["stdout"])[0]["user"]["login"] == "bot"
     assert json.loads(red_upper["calls"][0]["stdout"])[0]["body"] == "bot: @bot rebase"
     assert (
-        residual(red_upper, redact_fixtures.fixture_known(fx_upper_bot, denylist=NO_DENYLIST))
+        residual(red_upper, fixture_pipeline.fixture_known(fx_upper_bot, denylist=NO_DENYLIST))
         is None
     )
 
@@ -2933,7 +2954,7 @@ def test_short_bot_stems_placeholder_bots_and_offline_bot_parity() -> None:
             _exchange([{"user": {"login": "renovate[bot]", "id": 29139614}, "body": "ok"}]),
         ],
     }
-    assert redact_fixtures.fixture_roles(fx_mention_first) == {
+    assert fixture_pipeline.fixture_roles(fx_mention_first) == {
         "renovate[bot]": "bot",
         "renovate": "bot",
     }
@@ -3046,12 +3067,12 @@ def test_public_reference_hosts_match_by_suffix_and_balance_url_parens() -> None
             )
         ],
     }
-    red_off = redact_fixtures.redact_fixture(fx_off, forge="github", denylist=NO_DENYLIST)
+    red_off = fixture_pipeline.redact_fixture(fx_off, forge="github", denylist=NO_DENYLIST)
     assert json.loads(red_off["calls"][0]["stdout"])[0]["body"] == (
         "See https://docs.python.org/3/library/re.html? and "
         "https://en.wikipedia.org/wiki/Python_(programming_language)"
     )
-    assert residual(red_off, redact_fixtures.fixture_known(fx_off, denylist=NO_DENYLIST)) is None
+    assert residual(red_off, fixture_pipeline.fixture_known(fx_off, denylist=NO_DENYLIST)) is None
 
 
 def test_userinfo_rule_covers_empty_passwords_rfc3986_chars_and_scp_hosts() -> None:
@@ -3244,7 +3265,7 @@ def test_offline_transform_redacts_all_six_positions_and_non_json_project_ids() 
         },
         "raises": None,
     }
-    redacted = redact_fixtures.redact_fixture(fixture, forge="gitlab", denylist=NO_DENYLIST)
+    redacted = fixture_pipeline.redact_fixture(fixture, forge="gitlab", denylist=NO_DENYLIST)
     assert redacted["args"] == ["https://forge.example.com/org/project/-/merge_requests/1"]
     assert redacted["kwargs"] == {"ref": "https://forge.example.com/org/project/-/merge_requests/2"}
     assert redacted["result"] == {
@@ -3265,9 +3286,9 @@ def test_offline_transform_redacts_all_six_positions_and_non_json_project_ids() 
         "+glab api /projects/2001/pipelines\n"
     )
     assert recording.SYNTHETIC_PROJECT_IDS_KEY not in redacted
-    assert residual(redacted, redact_fixtures.fixture_known(fixture, denylist=NO_DENYLIST)) is None
+    assert residual(redacted, fixture_pipeline.fixture_known(fixture, denylist=NO_DENYLIST)) is None
     assert (
-        redact_fixtures.redact_fixture(redacted, forge="gitlab", denylist=NO_DENYLIST) == redacted
+        fixture_pipeline.redact_fixture(redacted, forge="gitlab", denylist=NO_DENYLIST) == redacted
     )
 
 
@@ -3454,13 +3475,14 @@ def test_scp_remotes_in_unified_diffs_and_plus_usernames_are_redacted() -> None:
             assert token not in red_calls[0]["stdout"], (line, token)
 
         off_in = {**fixture, "calls": [raw_call]}
-        off_out = redact_fixtures.redact_fixture(off_in, forge="gitlab", denylist=NO_DENYLIST)
+        off_out = fixture_pipeline.redact_fixture(off_in, forge="gitlab", denylist=NO_DENYLIST)
         assert off_out["calls"][0]["stdout"] == expected_diff, line
         assert (
-            residual(off_out, redact_fixtures.fixture_known(off_in, denylist=NO_DENYLIST)) is None
+            residual(off_out, fixture_pipeline.fixture_known(off_in, denylist=NO_DENYLIST)) is None
         ), line
         assert (
-            redact_fixtures.redact_fixture(off_out, forge="gitlab", denylist=NO_DENYLIST) == off_out
+            fixture_pipeline.redact_fixture(off_out, forge="gitlab", denylist=NO_DENYLIST)
+            == off_out
         ), line
 
 
@@ -4047,23 +4069,23 @@ def test_offline_transform_takes_the_remote_and_the_denylist_and_matches_the_rec
         ],
         "synthetic_user_ids": [1001],
     }
-    with pytest.raises(redact_fixtures.ResidualValueError, match=r"^deny-list entry 1 at "):
-        redact_fixtures.redact_fixture(
+    with pytest.raises(fixture_pipeline.ResidualValueError, match=r"^deny-list entry 1 at "):
+        fixture_pipeline.redact_fixture(
             data, forge="github", denylist=deny_list.Denylist(("zqdenyval",))
         )
     clean = {
         **data,
         "calls": [_exchange([{"user": {"login": "author", "id": 1001}, "body": "see zqrep"}])],
     }
-    out = redact_fixtures.redact_fixture(
+    out = fixture_pipeline.redact_fixture(
         clean, forge="github", remote="git@github.com:zqown/zqrep.git", denylist=NO_DENYLIST
     )
     assert json.loads(out["calls"][0]["stdout"])[0]["body"] == "see project"
-    again = redact_fixtures.redact_fixture(
+    again = fixture_pipeline.redact_fixture(
         out, forge="github", remote="git@github.com:zqown/zqrep.git", denylist=NO_DENYLIST
     )
     assert again == out
-    known = redact_fixtures.fixture_known(
+    known = fixture_pipeline.fixture_known(
         clean,
         remote="git@github.com:zqown/zqrep.git",
         denylist=deny_list.Denylist(("zqdenyval",)),
@@ -4071,7 +4093,7 @@ def test_offline_transform_takes_the_remote_and_the_denylist_and_matches_the_rec
     assert known.values("segment") == ("zqown", "zqrep")
     assert known.values("deny-list") == ("zqdenyval",)
     assert not known.values("id")
-    plain = redact_fixtures.fixture_known(clean, denylist=NO_DENYLIST)
+    plain = fixture_pipeline.fixture_known(clean, denylist=NO_DENYLIST)
     assert plain.values("segment") == ()
     assert "github.com" in plain.values("host")
 
@@ -4649,27 +4671,27 @@ def test_offline_and_live_roles_give_a_bot_stem_its_own_word_only_when_mentioned
     bot = {"user": {"login": "zqbot[bot]"}, "body": "ok"}
     mention = {"body": "cc @zqbot please"}
     both = {"zqbot[bot]": "bot", "zqbot": "bot"}
-    assert redact_fixtures.fixture_roles(_roles_data(bot, mention)) == both
-    assert redact_fixtures.fixture_roles(_roles_data(mention, bot)) == both
-    assert redact_fixtures.fixture_roles(_roles_data(bot)) == {"zqbot[bot]": "bot"}
-    assert redact_fixtures.fixture_roles(_roles_data(mention)) == {"@zqbot": "author-2"}
-    assert redact_fixtures.fixture_roles(
+    assert fixture_pipeline.fixture_roles(_roles_data(bot, mention)) == both
+    assert fixture_pipeline.fixture_roles(_roles_data(mention, bot)) == both
+    assert fixture_pipeline.fixture_roles(_roles_data(bot)) == {"zqbot[bot]": "bot"}
+    assert fixture_pipeline.fixture_roles(_roles_data(mention)) == {"@zqbot": "author-2"}
+    assert fixture_pipeline.fixture_roles(
         _roles_data({"user": {"login": "ci[bot]"}, "body": "cc @ci"})
     ) == {"ci[bot]": "bot"}
-    assert redact_fixtures.fixture_roles(
+    assert fixture_pipeline.fixture_roles(
         _roles_data({"user": {"login": "project[bot]"}, "body": "cc @project"})
     ) == {"project[bot]": "bot"}
-    assert redact_fixtures.fixture_roles(
+    assert fixture_pipeline.fixture_roles(
         _roles_data({"user": {"login": "Dependabot[BOT]"}, "body": "cc @dependabot"})
     ) == {"Dependabot[BOT]": "bot", "dependabot": "bot"}
-    assert redact_fixtures.fixture_roles(
+    assert fixture_pipeline.fixture_roles(
         _roles_data({"user": {"login": "zqbot[bot]"}, "body": "cc @ZQBOT"})
     ) == {"zqbot[bot]": "bot", "ZQBOT": "bot"}
-    two = redact_fixtures.fixture_roles(
+    two = fixture_pipeline.fixture_roles(
         _roles_data({"user": {"login": "zqone[bot]"}}, {"user": {"login": "zqtwo[bot]"}})
     )
     assert two == {"zqone[bot]": "bot", "zqtwo[bot]": "bot-2"}
-    gitlab = redact_fixtures.fixture_roles(
+    gitlab = fixture_pipeline.fixture_roles(
         _roles_data({"user": {"login": "project_88442211_bot_a1b2c3d4e5f6"}})
     )
     assert gitlab == {"project_88442211_bot_a1b2c3d4e5f6": "service"}
@@ -4716,7 +4738,7 @@ def test_the_offline_transform_replaces_known_values_everywhere_but_the_closed_f
             {"stdout": "zqgroup", "args": ["zqgroup"]},
         ],
     }
-    out = redact_fixtures._replace_known(data, known)
+    out = fixture_pipeline._replace_known(data, known)
     assert out["forge"] == out["method"] == out["case"] == "zqgroup"
     assert out["source"] == "recorded 2026-11-22 from a live github change request on org"
     assert out["zqgroup"] == "org"
@@ -4725,9 +4747,9 @@ def test_the_offline_transform_replaces_known_values_everywhere_but_the_closed_f
     assert json.loads(first["stdout"]) == {"body": "org"}
     assert (first["args"], first["stderr"], first["stdin"]) == (["org"], "org", "org")
     assert second["stdout"] == "org"
-    headless = redact_fixtures._replace_known({"source": "zqgroup elsewhere"}, known)
+    headless = fixture_pipeline._replace_known({"source": "zqgroup elsewhere"}, known)
     assert headless["source"] == "org elsewhere"
-    assert redact_fixtures._replace_known(7, known) == 7
+    assert fixture_pipeline._replace_known(7, known) == 7
     calls = rec.replace_known_in_calls(
         [
             {
@@ -4744,7 +4766,7 @@ def test_the_offline_transform_replaces_known_values_everywhere_but_the_closed_f
     ]
     bare = rec.replace_known_in_calls([{"stdout": "zqgroup"}], known)
     assert bare == [{"stdout": "org"}]
-    known_offline = redact_fixtures.fixture_known(
+    known_offline = fixture_pipeline.fixture_known(
         {
             "calls": [_exchange({"user": {"login": "author", "id": 1001}})],
             "synthetic_user_ids": [1001],
@@ -4991,9 +5013,9 @@ def test_a_secret_in_any_string_of_the_fixture_is_refused(
     assert not (tmp_path / "w").exists()
     held = _fixture("github", "reviews", [[{"id": 1, "body": f"use {token} here"}]])
     with pytest.raises(
-        redact_fixtures.ResidualValueError, match=r"^secret-shaped value at exchanges\[0\]\.stdout"
+        fixture_pipeline.ResidualValueError, match=r"^secret-shaped value at exchanges\[0\]\.stdout"
     ):
-        redact_fixtures.redact_fixture(held, forge="github", denylist=NO_DENYLIST)
+        fixture_pipeline.redact_fixture(held, forge="github", denylist=NO_DENYLIST)
 
 
 def test_replay_names_the_bot_and_the_error_the_redacted_fixture_raises(
@@ -5078,26 +5100,26 @@ def test_offline_roles_by_enumeration_of_orders_numbering_and_mention_text() -> 
     """D4: the order a stem and its bot are met in, the numbering after a stem, longer logins first, mention-only words."""
     short_mention = {"body": "cc @ci"}
     short_bot = {"user": {"login": "ci[bot]"}}
-    assert redact_fixtures.fixture_roles(_roles_data(short_mention, short_bot)) == {
+    assert fixture_pipeline.fixture_roles(_roles_data(short_mention, short_bot)) == {
         "ci[bot]": "bot"
     }
-    assert redact_fixtures.fixture_roles(_roles_data(short_bot, short_mention)) == {
+    assert fixture_pipeline.fixture_roles(_roles_data(short_bot, short_mention)) == {
         "ci[bot]": "bot"
     }
     bot = {"user": {"login": "zqbot[bot]"}, "body": "cc @zqbot"}
     other = {"user": {"login": "zqother"}}
-    assert redact_fixtures.fixture_roles(_roles_data(bot, other)) == {
+    assert fixture_pipeline.fixture_roles(_roles_data(bot, other)) == {
         "zqbot[bot]": "bot",
         "zqother": "author-2",
         "zqbot": "bot",
     }
-    assert redact_fixtures.fixture_roles(_roles_data(other, bot)) == {
+    assert fixture_pipeline.fixture_roles(_roles_data(other, bot)) == {
         "zqother": "author-2",
         "zqbot[bot]": "bot",
         "zqbot": "bot",
     }
     upper_mention = _roles_data({"user": {"login": "zqbot[bot]"}}, {"body": "cc @ZQBOT"})
-    assert redact_fixtures.fixture_roles(upper_mention) == {"zqbot[bot]": "bot", "ZQBOT": "bot"}
+    assert fixture_pipeline.fixture_roles(upper_mention) == {"zqbot[bot]": "bot", "ZQBOT": "bot"}
     mention_text = recording.rename_logins_in_text
     assert mention_text("zqname-x and zqname", {"zqname": "author", "zqname-x": "author-2"}) == (
         "author-2 and author"
@@ -5121,17 +5143,17 @@ def test_offline_known_values_and_redaction_read_every_field_of_the_fixture() ->
         "calls": [],
         "result": None,
     }
-    known = redact_fixtures.fixture_known(
+    known = fixture_pipeline.fixture_known(
         data, remote="git@git.remote.io:zqgroup/zqmainrepo.git", denylist=NO_DENYLIST
     )
     hosts = known.values("host")
     assert {"git.zqcorp.io", "git.acme.io"} <= set(hosts)
     assert known.values("segment") == ("zqgroup", "zqmainrepo")
-    assert redact_fixtures.fixture_known({"calls": []}, denylist=NO_DENYLIST).values("login") == ()
-    assert ("login", "a") in redact_fixtures.fixture_known(
+    assert fixture_pipeline.fixture_known({"calls": []}, denylist=NO_DENYLIST).values("login") == ()
+    assert ("login", "a") in fixture_pipeline.fixture_known(
         {"calls": []}, roles={"a": "author"}, denylist=NO_DENYLIST
     ).entries
-    default_forge = inspect.signature(redact_fixtures.fixture_known).parameters["forge"].default
+    default_forge = inspect.signature(fixture_pipeline.fixture_known).parameters["forge"].default
     assert default_forge == "github"
     url = "https://github.com/zqpubown/zqpubrepo?tab=readme"
     fixture = {
@@ -5142,22 +5164,22 @@ def test_offline_known_values_and_redaction_read_every_field_of_the_fixture() ->
         "calls": [],
         "result": {"link": url, "body": url},
     }
-    out = redact_fixtures.redact_fixture(fixture, forge="github", denylist=NO_DENYLIST)
+    out = fixture_pipeline.redact_fixture(fixture, forge="github", denylist=NO_DENYLIST)
     placeholder = "https://forge.example.com/org/project"
     assert out["args"] == [placeholder]
     assert out["kwargs"] == {"k": placeholder}
     assert out["result"]["body"] == placeholder
     assert list(out) == ["forge", "method", "args", "kwargs", "calls", "result"]
-    ordered = redact_fixtures.redact_fixture(
+    ordered = fixture_pipeline.redact_fixture(
         dict(sorted(fixture.items())), forge="github", denylist=NO_DENYLIST
     )
     assert list(ordered) == sorted(ordered)
     declared = {**fixture, "calls": [_exchange({"user": {"login": "author", "id": 74928163}})]}
-    stamped = redact_fixtures.redact_fixture(
+    stamped = fixture_pipeline.redact_fixture(
         dict(sorted(declared.items())), forge="github", denylist=NO_DENYLIST
     )
     assert list(stamped) == sorted(stamped) and stamped["synthetic_user_ids"] == [1001]
-    stamped_unsorted = redact_fixtures.redact_fixture(
+    stamped_unsorted = fixture_pipeline.redact_fixture(
         declared, forge="github", denylist=NO_DENYLIST
     )
     assert list(stamped_unsorted)[-1] == "synthetic_user_ids"
@@ -5197,16 +5219,16 @@ def test_offline_words_skip_the_ones_the_fixture_already_holds_and_the_head_is_n
     held = _roles_data(
         {"user": {"login": "author"}}, {"user": {"login": "author-2"}}, {"user": {"login": "zqnew"}}
     )
-    assert redact_fixtures.fixture_roles(held) == {"zqnew": "author-3"}
+    assert fixture_pipeline.fixture_roles(held) == {"zqnew": "author-3"}
     bots = _roles_data(
         {"user": {"login": "bot"}},
         {"user": {"login": "zqone[bot]"}},
         {"user": {"login": "zqtwo[bot]"}},
     )
-    assert redact_fixtures.fixture_roles(bots) == {"zqone[bot]": "bot-2", "zqtwo[bot]": "bot-3"}
+    assert fixture_pipeline.fixture_roles(bots) == {"zqone[bot]": "bot-2", "zqtwo[bot]": "bot-3"}
     services = _roles_data({"user": {"login": "project_88442211_bot_a1b2c3d4e5f6"}})
     services["bot_username"] = "repoach-bot"
-    assert redact_fixtures.fixture_roles(services) == {
+    assert fixture_pipeline.fixture_roles(services) == {
         "project_88442211_bot_a1b2c3d4e5f6": "service"
     }
     padded = {
@@ -5219,7 +5241,7 @@ def test_offline_words_skip_the_ones_the_fixture_already_holds_and_the_head_is_n
             }
         ],
     }
-    assert redact_fixtures.fixture_roles(padded) == {"zqpadded": "author-2"}
+    assert fixture_pipeline.fixture_roles(padded) == {"zqpadded": "author-2"}
     assert (
         recording.rename_logins_in_text(
             "zqname-x and zqname", {"zqname": "author-10", "zqname-x": "bot"}
@@ -5233,11 +5255,11 @@ def test_offline_words_skip_the_ones_the_fixture_already_holds_and_the_head_is_n
         remote="git@git.zqcorp.io:recorded/zqmainrepo.git",
         denylist=NO_DENYLIST,
     )
-    kept = redact_fixtures._replace_known(
+    kept = fixture_pipeline._replace_known(
         {"source": f"{head}, tagged recorded", "case": "recorded"}, known
     )
     assert kept == {"source": f"{head}, tagged org", "case": "recorded"}
-    other = redact_fixtures._replace_known({"body": "recorded here", "note": f"{head}"}, known)
+    other = fixture_pipeline._replace_known({"body": "recorded here", "note": f"{head}"}, known)
     assert other == {"body": "org here", "note": f"{head}".replace("recorded", "org")}
 
 
@@ -5245,14 +5267,17 @@ def test_offline_stems_touch_only_the_mention_of_their_own_bot() -> None:
     """D4: a mention is a stem only when ``<mention>[bot]`` is a login of the fixture, whatever else is mentioned."""
     mention = {"body": "cc @zqname"}
     long_login = {"user": {"login": "zqname12345"}}
-    assert redact_fixtures.fixture_roles(_roles_data(mention, long_login)) == {
+    assert fixture_pipeline.fixture_roles(_roles_data(mention, long_login)) == {
         "@zqname": "author-2",
         "zqname12345": "author-3",
     }
     elsewhere = _roles_data({"body": "cc @zqother"}, {"user": {"login": "zqbot[bot]"}})
-    assert redact_fixtures.fixture_roles(elsewhere) == {"@zqother": "author-2", "zqbot[bot]": "bot"}
+    assert fixture_pipeline.fixture_roles(elsewhere) == {
+        "@zqother": "author-2",
+        "zqbot[bot]": "bot",
+    }
     plain = _roles_data({"user": {"login": "zqplain"}}, {"user": {"login": "zqbot[bot]"}})
-    assert redact_fixtures.fixture_roles(plain) == {"zqplain": "author-2", "zqbot[bot]": "bot"}
+    assert fixture_pipeline.fixture_roles(plain) == {"zqplain": "author-2", "zqbot[bot]": "bot"}
 
 
 def test_known_values_read_encoded_forms_and_replace_them_without_a_stray_percent() -> None:
@@ -6440,7 +6465,7 @@ def test_a_prose_positional_argument_is_named_by_the_method_signature() -> None:
     answer = json.loads(call["stdout"])
     answer["body"], answer["path"] = body, review
     call["stdout"] = json.dumps(answer)
-    written = redact_fixtures.redact_fixture(
+    written = fixture_pipeline.redact_fixture(
         fixture, forge="github", remote=remote, denylist=NO_DENYLIST
     )
     posted = written["calls"][1]
@@ -6896,21 +6921,21 @@ def test_offline_roles_read_the_logins_under_the_keys_the_redaction_drops() -> N
     )
     dropped = recording.raw_logins([raw["calls"], None, None])
     assert dropped == ["zqauthor", "zqassignee", "zqmerger"]
-    redacted = redact_fixtures._exchanges(raw)
-    assert redact_fixtures.fixture_roles(redacted) == {"zqauthor": "author-2"}
-    assert redact_fixtures.fixture_roles(redacted, also=dropped) == {
+    redacted = fixture_pipeline._exchanges(raw)
+    assert fixture_pipeline.fixture_roles(redacted) == {"zqauthor": "author-2"}
+    assert fixture_pipeline.fixture_roles(redacted, also=dropped) == {
         "zqauthor": "author-2",
         "zqassignee": "author-3",
         "zqmerger": "author-4",
     }
-    assert redact_fixtures.fixture_roles(
+    assert fixture_pipeline.fixture_roles(
         redacted, also=["author", "github-actions[bot]", "zqauthor"]
     ) == {"zqauthor": "author-2"}
     prose = _roles_data(
         {"assignees": [{"login": "zqassignee"}]},
         {"body": "Assigned to zqassignee, thanks @zqassignee and zqmerger"},
     )
-    out = redact_fixtures.redact_fixture(prose, forge="github", denylist=NO_DENYLIST)
+    out = fixture_pipeline.redact_fixture(prose, forge="github", denylist=NO_DENYLIST)
     text = json.dumps(out)
     assert "zqassignee" not in text and "assignees" not in text
     assert json.loads(out["calls"][1]["stdout"])["body"] == (
@@ -6928,7 +6953,7 @@ def test_offline_redaction_rewrites_urls_in_arguments_keyword_arguments_and_resu
         "calls": [],
         "result": "https://github.com/zqnsthree/zqrepothree/pull/14",
     }
-    out = redact_fixtures.redact_fixture(data, forge="github", denylist=NO_DENYLIST)
+    out = fixture_pipeline.redact_fixture(data, forge="github", denylist=NO_DENYLIST)
     assert out["args"] == ["https://forge.example.com/org/project/pull/12", 7]
     assert out["kwargs"] == {"url": "https://forge.example.com/org/project/pull/13"}
     assert out["result"] == "https://forge.example.com/org/project/pull/14"
@@ -6944,12 +6969,12 @@ def test_offline_roles_walk_the_keyword_arguments_and_refuse_positional_logins()
         "calls": [_exchange({"body": "cc zqkwtwo"})],
         "result": None,
     }
-    out = redact_fixtures.redact_fixture(data, forge="github", denylist=NO_DENYLIST)
+    out = fixture_pipeline.redact_fixture(data, forge="github", denylist=NO_DENYLIST)
     assert json.loads(out["calls"][0]["stdout"])["body"] == "cc author-2"
     assert out["kwargs"] == {"mergedBy": {"login": "author-2"}}
     positional = {**data, "args": [{"assignees": [{"login": "zqargone"}]}], "kwargs": {}}
-    with pytest.raises(redact_fixtures.ResidualValueError, match=r"^residual login 1 at args"):
-        redact_fixtures.redact_fixture(positional, forge="github", denylist=NO_DENYLIST)
+    with pytest.raises(fixture_pipeline.ResidualValueError, match=r"^residual login 1 at args"):
+        fixture_pipeline.redact_fixture(positional, forge="github", denylist=NO_DENYLIST)
 
 
 def test_a_mention_only_handle_equal_to_a_language_word_is_the_documented_residual() -> None:
@@ -7018,13 +7043,13 @@ def test_the_recorder_never_raises_on_a_recording_nested_past_the_readers(
         "raises": None,
     }
     try:
-        bounded = redact_fixtures.redact_fixture(fixture, forge="github", denylist=NO_DENYLIST)
-    except redact_fixtures.ResidualValueError as exc:
+        bounded = fixture_pipeline.redact_fixture(fixture, forge="github", denylist=NO_DENYLIST)
+    except fixture_pipeline.ResidualValueError as exc:
         assert str(exc).startswith("nesting too deep")
     else:
         assert bounded["calls"][0]["stdout"] == deep
     shallow = {**fixture, "calls": [{**_exchange([]), "stdout": "[" * 20000}]}
-    assert redact_fixtures.redact_fixture(shallow, forge="github", denylist=NO_DENYLIST)["calls"][
+    assert fixture_pipeline.redact_fixture(shallow, forge="github", denylist=NO_DENYLIST)["calls"][
         0
     ]["stdout"] == ("[" * 20000)
 
@@ -7032,9 +7057,9 @@ def test_the_recorder_never_raises_on_a_recording_nested_past_the_readers(
         raise RecursionError("maximum recursion depth exceeded")
 
     with monkeypatch.context() as patched:
-        patched.setattr(redact_fixtures, "_redact_fixture", _overflow)
-        with pytest.raises(redact_fixtures.ResidualValueError, match=r"^nesting too deep"):
-            redact_fixtures.redact_fixture(fixture, forge="github", denylist=NO_DENYLIST)
+        patched.setattr(fixture_pipeline, "_redact_fixture", _overflow)
+        with pytest.raises(fixture_pipeline.ResidualValueError, match=r"^nesting too deep"):
+            fixture_pipeline.redact_fixture(fixture, forge="github", denylist=NO_DENYLIST)
     monkeypatch.setattr(rec, "_record", _overflow)
     with pytest.raises(rec.UnclassifiedValueError, match=r"^nesting too deep"):
         rec.record(
@@ -7120,14 +7145,14 @@ def test_an_omitted_deny_list_is_the_maintainers_and_never_an_empty_one(
     """
     monkeypatch.setenv(deny_list.DENYLIST_ENV, "zqdenied77")
     fixture = _fixture("github", "conversation_comments", [[{"body": "seen on zqdenied77 today"}]])
-    with pytest.raises(redact_fixtures.ResidualValueError, match=r"^deny-list entry 1 at "):
-        redact_fixtures.redact_fixture(json.loads(json.dumps(fixture)), forge="github")
-    written = redact_fixtures.redact_fixture(
+    with pytest.raises(fixture_pipeline.ResidualValueError, match=r"^deny-list entry 1 at "):
+        fixture_pipeline.redact_fixture(json.loads(json.dumps(fixture)), forge="github")
+    written = fixture_pipeline.redact_fixture(
         json.loads(json.dumps(fixture)), forge="github", denylist=NO_DENYLIST
     )
     assert "zqdenied77" in json.dumps(written)
-    assert redact_fixtures.fixture_known(fixture).values("deny-list") == ("zqdenied77",)
-    assert redact_fixtures.fixture_known(fixture, denylist=NO_DENYLIST).values("deny-list") == ()
+    assert fixture_pipeline.fixture_known(fixture).values("deny-list") == ("zqdenied77",)
+    assert fixture_pipeline.fixture_known(fixture, denylist=NO_DENYLIST).values("deny-list") == ()
     raw = [fixture["calls"], [], {}]
     assert recording.known_values(raw, roles={}).values("deny-list") == ("zqdenied77",)
     assert recording.known_values(raw, roles={}, denylist=NO_DENYLIST).values("deny-list") == ()
@@ -7137,13 +7162,13 @@ def test_an_omitted_deny_list_is_the_maintainers_and_never_an_empty_one(
         fixture_judge.refuse_unclassified(written)
     monkeypatch.setenv(deny_list.DENYLIST_ENV, "ab")
     with pytest.raises(deny_list.DenylistError, match=r"^deny-list entry 1: too short$"):
-        redact_fixtures.redact_fixture(json.loads(json.dumps(fixture)), forge="github")
+        fixture_pipeline.redact_fixture(json.loads(json.dumps(fixture)), forge="github")
     with pytest.raises(deny_list.DenylistError, match=r"^deny-list entry 1: too short$"):
         recording.known_values(raw, roles={})
     for function in (
-        redact_fixtures.redact_fixture,
-        redact_fixtures.fixture_known,
-        redact_fixtures.run,
+        fixture_pipeline.redact_fixture,
+        fixture_pipeline.fixture_known,
+        fixture_pipeline.redact_corpus,
         recording.known_values,
         fixture_judge.refuse_unclassified,
     ):
@@ -7176,7 +7201,7 @@ def test_live_and_offline_roles_come_from_one_builder(monkeypatch: pytest.Monkey
         calls = [{"args": [], "stdout": json.dumps(a)} for a in answers]
         live = rec.build_roles(calls, bot="", maintainer=None, author="zqauthor")
         live.pop("zqauthor")
-        assert redact_fixtures.fixture_roles(_roles_data(*answers)) == live, answers
+        assert fixture_pipeline.fixture_roles(_roles_data(*answers)) == live, answers
     calls = [{"args": [], "stdout": json.dumps(a)} for a in (mention, bot, other)]
     assert rec.build_roles(calls, bot="", maintainer=None, author=None) == {
         "zqbot[bot]": "bot",
@@ -7192,9 +7217,9 @@ def test_live_and_offline_roles_come_from_one_builder(monkeypatch: pytest.Monkey
         return real(*a, **kw)
 
     monkeypatch.setattr(rec, "assign_roles", _spy)
-    monkeypatch.setattr(redact_fixtures, "assign_roles", _spy)
+    monkeypatch.setattr(fixture_pipeline, "assign_roles", _spy)
     rec.build_roles(calls, bot="", maintainer=None, author=None)
-    redact_fixtures.fixture_roles(_roles_data(mention))
+    fixture_pipeline.fixture_roles(_roles_data(mention))
     assert seen == ["called", "called"]
     assert recording.login_sightings([mention, other]) == [
         ("zqbot", True),
@@ -7229,7 +7254,7 @@ def test_every_exception_main_catches_is_one_the_entry_point_documents() -> None
     from the entry point's ``Raises:`` is an undocumented escape.
     """
     assert _caught_by_main(rec) <= _raises_names(rec.record)
-    assert _caught_by_main(redact_fixtures) <= _raises_names(redact_fixtures.run)
+    assert _caught_by_main(redact_fixtures) <= _raises_names(fixture_pipeline.redact_corpus)
     assert {
         "SystemExit",
         "UnclassifiedValueError",
@@ -7241,8 +7266,8 @@ def test_every_exception_main_catches_is_one_the_entry_point_documents() -> None
         "TypeError",
     } == _raises_names(rec.record)
     for function in (
-        redact_fixtures.redact_fixture,
-        redact_fixtures.fixture_known,
+        fixture_pipeline.redact_fixture,
+        fixture_pipeline.fixture_known,
         recording.known_values,
         fixture_judge.refuse_unclassified,
     ):
@@ -7502,21 +7527,22 @@ def test_live_and_offline_finish_through_the_one_shared_pipeline() -> None:
     The live ``_record`` runs :func:`repoach.forge.fixture_pipeline.redact_recording`, and both
     scripts declare the synthetic ids and judge through
     :func:`repoach.forge.fixture_pipeline.seal_fixture`, so neither writes a fixture the other
-    would judge differently. The offline script reaches the text rewriting through the public
-    facade (``rename_logins_in_text``, ``rename_logins_in_argument``,
-    ``rewrite_recorded_source``, ``replace_known_in_source``), never its patterns.
+    would judge differently. The offline transform (in the pipeline module since round 6)
+    reaches the text rewriting through the public facade (``rename_logins_in_text``,
+    ``rename_logins_in_argument``, ``rewrite_recorded_source``, ``replace_known_in_source``),
+    never its patterns.
     """
-    from repoach.forge import fixture_pipeline
-
     live = inspect.getsource(rec._record)
-    offline = inspect.getsource(redact_fixtures._redact_fixture)
+    offline = inspect.getsource(fixture_pipeline._redact_fixture)
     assert "redact_recording(" in live and "seal_fixture(" in live and "seal_fixture(" in offline
     for source in (live, offline):
         assert "refuse_unclassified(" not in source and "declared_user_ids(" not in source
     assert rec.classify_calls is fixture_pipeline.classify_calls
     assert rec.synthesize_user_ids is fixture_pipeline.synthesize_user_ids
     assert rec.replace_known_in_calls is fixture_pipeline.replace_known_in_calls
-    tree = ast.parse((ROOT / "scripts" / "redact_forge_fixtures.py").read_text(encoding="utf-8"))
+    tree = ast.parse(
+        (ROOT / "src" / "repoach" / "forge" / "fixture_pipeline.py").read_text(encoding="utf-8")
+    )
     imported = {
         alias.name
         for node in ast.walk(tree)
@@ -7547,6 +7573,50 @@ def test_live_and_offline_finish_through_the_one_shared_pipeline() -> None:
     assert recording.rewrite_recorded_source("recorded 2026-11-24 from zqfolder x", "github") == (
         "recorded 2026-11-24 from a live github change request, x"
     )
+
+
+def test_the_offline_script_is_the_command_line_of_the_pipeline(tmp_path: Path) -> None:
+    """D4 (PR #319 round 6, 4684964659): one transform, in the pipeline module; the script parses argv.
+
+    The offline steps (URL redaction of the exchanges, roles, id remapping, known values, the
+    seal) live in :mod:`repoach.forge.fixture_pipeline` beside the live stages, so the two paths
+    cannot drift in two layers. ``scripts/redact_forge_fixtures.py`` defines ``main`` and its
+    default root only, and ``main`` exits 2 on the pipeline's own refusal.
+    """
+    tree = ast.parse((ROOT / "scripts" / "redact_forge_fixtures.py").read_text(encoding="utf-8"))
+    defined = {
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    }
+    assigned = {
+        target.id
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+    assert defined == {"main"}
+    assert assigned == {"__all__", "FIXTURE_ROOT"}
+    for name in (
+        "redact_fixture",
+        "redact_corpus",
+        "fixture_known",
+        "fixture_roles",
+        "fixture_forge",
+        "redact_output",
+        "corpus_start",
+        "render",
+        "ResidualValueError",
+        "UnknownForgeError",
+    ):
+        assert getattr(fixture_pipeline, name).__module__ == fixture_pipeline.__name__, name
+    (tmp_path / "github").mkdir()
+    (tmp_path / "github" / "x.json").write_text(
+        json.dumps({"calls": [], "args": ["mail zqperson@zqcorp.io"]}), encoding="utf-8"
+    )
+    with pytest.raises(fixture_pipeline.ResidualValueError, match=r"^unknown mailbox"):
+        fixture_pipeline.redact_corpus(tmp_path, check=True, denylist=NO_DENYLIST)
 
 
 def test_the_denylist_test_skips_naming_the_reason_where_no_list_is_given(

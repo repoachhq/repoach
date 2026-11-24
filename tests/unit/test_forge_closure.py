@@ -20,7 +20,7 @@ from types import ModuleType
 
 import pytest
 
-from repoach.forge import closure, closure_tables, recording
+from repoach.forge import closure, closure_tables, fixture_pipeline, recording
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -72,6 +72,7 @@ def test_the_oracle_shares_no_code_object_with_the_redactor() -> None:
     """D3 independence: no shared pattern, function, class or set, no import, no equal pattern source."""
     redactor = [
         *_reachable(vars(recording)),
+        *_reachable(vars(fixture_pipeline)),
         *_reachable(vars(_script("record_forge_fixture"))),
         *_reachable(vars(_script("redact_forge_fixtures"))),
     ]
