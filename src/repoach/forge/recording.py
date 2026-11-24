@@ -2457,7 +2457,7 @@ def known_values(
     *,
     roles: dict[str, str],
     remote: str = "",
-    denylist: Denylist | tuple[str, ...] | None = None,
+    denylist: Denylist | None = None,
     min_length: int = NEEDLE_MIN_LENGTH,
     ids: UserIdMap | None = None,
     projects: UserIdMap | None = None,
@@ -2497,9 +2497,11 @@ def known_values(
             them and the method's arguments; never a redacted value.
         roles: The recording's login -> class word.
         remote: The checkout's ``origin`` remote, ``""`` when it has none.
-        denylist: The deny-list, opaque (:class:`repoach.forge.denylist.Denylist`) or as entries;
-            judged, never replaced, and unwrapped only here. ``None`` reads the maintainer's
-            (:func:`repoach.forge.denylist.read_denylist`): only an explicit empty one is empty.
+        denylist: The deny-list, opaque (:class:`repoach.forge.denylist.Denylist`); judged,
+            never replaced, its entries handed to the oracle by
+            :meth:`repoach.forge.denylist.Denylist.judged_with` and to no caller. ``None`` reads
+            the maintainer's (:func:`repoach.forge.denylist.read_denylist`): only an explicit
+            empty ``Denylist()`` is empty, and a plain tuple of entries is refused.
         min_length: The shortest value a structured source may hold; the
             offline transform passes 1 for logins and segments.
         ids: The user-id map the structured pass filled; a fresh one when ``None``.
@@ -2516,9 +2518,12 @@ def known_values(
     Raises:
         NeedleError: A structured value shorter than ``min_length`` or equal
             to a class word or placeholder, by kind and ordinal.
-        DenylistError: ``denylist`` is ``None`` and the maintainer's deny-list is malformed.
+        DenylistError: ``denylist`` is ``None`` and the maintainer's deny-list cannot be read or
+            is malformed.
+        TypeError: ``denylist`` is not a :class:`repoach.forge.denylist.Denylist`.
         SyntheticIdsExhaustedError: An id needs a synthetic number past its range.
     """
+    deny = _denylist_of(denylist)
     ids = ids if ids is not None else UserIdMap()
     projects = projects if projects is not None else UserIdMap.for_projects()
     strict: dict[str, list[tuple[str, str]]] = {kind: [] for kind in closure.KINDS}
@@ -2707,29 +2712,27 @@ def known_values(
             seen.add(folded)
             entries.append((kind, folded))
             tokens.setdefault(folded, token)
-    for value in dict.fromkeys(v.casefold() for v in _needle_entries(denylist)):
-        entries.append(("deny-list", value))
-    return closure.Known(tuple(entries), _literals(), tuple(tokens.items()))
+    return deny.judged_with(closure.Known(tuple(entries), _literals(), tuple(tokens.items())))
 
 
-def _needle_entries(denylist: Denylist | tuple[str, ...] | None) -> tuple[str, ...]:
-    """The deny-list entries for :func:`known_values`, unwrapped from the opaque reader at the last call.
-
-    Fails closed: ``None`` is the maintainer's deny-list, never an empty one.
+def _denylist_of(denylist: Denylist | None) -> Denylist:
+    """The deny-list :func:`known_values` judges with; fails closed.
 
     Args:
-        denylist: The deny-list, its entries, or ``None``.
+        denylist: An opaque :class:`repoach.forge.denylist.Denylist`, or ``None``.
 
     Returns:
-        The entries in order.
+        ``denylist``, or the maintainer's (:func:`repoach.forge.denylist.read_denylist`) when
+        ``None``: only an explicit empty ``Denylist()`` is empty.
 
     Raises:
-        DenylistError: ``denylist`` is ``None`` and the maintainer's deny-list is malformed.
+        TypeError: ``denylist`` is neither, a plain tuple of entries included.
+        DenylistError: ``denylist`` is ``None`` and the maintainer's deny-list cannot be read.
     """
     if denylist is None:
-        return read_denylist().needle_values()
-    if isinstance(denylist, Denylist):
-        return denylist.needle_values()
+        return read_denylist()
+    if not isinstance(denylist, Denylist):
+        raise TypeError("known_values: denylist must be a Denylist or None")
     return denylist
 
 

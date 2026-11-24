@@ -78,9 +78,21 @@ class Denylist:
                 return n
         return None
 
-    def needle_values(self) -> tuple[str, ...]:
-        """The entries, for :func:`repoach.forge.recording.known_values` only; never printed."""
-        return self._entries
+    def judged_with(self, known: closure.Known) -> closure.Known:
+        """``known`` with every entry added as a ``deny-list`` value, casefolded and once each.
+
+        The entries never leave the two opaque holders: this class hands them to the oracle's
+        :class:`repoach.forge.closure.Known`, whose ``repr`` is a count too, and to no caller.
+
+        Args:
+            known: The recording's known values (:func:`repoach.forge.recording.known_values`).
+
+        Returns:
+            A new :class:`repoach.forge.closure.Known`, its literals and tokens unchanged.
+        """
+        folded = dict.fromkeys(entry.casefold() for entry in self._entries)
+        added = tuple(("deny-list", value) for value in folded)
+        return closure.Known(known.entries + added, known.literals, known.tokens)
 
 
 def read_denylist(config_dir: Path | None = None) -> Denylist:

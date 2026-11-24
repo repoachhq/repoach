@@ -101,7 +101,11 @@ def needles(
 ) -> closure.Known:
     """The known values of a recording (:func:`repoach.forge.recording.known_values`)."""
     return recording.known_values(
-        raw, roles=roles, remote=remote, denylist=denylist, min_length=min_length
+        raw,
+        roles=roles,
+        remote=remote,
+        denylist=deny_list.Denylist(denylist),
+        min_length=min_length,
     )
 
 
@@ -1810,6 +1814,7 @@ spec = importlib.util.spec_from_file_location("record_forge_fixture", {script!r}
 rec = importlib.util.module_from_spec(spec)
 sys.modules["record_forge_fixture"] = rec
 spec.loader.exec_module(rec)
+from repoach.forge import recording
 
 
 def _hits(denylist, corpus):
@@ -1818,7 +1823,7 @@ def _hits(denylist, corpus):
 
 def test_leak():
     denylist = rec.read_denylist(Path({config!r}))
-    found = rec.needles([], roles={{}}, denylist=denylist.needle_values())
+    found = recording.known_values([], roles={{}}, denylist=denylist)
     assert len(found) and _hits(denylist, Path({corpus!r})) == []
 """
 
@@ -3634,7 +3639,7 @@ def _k_known() -> closure.Known:
         _k_raw(),
         roles={"zqlogin": "author"},
         remote=_K_REMOTE,
-        denylist=("zqdenyval",),
+        denylist=deny_list.Denylist(("zqdenyval",)),
         ids=UserIdMap(),
         projects=UserIdMap.for_projects(),
         forge="gitlab",
@@ -4275,7 +4280,7 @@ def test_known_values_reads_every_structured_source_with_its_role_and_case() -> 
     folded = recording.known_values(
         raw,
         roles={},
-        denylist=("ZQDENY", "zqdeny", "OtherDeny"),
+        denylist=deny_list.Denylist(("ZQDENY", "zqdeny", "OtherDeny")),
         ids=UserIdMap(),
         projects=UserIdMap.for_projects(),
     )
@@ -7125,7 +7130,9 @@ def test_an_omitted_deny_list_is_the_maintainers_and_never_an_empty_one(
     assert redact_fixtures.fixture_known(fixture, denylist=NO_DENYLIST).values("deny-list") == ()
     raw = [fixture["calls"], [], {}]
     assert recording.known_values(raw, roles={}).values("deny-list") == ("zqdenied77",)
-    assert recording.known_values(raw, roles={}, denylist=()).values("deny-list") == ()
+    assert recording.known_values(raw, roles={}, denylist=NO_DENYLIST).values("deny-list") == ()
+    with pytest.raises(TypeError, match=r"denylist must be a Denylist or None"):
+        recording.known_values(raw, roles={}, denylist=cast(Any, ()))
     with pytest.raises(fixture_judge.UnclassifiedValueError, match=r"^deny-list entry 1 at "):
         fixture_judge.refuse_unclassified(written)
     monkeypatch.setenv(deny_list.DENYLIST_ENV, "ab")
@@ -7403,3 +7410,23 @@ def test_an_unreadable_denylist_file_is_a_named_refusal_never_an_empty_list(tmp_
     absent = tmp_path / "absent"
     absent.mkdir()
     assert len(deny_list.read_denylist(absent)) == 0
+
+
+def test_the_denylist_hands_its_entries_to_no_caller() -> None:
+    """K8 (PR #319 round 5, 4683464056): the opaque reader gives the oracle its entries, a caller none.
+
+    :meth:`repoach.forge.denylist.Denylist.judged_with` adds them to an opaque
+    :class:`repoach.forge.closure.Known`; no public member returns an entry, and
+    :func:`repoach.forge.recording.known_values` takes the opaque reader only.
+    """
+    public = {name for name in vars(deny_list.Denylist) if not name.startswith("_")}
+    assert public == {"hit", "short_entry", "judged_with"}
+    deny = deny_list.Denylist(("ZqEntryOne", "zqentryone", "zqentrytwo"))
+    known = deny.judged_with(
+        closure.Known((("login", "zqlogin"),), ("lit",), (("zqlogin", "author"),))
+    )
+    assert repr(known) == "<known: 3>" and repr(deny) == "<denylist: 3 entries>"
+    assert known.values("deny-list") == ("zqentryone", "zqentrytwo")
+    assert (known.literals, known.mapping()) == (("lit",), {"zqlogin": "author"})
+    with pytest.raises(TypeError, match=r"denylist must be a Denylist or None"):
+        recording.known_values([], roles={}, denylist=cast(Any, ("zqentryone",)))
