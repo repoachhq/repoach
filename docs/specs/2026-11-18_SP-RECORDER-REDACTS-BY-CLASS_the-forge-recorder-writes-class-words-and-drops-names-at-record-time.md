@@ -1906,7 +1906,7 @@ whole behaviour row by row.
     has always said), and for IPv6 the loopback, `::` and the
     documentation prefixes;
   - **public allowlist** (`is_public_host`, option A, extensible by owner
-    decision): the registrable suffixes of `PUBLIC_REFERENCE_HOSTS` — the
+    decision): the registrable suffixes of `closure.PUBLIC_SUFFIXES` (named `PUBLIC_REFERENCE_HOSTS` before 0.17) — the
     18 of 0.15 plus `pythonhosted.org`, `cloudflare.com`, `jsdelivr.net`,
     `unpkg.com`, `renovatebot.com`, `mend.io` (round-10 Preference 1),
     `apache.org` (0.19: `repo.maven.apache.org`) and `nuget.org` (0.20:
