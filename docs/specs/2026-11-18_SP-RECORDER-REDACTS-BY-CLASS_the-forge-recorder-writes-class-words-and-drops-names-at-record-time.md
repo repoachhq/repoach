@@ -1665,6 +1665,19 @@ names test runs as its own gate suite (`tests/unit/test_security_posture_names.p
 `[gate].pytest`), since a docs-only change skips the unit job. Counts: 905
 rows = 614 planted + 291 ordinary = 830 written + 73 refused + 2 bounded,
 25 residuals.
+(j) **Review round 3 of PR #319.** The token scan moves from the live
+recorder into `refuse_unclassified`, so the offline transform refuses a
+token too: every string is read for a `SECRET_TOKEN_PATTERNS` shape and
+each JSON stdout for a secret-shaped key, refused as `secret-shaped value
+at <path>` (row `r10_p21b_gh_api_realistic_ghp_token_refused` takes that
+prefix; the 96 committed fixtures hold none). D8: an IDNA `xn--` label is
+a last label, and a one-label authority right after `<scheme>://` is a host
+unless it holds a userinfo (`https://gitlab/ns/repo`, `http://intranet:8080/x`;
+`ssh://git@<host>` does not name `git`); the text reader learns it and
+replaces it (`test_a_one_label_authority_and_an_idna_last_label_are_hosts`).
+The replay asks `select_forge(bot_username=)` for the classified bot
+instead of writing the forge's private attributes. The CI deny-list step
+runs its test by node id. Counts unchanged from (i).
 
 ## Intent
 
@@ -2056,7 +2069,7 @@ whole behaviour row by row.
   `noreply@forge.example.com`, `author@users.noreply.forge.example.com`
   or `support@example.com` were refused by it as "secret-shaped"; a
   mailbox is the oracle's to judge, rule D8). A realistic token still
-  refuses (`refusing to write a fixture carrying <n> secret-shaped
+  refuses (`secret-shaped value at <path>`, live and offline since 0.28 (j); earlier `refusing to write a fixture carrying <n> secret-shaped
   value(s)`, row `r10_p21b_gh_api_realistic_ghp_token_refused`).
   **Accepted refusals** (the pipeline knowingly leaves the value to the
   oracle; each one a corpus row): a deny-list entry anywhere; a known
@@ -2361,7 +2374,7 @@ Inputs (0.17; the 0.6–0.16 names not listed here are deleted or demoted per **
 - `scripts/record_forge_fixture.py`: `refuse_unclassified(fixture, denylist, known)`, `generic_class` (home path only), `build_roles`, `Denylist`, `read_denylist`, `origin_url`, `record`, the CLI unchanged.
 - `scripts/redact_forge_fixtures.py`: `redact_fixture(data, ids=None, *, forge, projects=None, remote="", denylist=())`, `fixture_known(data, *, roles=None, remote="", denylist=(), ids=None, projects=None, forge="github")`, `ResidualValueError`, `run`, the CLI unchanged.
 
-Outputs: a fixture file, or exit 2 with one of `unclassified: <path>`, `generic class home_path at <path>`, `deny-list entry <n> at <path>`, `deny-list entry <n>: too short`, `residual <kind> <n> at <path>` (kinds `login`, `host`, `segment`, `id`, `name`, `mailbox`), `unknown host at <path>`, `public address at <path>`, `unknown mailbox at <path>`, `needle <kind> <n>: too short`, `needle <kind> <n>: a class word or placeholder`, `synthetic user id <n> past 1999`, `synthetic project id <n> past 2999`, `refusing to write a fixture carrying <n> secret-shaped value(s)`, `nesting too deep: the recording cannot be walked` (0.21, a `RecursionError` of any reader; offline `nesting too deep: the fixture cannot be walked`) on stderr, stdout empty. `generic class mailbox`, `generic class public_ipv4` and `unredacted host` are no longer written by anything.
+Outputs: a fixture file, or exit 2 with one of `unclassified: <path>`, `generic class home_path at <path>`, `deny-list entry <n> at <path>`, `deny-list entry <n>: too short`, `residual <kind> <n> at <path>` (kinds `login`, `host`, `segment`, `id`, `name`, `mailbox`), `unknown host at <path>`, `public address at <path>`, `unknown mailbox at <path>`, `needle <kind> <n>: too short`, `needle <kind> <n>: a class word or placeholder`, `synthetic user id <n> past 1999`, `synthetic project id <n> past 2999`, `secret-shaped value at <path>`, `nesting too deep: the recording cannot be walked` (0.21, a `RecursionError` of any reader; offline `nesting too deep: the fixture cannot be walked`) on stderr, stdout empty. `generic class mailbox`, `generic class public_ipv4` and `unredacted host` are no longer written by anything.
 
 Errors: `UnclassifiedValueError`, `DenylistError`, `UnknownForgeError`, `NeedleError`, `ResidualValueError`, `SyntheticIdsExhaustedError` as at 0.16; every message carries a kind, an ordinal or a path, never a value.
 
