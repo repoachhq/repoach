@@ -28,13 +28,17 @@ from repoach.forge.recording import (
 
 HOME_PATH_RE = re.compile(
     r"(?<![A-Za-z0-9_$.-])"
-    r"(?:(?:/var)?/(?:home|Users)/|[A-Za-z]:\\{1,2}[Uu]sers\\{1,2})"
+    r"(?:(?:/var)?/(?:home|Users)/"
+    r"|(?:/mnt|/cygdrive)?/[A-Za-z]/[Uu]sers/"
+    r"|[A-Za-z]:(?:\\{1,2}|/)[Uu]sers(?:\\{1,2}|/))"
     r"[A-Za-z0-9_.-]+(?![A-Za-z0-9_.-])"
 )
 """Copy of SP-NO-PERSONAL-DATA-GATE D1 ``home_path`` (that lint lands later; not imported).
 
-A POSIX home (``/home/<x>``, ``/Users/<x>``, ``/var/home/<x>``) or a Windows profile
-(``C:\\Users\\<x>``, its backslashes single or JSON-escaped), with a user segment.
+A POSIX home (``/home/<x>``, ``/Users/<x>``, ``/var/home/<x>``), a Windows profile
+(``C:\\Users\\<x>``, its backslashes single or JSON-escaped, or ``C:/Users/<x>``) or that
+profile as a POSIX layer mounts it: WSL ``/mnt/<drive>/Users/<x>``, Git-Bash and MSYS2
+``/<drive>/Users/<x>``, Cygwin ``/cygdrive/<drive>/Users/<x>``; with a user segment.
 """
 
 

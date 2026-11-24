@@ -6,6 +6,7 @@ that can drift; this suite refuses it.
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -28,3 +29,24 @@ def test_the_security_posture_names_only_symbols_the_code_defines() -> None:
     files = {p.name for p in ROOT.iterdir()}
     assert {"PUBLIC_SUFFIXES", "PROVENANCE"} <= cited
     assert sorted(cited - code - files) == []
+
+
+def test_the_gate_spec_home_path_rule_is_the_recorder_copy() -> None:
+    """PR #319 round 6 (4684965373): SP-NO-PERSONAL-DATA-GATE D1 ``home_path`` spells ``HOME_PATH_RE``.
+
+    The recorder holds the copy until the gate lands; the spec's pattern is the copy's, byte for
+    byte, so a home-path form added to one is added to the other.
+    """
+    tree = ast.parse((ROOT / "src/repoach/forge/fixture_judge.py").read_text(encoding="utf-8"))
+    copies = [
+        node.value.args[0].value
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "HOME_PATH_RE" for t in node.targets)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.args[0], ast.Constant)
+    ]
+    assert len(copies) == 1
+    spec = next((ROOT / "docs" / "specs").glob("2026-11-18_SP-NO-PERSONAL-DATA-GATE_*.md"))
+    line = next(x for x in spec.read_text(encoding="utf-8").splitlines() if "`home_path`:" in x)
+    assert line.split("`")[3] == copies[0]

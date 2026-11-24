@@ -559,6 +559,41 @@ def test_a_home_path_is_judged_decoded_on_posix_and_windows() -> None:
         assert fixture_judge.generic_class(text) is None, text
 
 
+def test_a_windows_profile_is_a_home_path_under_every_posix_mount() -> None:
+    """D3 (PR #319 round 6, 4684965373): WSL, Git-Bash, MSYS2 and Cygwin spell the Windows profile too.
+
+    ``/mnt/<drive>/Users/<x>``, ``/<drive>/Users/<x>`` and ``/cygdrive/<drive>/Users/<x>`` (any
+    drive letter, ``users`` in either case, as Windows does not tell them apart), and
+    ``C:/Users/<x>``, are home paths in every decoded form; a drive without a user segment, a
+    longer first segment or a path glued to a word is not.
+    """
+    for prefix in ("/mnt/c", "/c", "/cygdrive/c", "/mnt/D", "/d", "/cygdrive/z", "C:", "e:"):
+        for users in ("Users", "users"):
+            for tail in ("someone-x", "someone-x/AppData", "someone-x\\x"):
+                text = f"at {prefix}/{users}/{tail}"
+                assert fixture_judge.generic_class(text) == "home_path", text
+    for text in (
+        "cd%20%2Fmnt%2Fc%2FUsers%2Fsomeone-x",
+        r"\/c\/Users\/someone-x",
+        '{"cwd": "/cygdrive/c/Users/someone-x/src"}',
+        'File "/mnt/c/Users/someone-x/app.py", line 3',
+        "C:/Users/someone-x/AppData",
+    ):
+        assert fixture_judge.generic_class(text) == "home_path", text
+    for text in (
+        "/mnt/c/Users/",
+        "/c/Users/<x>",
+        "/mnt/cd/Users/someone-x",
+        "/cygdrive/cd/Users/someone-x",
+        "/mnt/c/Program Files/x",
+        "api/c/users/someone-x",
+        "x/mnt/c/Users/someone-x",
+        "abc/cygdrive/c/Users/someone-x",
+        "/mnt/c/Windows/System32",
+    ):
+        assert fixture_judge.generic_class(text) is None, text
+
+
 def test_recorder_writes_class_words_and_a_replayed_result(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

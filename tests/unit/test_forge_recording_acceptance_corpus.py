@@ -10823,6 +10823,36 @@ ROWS: tuple[Row, ...] = (
         inp=Sample(body="[team](stackoverflow.com/c/kvnteam77)"),
         outcome=Refused("tenant path at exchanges[0].stdout[0].body"),
     ),
+    Row(
+        id="r6_home_path_under_a_wsl_mount_is_refused",
+        source="PR #319 review round 6 (4684965373)",
+        inp=Sample(body='File "/mnt/c/Users/zqxjdoe9/work/app.py", line 3'),
+        outcome=Refused("generic class home_path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r6_home_path_under_a_git_bash_mount_is_refused",
+        source="PR #319 review round 6 (4684965373)",
+        inp=Sample(body="cd /c/Users/zqxjdoe9/src && make"),
+        outcome=Refused("generic class home_path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r6_home_path_under_a_cygwin_mount_is_refused",
+        source="PR #319 review round 6 (4684965373)",
+        inp=Sample(body="cwd=/cygdrive/d/users/zqxjdoe9/build"),
+        outcome=Refused("generic class home_path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r6_home_path_windows_profile_with_forward_slashes_is_refused",
+        source="PR #319 review round 6 (4684965373)",
+        inp=Sample(body="at C:/Users/zqxjdoe9/AppData/Local/x"),
+        outcome=Refused("generic class home_path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r6_a_drive_mount_outside_the_profiles_is_ordinary",
+        source="PR #319 review round 6 (4684965373)",
+        inp=Sample(body="copied to /mnt/c/Windows/Temp/build and /c/Program Files/tool"),
+        outcome=Written(text="copied to /mnt/c/Windows/Temp/build and /c/Program Files/tool"),
+    ),
 )
 
 
@@ -11275,10 +11305,10 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
     refused = [row for row in ROWS if isinstance(row.outcome, Refused)]
     bounded = [row for row in ROWS if isinstance(row.outcome, Bounded)]
     assert (len(ROWS), len(planted), len(ordinary), len(refused), len(bounded)) == (
-        934,
-        642,
-        292,
-        95,
+        939,
+        646,
+        293,
+        99,
         2,
     )
     assert len(residual) == 25
