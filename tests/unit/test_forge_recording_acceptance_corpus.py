@@ -10328,10 +10328,221 @@ ROWS: tuple[Row, ...] = (
         markers=("kvnteam", "kvnbilling"),
     ),
     Row(
-        id="v27_stdin_file_cited_in_a_sentence_is_ordinary",
+        id="v28_undeclared_stdin_sentence_is_a_structured_source",
         source="verify026/cells26.py",
         inp=Sample(stdin="repos/payments/ledger/releases/v1.md documents the ledger release"),
+        outcome=Written(text="repos/org/project/releases/v1.md documents the project release"),
+        markers=("payments", "ledger"),
+    ),
+    Row(
+        id="v28_stderr_file_then_words_is_read",
+        source="verify027/cells27.py",
+        inp=Sample(stderr="failed to get repos/kvnteam/kvnbilling/contents/README.md: HTTP 404"),
+        outcome=Written(text="failed to get repos/org/project/contents/README.md: HTTP 404"),
+        markers=("kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v28_stdin_declared_by_body_file_is_prose",
+        source="verify027/cells27.py",
+        inp=Sample(
+            argv_extra=("--body-file", "-"),
+            stdin="repos/payments/ledger/releases/v1.md documents the ledger release",
+        ),
         outcome=Written(text="repos/payments/ledger/releases/v1.md documents the ledger release"),
+    ),
+    Row(
+        id="v28_stdin_declared_by_a_body_field_is_prose",
+        source="verify027/cells27.py",
+        inp=Sample(
+            argv_extra=("-F", "body=@-"),
+            stdin="repos/payments/ledger/releases/v1.md documents the ledger release",
+        ),
+        outcome=Written(text="repos/payments/ledger/releases/v1.md documents the ledger release"),
+    ),
+    Row(
+        id="v28_stdin_with_an_undeclared_field_is_read",
+        source="verify027/cells27.py",
+        inp=Sample(argv_extra=("-F", "line=@-"), stdin="GET repos/kvnteam/kvnbilling/pulls/5"),
+        outcome=Written(text="GET repos/org/project/pulls/5"),
+        markers=("kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v28_argv_body_field_is_declared_prose",
+        source="verify027/repro_post.py",
+        inp=Sample(
+            body="repos/payments/ledger/releases/v1.md documents the ledger for payments",
+            argv_extra=(
+                "-f",
+                "body=repos/payments/ledger/releases/v1.md documents the ledger for payments",
+            ),
+        ),
+        outcome=Written(
+            text="repos/payments/ledger/releases/v1.md documents the ledger for payments"
+        ),
+    ),
+    Row(
+        id="v28_argv_joined_raw_field_title_is_declared_prose",
+        source="verify027/cells27.py",
+        inp=Sample(
+            body="repos/payments/ledger/releases/v1.md documents the ledger for payments",
+            argv_extra=(
+                "--raw-field=title=repos/payments/ledger/releases/v1.md documents the ledger",
+            ),
+        ),
+        outcome=Written(
+            text="repos/payments/ledger/releases/v1.md documents the ledger for payments"
+        ),
+    ),
+    Row(
+        id="v28_argv_path_field_is_declared_prose",
+        source="verify027/repro_post.py",
+        inp=Sample(
+            body="see repos/payments/ledger/releases/notes.md",
+            argv_extra=("-F", "path=repos/payments/ledger/releases/notes.md", "-fline=3"),
+        ),
+        outcome=Written(text="see repos/payments/ledger/releases/notes.md"),
+    ),
+    Row(
+        id="v28_argv_undeclared_field_is_read",
+        source="verify027/cells27.py",
+        inp=Sample(argv_extra=("-f", "context=repos/kvnteam/kvnbilling/pulls/5")),
+        outcome=Written(text="Looks good to me."),
+        markers=("kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v28_argv_after_body_flag_is_declared_prose",
+        source="verify027/cells27.py",
+        inp=Sample(
+            body="repos/payments/ledger/releases/v1.md documents the ledger for payments",
+            argv_extra=(
+                "--body",
+                "repos/payments/ledger/releases/v1.md documents the ledger for payments",
+            ),
+        ),
+        outcome=Written(
+            text="repos/payments/ledger/releases/v1.md documents the ledger for payments"
+        ),
+    ),
+    Row(
+        id="v28_argv_after_title_flag_is_declared_prose",
+        source="verify027/cells27.py",
+        inp=Sample(
+            body="repos/payments/ledger/releases/v1.md documents the ledger for payments",
+            argv_extra=("--title", "repos/payments/ledger/releases/v1.md documents the ledger"),
+        ),
+        outcome=Written(
+            text="repos/payments/ledger/releases/v1.md documents the ledger for payments"
+        ),
+    ),
+    Row(
+        id="v28_argv_after_message_flag_is_declared_prose",
+        source="verify027/cells27.py",
+        inp=Sample(
+            body="repos/payments/ledger/releases/v1.md documents the ledger for payments",
+            argv_extra=("--message=repos/payments/ledger/releases/v1.md documents the ledger",),
+        ),
+        outcome=Written(
+            text="repos/payments/ledger/releases/v1.md documents the ledger for payments"
+        ),
+    ),
+    Row(
+        id="v28_gitlab_argv_after_description_flag_is_declared_prose",
+        source="verify027/cells27.py",
+        inp=Sample(
+            forge="gitlab",
+            remote=f"git@{FAKE_HOST}:{FAKE_NS}/{FAKE_REPO}.git",
+            body="repos/payments/ledger/releases/v1.md documents the ledger for payments",
+            argv_extra=(
+                "--description",
+                "repos/payments/ledger/releases/v1.md documents the ledger for payments",
+            ),
+        ),
+        outcome=Written(
+            text="repos/payments/ledger/releases/v1.md documents the ledger for payments"
+        ),
+    ),
+    Row(
+        id="v28_argv_after_a_prose_flag_only_the_next_argument_is_prose",
+        source="verify027/cells27.py",
+        inp=Sample(argv_extra=("--body", "ok", "repos/kvnteam/kvnbilling/pulls/5")),
+        outcome=Written(text="Looks good to me."),
+        markers=("kvnteam", "kvnbilling"),
+    ),
+    Row(
+        id="v28_title_key_is_prose",
+        source="verify027/cells27.py",
+        inp=Sample(
+            body="the ledger for payments",
+            title="repos/payments/ledger/releases/v1.md documents the ledger for payments",
+        ),
+        outcome=Written(
+            text="the ledger for payments",
+            title="repos/payments/ledger/releases/v1.md documents the ledger for payments",
+        ),
+    ),
+    Row(
+        id="v28_gitlab_title_key_is_prose",
+        source="verify027/cells27.py",
+        inp=Sample(
+            forge="gitlab",
+            remote=f"git@{FAKE_HOST}:{FAKE_NS}/{FAKE_REPO}.git",
+            body="the ledger for payments",
+            title="repos/payments/ledger/releases/v1.md documents the ledger for payments",
+        ),
+        outcome=Written(
+            text="the ledger for payments",
+            title="repos/payments/ledger/releases/v1.md documents the ledger for payments",
+        ),
+    ),
+    Row(
+        id="v28_commit_message_key_is_prose",
+        source="verify027/cells27.py",
+        inp=Sample(
+            body="the ledger for payments",
+            extra_item={"message": "fix repos/payments/ledger/releases/v1.md for payments"},
+        ),
+        outcome=Written(text="the ledger for payments"),
+    ),
+    Row(
+        id="v28_commit_message_headline_key_is_prose",
+        source="verify027/cells27.py",
+        inp=Sample(
+            body="the ledger for payments",
+            extra_item={"messageHeadline": "fix repos/payments/ledger/releases/v1.md"},
+        ),
+        outcome=Written(text="the ledger for payments"),
+    ),
+    Row(
+        id="v28_commit_message_body_key_is_prose",
+        source="verify027/cells27.py",
+        inp=Sample(
+            body="the ledger for payments",
+            extra_item={"messageBody": "moved repos/payments/ledger/releases/v1.md"},
+        ),
+        outcome=Written(text="the ledger for payments"),
+    ),
+    Row(
+        id="v28_gitlab_change_diff_key_is_prose",
+        source="fix028/keys_audit.py",
+        inp=Sample(
+            forge="gitlab",
+            remote=f"git@{FAKE_HOST}:{FAKE_NS}/{FAKE_REPO}.git",
+            body="the ledger for payments",
+            extra_item={"diff": "@@ -1 +1 @@\n+repos/payments/ledger/releases/v1.md\n"},
+        ),
+        outcome=Written(text="the ledger for payments"),
+    ),
+    Row(
+        id="v28_kwargs_message_key_is_prose",
+        source="verify027/cells27.py",
+        inp=Sample(top_kwargs={"message": "repos/payments/ledger/releases/v1.md for payments"}),
+        outcome=Written(text='{"message": "repos/payments/ledger/releases/v1.md for payments"}'),
+    ),
+    Row(
+        id="v28_stdin_json_title_key_is_prose",
+        source="verify027/cells27.py",
+        inp=Sample(stdin='{"title": "repos/payments/ledger/releases/v1.md for payments"}'),
+        outcome=Written(text='{"title": "repos/payments/ledger/releases/v1.md for payments"}'),
     ),
     Row(
         id="v27_body_directory_path_under_repos_is_ordinary",
@@ -10829,9 +11040,9 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
     assert all(_is_planted(row) for row in residual)
     refused = [row for row in ROWS if isinstance(row.outcome, Refused)]
     assert (len(ROWS), len(planted), len(ordinary), len(refused), len(residual)) == (
-        883,
-        609,
-        274,
+        904,
+        614,
+        290,
         74,
         25,
     )

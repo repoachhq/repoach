@@ -651,6 +651,7 @@ def _record(
         ids=ids,
         projects=projects,
         forge=forge_name,
+        method=method,
     )
     calls = replace_known_in_calls(calls, known)
     args = list(replace_known_in_value(args, known))

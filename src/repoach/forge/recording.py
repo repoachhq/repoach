@@ -16,13 +16,14 @@ from __future__ import annotations
 
 import base64
 import functools
+import inspect
 import json
 import re
 import string
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import SplitResult, quote, unquote, urlsplit, urlunsplit
 
 from pydantic import BaseModel
@@ -2417,12 +2418,13 @@ def _walk_dicts(node: object) -> list[dict[str, object]]:
 
 
 def _argv_strings(node: object) -> list[str]:
-    """Every argv string of the recorded calls: the ``args`` of an exchange (``args`` and ``stdout``), never a string's decoded JSON (0.25)."""
+    """Every argv string of the recorded calls: the ``args`` of an exchange (``args`` and ``stdout``), never a string's decoded JSON (0.25), never one the call declares prose (0.28, :func:`_declared_prose`)."""
     if isinstance(node, dict):
         found = [d for v in node.values() for d in _argv_strings(v)]
         argv = node.get("args")
         if "stdout" in node and isinstance(argv, list):
-            found += [a for a in argv if isinstance(a, str)]
+            prose, _stdin = _declared_prose(argv)
+            found += [a for i, a in enumerate(argv) if isinstance(a, str) and i not in prose]
         return found
     if isinstance(node, list):
         return [d for v in node for d in _argv_strings(v)]
@@ -2531,32 +2533,18 @@ GitHub Enterprise serves it under ``api/v3/``, Gitea under ``api/v1/``.
 _API_ROUTE_END = "/" + _PATH_END
 """Characters that end the route word read after ``repos/<owner>/<repo>/`` (0.26)."""
 
-_FILE_NAME_RE = re.compile(r"\.[A-Za-z][A-Za-z0-9]{0,5}$")
-"""The extension that ends a file name, ``index.ts``, ``notes.md`` (0.27)."""
-
-_SENTENCE_AFTER_RE = re.compile(r"[,?]*\s+\w")
-"""What follows a path cited in a sentence, read where the path's token ends (0.27).
-
-The token ends at the first :data:`_PATH_END` character, so a dot, a
-colon, a semicolon or a bang after the file name is inside it; of the
-characters that end it only a comma and a question mark are prose
-punctuation, then a space and a word. A closing delimiter (``)``, a
-quote) ends a call written inside one: ``HTTP 404 (repos/…/README.md), retrying``.
-"""
-
 
 def _api_path_projects(text: str) -> list[tuple[str, str]]:
-    """The ``(owner, repository)`` each GitHub API path of a structured string names (0.26, 0.27).
+    """The ``(owner, repository)`` each GitHub API path of a structured string names (0.26, 0.28).
 
     ``[/][api/v<N>/]repos/<owner>/<repo>/<word>…`` names a repository only
     when ``<word>`` is a sub-resource of GitHub's REST repository
     endpoints (:data:`_GITHUB_REPO_API_ROUTES`); a bare
     ``repos/<owner>/<repo>`` and any other word (``main.py``, ``src``) is
-    ordinary text. A path whose last segment is a file name
-    (:data:`_FILE_NAME_RE`) followed by more words of a sentence
-    (:data:`_SENTENCE_AFTER_RE`) is a file cited in prose, even inside a
-    structured source, and names no one (NG4-16, 0.27); followed by a
-    query, a fragment, a closing delimiter or nothing it is a call. The
+    ordinary text. Whatever follows the path is not read: a structured
+    string is never judged prose by its wording (0.28, the owner's
+    decision withdrawing the 0.27 sentence rule); prose is the channel a
+    call declares (:func:`_declared_prose`, :data:`_PROSE_KEYS`). The
     route grammar applies: an owner that is a reserved route word
     (:data:`_RESERVED_ROUTE_WORDS`, in any case), a tool literal, a
     placeholder or a number is not learnt (``""``), its repository still
@@ -2569,10 +2557,6 @@ def _api_path_projects(text: str) -> list[tuple[str, str]]:
         route = rest[:stop].rstrip(_URL_TRIM_TAIL)
         if route.casefold() not in _GITHUB_REPO_API_ROUTES:
             continue
-        end = next((i for i, c in enumerate(rest) if c in _PATH_END), len(rest))
-        path = rest[:end].rstrip(_URL_TRIM_TAIL)
-        if _FILE_NAME_RE.search(path) and _SENTENCE_AFTER_RE.match(rest, end):
-            continue
         owner, repository = match.group("owner"), _bare(match.group("repo"))
         if not _names_a_value(repository):
             continue
@@ -2581,27 +2565,146 @@ def _api_path_projects(text: str) -> list[tuple[str, str]]:
     return found
 
 
-_PROSE_KEYS: frozenset[str] = frozenset({"body", "description", "path", "new_path", "old_path"})
-"""The keys whose value is prose, never a structured source (0.27, the owner's structure/prose decision).
+_PROSE_KEYS: frozenset[str] = frozenset(
+    {
+        "body",
+        "description",
+        "diff",
+        "message",
+        "messageBody",
+        "messageHeadline",
+        "new_path",
+        "old_path",
+        "path",
+        "title",
+    }
+)
+"""The keys whose value is prose, never a structured source (0.27, 0.28: the owner's structure/prose decision).
 
-A comment's or a change request's body (GitHub ``body``, GitLab's
-merge request ``description`` and note ``body``) and a review comment's
-file path (GitHub ``path``, GitLab ``position.new_path``/``old_path``):
-the keys :mod:`repoach.forge.github` and :mod:`repoach.forge.gitlab`
-read as a body or a review path. A code block is inside a body.
+Audited from the keys of every recorded answer, stdin and argument under
+``tests/fixtures/forge`` (0.28): a comment's or a change request's body
+(GitHub ``body``, GitLab's merge request ``description`` and note
+``body``), its ``title``, a commit's ``message`` / ``messageHeadline`` /
+``messageBody`` (GitLab's ``message`` also carries an error sentence), a
+GitLab change's ``diff`` (file content, as a raw diff stdout is) and a
+review comment's file path (GitHub ``path``, GitLab
+``position.new_path``/``old_path``). The other keys of those answers are
+identifiers, states, dates, refs, URLs and labels (``name``,
+``workflow``: a check's or a workflow's configured name), not prose. A
+key is matched as written: the forges write these keys and no other
+spelling of them. A code block is inside a body.
 """
+
+_FIELD_FLAGS: frozenset[str] = frozenset({"-f", "-F", "--field", "--raw-field"})
+"""The ``gh api`` / ``glab api`` flags whose argument is one ``key=value`` field (0.28)."""
+
+_PROSE_VALUE_FLAGS: frozenset[str] = frozenset({"--body", "--title", "--message", "--description"})
+"""The flags whose argument is prose (0.28): ``gh pr create|comment|review --body``/``--title``, ``glab mr create --title``/``--description``, a ``--message``."""
+
+_PROSE_STDIN_FLAG = "--body-file"
+"""The flag that sends a body on the stdin when its argument is ``-`` (0.28): ``gh pr merge --squash --body-file -``."""
+
+_STDIN_FIELD_VALUE = "@-"
+"""A field value read from the stdin (``-F body=@-``, 0.28)."""
+
+
+def _field_argument(argv: Sequence[object], index: int, arg: str) -> tuple[int, str] | None:
+    """The ``key=value`` field the argument ``arg`` at ``index`` gives, with the argv index that holds it (0.28).
+
+    ``-f``/``-F``/``--field``/``--raw-field`` give the next argument;
+    ``-f<field>``/``-F<field>``, ``-f=<field>`` and
+    ``--field=<field>``/``--raw-field=<field>`` give the rest of the same
+    argument, as ``gh``'s and ``glab``'s flag parser reads them.
+    """
+    if arg in _FIELD_FLAGS:
+        following = argv[index + 1] if index + 1 < len(argv) else None
+        return (index + 1, following) if isinstance(following, str) else None
+    flag, _assigned, rest = arg.partition("=")
+    if flag in _FIELD_FLAGS:
+        return index, rest
+    if arg[:2] in ("-f", "-F"):
+        return index, arg[2:]
+    return None
+
+
+def _declared_prose(argv: Sequence[object]) -> tuple[frozenset[int], bool]:
+    """The argv indices one call declares prose, and whether it declares its stdin prose (0.28).
+
+    Prose is what the call says it is, never what a string looks like:
+    the value of a field whose key is a :data:`_PROSE_KEYS` key (``-f
+    body=…``, ``-F path=…``, ``--raw-field=title=…``), the argument of a
+    :data:`_PROSE_VALUE_FLAGS` flag (``--body <text>``, ``--title=<text>``),
+    and the stdin when the call reads its body there (``--body-file -``,
+    ``-F body=@-``). ``--input -`` sends a JSON payload whose prose keys
+    are :data:`_PROSE_KEYS`, read where it is walked. The flags
+    themselves and every other argument are structured.
+    """
+    prose: set[int] = set()
+    stdin = False
+    for index, arg in enumerate(argv):
+        if not isinstance(arg, str):
+            continue
+        flag, joined, rest = arg.partition("=")
+        following = argv[index + 1] if index + 1 < len(argv) else None
+        if flag in _PROSE_VALUE_FLAGS:
+            prose.add(index if joined else index + 1)
+        if flag == _PROSE_STDIN_FLAG:
+            stdin = stdin or (rest if joined else following) == "-"
+        field = _field_argument(argv, index, arg)
+        if field is None:
+            continue
+        where, value = field
+        key, assigned, content = value.partition("=")
+        if assigned and key in _PROSE_KEYS:
+            if content == _STDIN_FIELD_VALUE:
+                stdin = True
+            else:
+                prose.add(where)
+    return frozenset(prose), stdin
+
+
+@functools.cache
+def _prose_parameters(method: str) -> frozenset[int]:
+    """The positional arguments of a recorded protocol method that are prose, from its signature (0.28).
+
+    A parameter is prose when its name is a :data:`_PROSE_KEYS` key in
+    :class:`repoach.forge.protocol.Forge`: ``post_comment(number, body)``,
+    ``reply(number, comment_id, body)``, ``upsert_marked_comment(number,
+    marker, body)``. A keyword argument is a key of the recorded
+    ``kwargs`` and is judged as one; an argument the signature does not
+    name is structured. An unknown method declares none.
+    """
+    member = getattr(protocol.Forge, method, None)
+    if not inspect.isfunction(member):
+        return frozenset()
+    positional = [
+        p
+        for p in inspect.signature(member).parameters.values()
+        if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    ][1:]
+    return frozenset(i for i, p in enumerate(positional) if p.name in _PROSE_KEYS)
+
+
+def _without_prose_arguments(raw: object, method: str) -> object:
+    """``raw`` (``[calls, args, kwargs]``) with the method's prose positional arguments blanked (0.28)."""
+    positions = _prose_parameters(method)
+    if not isinstance(raw, list) or len(raw) < 2 or not isinstance(raw[1], list):
+        return raw
+    args = [None if i in positions else a for i, a in enumerate(raw[1])]
+    return [raw[0], args, *raw[2:]]
 
 
 def _structured_strings(node: object) -> list[str]:
-    """Every string of the structured sources of the recorded calls, in recording order (0.27).
+    """Every string of the structured sources of the recorded calls, in recording order (0.27, 0.28).
 
     The structured sources are an exchange's argv, stdin and stderr, the
     field values of its JSON stdout, and the method's positional and
     keyword arguments; a JSON string among them is walked inside, keys
     included. Prose is not one: the value of a :data:`_PROSE_KEYS` key at
-    any depth, and an exchange's stdout that is not JSON (a diff, a raw
-    answer). An exchange is an object with an ``args`` list and a
-    ``stdout``, as :func:`_argv_strings` reads it.
+    any depth, an exchange's stdout that is not JSON (a diff, a raw
+    answer), and the argv values and the stdin the exchange declares
+    prose (:func:`_declared_prose`). An exchange is an object with an
+    ``args`` list and a ``stdout``, as :func:`_argv_strings` reads it.
     """
     if isinstance(node, str):
         decoded = decode_json_values(node) if node.lstrip()[:1] in ("{", "[") else None
@@ -2609,7 +2712,11 @@ def _structured_strings(node: object) -> list[str]:
             return [node]
         return [s for v in decoded for s in _structured_strings(v)]
     if isinstance(node, dict):
-        exchange = "stdout" in node and isinstance(node.get("args"), list)
+        argv = node.get("args")
+        exchange = "stdout" in node and isinstance(argv, list)
+        prose, prose_stdin = (
+            _declared_prose(cast("list[object]", argv)) if exchange else (frozenset(), False)
+        )
         found: list[str] = []
         for key, item in node.items():
             if key in _PROSE_KEYS:
@@ -2618,6 +2725,10 @@ def _structured_strings(node: object) -> list[str]:
             if exchange and key == "stdout" and isinstance(item, str):
                 found += [s for v in decode_json_values(item) or [] for s in _structured_strings(v)]
                 continue
+            if key == "stdin" and prose_stdin:
+                continue
+            if key == "args" and prose:
+                item = [a for i, a in enumerate(item) if i not in prose]
             found += _structured_strings(item)
         return found
     if isinstance(node, list):
@@ -2658,7 +2769,8 @@ comes from one row, and no reading runs outside it:
   (0.25, V09).
 - ``argv``: an ``args`` string of a recorded exchange
   (:func:`_argv_strings`, every exchange) naming an API project
-  (:func:`_api_project`). Reading ``repository``, as the remote.
+  (:func:`_api_project`), never one the call declares prose
+  (:func:`_declared_prose`, 0.28). Reading ``repository``, as the remote.
 - ``text``: every string of the fixture (:func:`fixture_strings`), the
   three sources above included. Reading ``text``: soft, never refusing
   a recording: the hosts and the paths after them
@@ -2667,12 +2779,19 @@ comes from one row, and no reading runs outside it:
   A GitHub API path is not read there (0.25, 0.27).
 - ``structured``: a string of the structured sources of a recorded call
   (:func:`_structured_strings`): the argv, the stdin, the stderr, the
-  field values of a JSON stdout and the method's arguments, never prose
-  (a body, a review path, a raw stdout: :data:`_PROSE_KEYS`). Reading
+  field values of a JSON stdout and the method's arguments, never prose.
+  Prose is DECLARED, never guessed from its wording (0.28, the owner's
+  decisions of 2026-11-24): the value of a :data:`_PROSE_KEYS` key (a
+  body, a title, a commit message, a diff, a review path), a raw stdout,
+  the argv value of a prose field (``-f body=``/``path=``/``title=``) or
+  the argument of a prose flag (``--body``, ``--title``, ``--message``,
+  ``--description``), the stdin a call declares its body
+  (``--body-file -``, ``-F body=@-``), and a positional argument the
+  method's signature names as one (:func:`_prose_parameters`). Reading
   ``api_path``: soft, a GitHub API path ``repos/<o>/<r>/<route>`` whose
   route word is a REST repository sub-resource
   (:func:`_api_path_projects`), in every decoded form. An API path cited
-  in prose names no one (NG4-16, the owner's decision of 2026-11-24).
+  in prose names no one (NG4-16).
 
 The order is the learning order, and inside a source the recording's
 order (the first exchange, the first item, the first field): a value two
@@ -2749,6 +2868,7 @@ def known_values(
     forge: str = "github",
     keep_users: frozenset[int] = frozenset(),
     keep_projects: frozenset[int] = frozenset(),
+    method: str = "",
 ) -> closure.Known:
     """The private values one recording holds, with the class token each becomes (D7).
 
@@ -2772,11 +2892,13 @@ def known_values(
     path is read through a REST route word in the structured sources of
     a call only (:func:`_api_path_projects`, 0.27), and a body or a
     review comment's ``path`` led by ``repos/`` or ``projects/`` is prose,
-    read by the text readers only (NG4-16).
+    read by the text readers only (NG4-16), wherever it travels: a
+    channel the call declares prose (an argv field or flag, a stdin, a
+    positional argument of ``method``, 0.28) is no structured source.
 
     Args:
-        raw: The exchanges as the forge printed them, the method's
-            arguments and the remote; never a redacted value.
+        raw: ``[calls, args, kwargs]``: the exchanges as the forge printed
+            them and the method's arguments; never a redacted value.
         roles: The recording's login -> class word.
         remote: The checkout's ``origin`` remote, ``""`` when it has none.
         denylist: The deny-list entries (judged, never replaced).
@@ -2787,6 +2909,8 @@ def known_values(
         forge: ``github`` or ``gitlab``, the key of the id maps.
         keep_users: Declared synthetic user numbers, never values.
         keep_projects: Declared synthetic repository numbers, never values.
+        method: The recorded protocol method, whose signature declares
+            its prose positional arguments (:func:`_prose_parameters`).
 
     Returns:
         The known values, casefolded, each once per kind, with their tokens.
@@ -2935,7 +3059,7 @@ def known_values(
         "url_field": url_fields,
         "argv": [_api_project(t) for t in _argv_strings(raw)],
         "text": [t for _p, t in strings],
-        "structured": _structured_strings(raw),
+        "structured": _structured_strings(_without_prose_arguments(raw, method)),
     }
     readings: dict[str, Callable[[Any], None]] = {
         "repository": _repository,

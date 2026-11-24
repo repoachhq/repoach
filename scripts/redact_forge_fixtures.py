@@ -407,7 +407,8 @@ def fixture_known(
 ) -> closure.Known:
     """The known values (D7) the offline transform can learn from one fixture's own structured fields.
 
-    The fixture's exchanges, ``args`` and ``kwargs`` are the raw recording;
+    The fixture's exchanges, ``args`` and ``kwargs`` are the raw recording,
+    and its ``method`` declares which positional arguments are prose;
     ``remote`` and ``denylist`` are the inputs the live recorder has and a
     committed fixture has not. Declared synthetic ids are never values.
 
@@ -430,6 +431,7 @@ def fixture_known(
             SYNTHETIC_PROJECT_ID_START,
             SYNTHETIC_PROJECT_ID_END,
         ),
+        method=str(data.get("method") or ""),
     )
 
 

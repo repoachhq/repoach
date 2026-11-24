@@ -1642,8 +1642,6 @@ ALLOWED_CASE_SENSITIVE: dict[str, frozenset[str]] = {
             "_API_PROJECT_RE",
             "RECORDED_SOURCE_HEAD_RE",
             "_NAME_WORD_RE",
-            "_FILE_NAME_RE",
-            "_SENTENCE_AFTER_RE",
         }
     ),
     "record_forge_fixture": frozenset({"HOME_PATH_RE"}),
@@ -5971,7 +5969,7 @@ def test_an_api_path_is_read_in_the_structured_sources_of_a_call_only() -> None:
         _stderr_call("ok", stdin=json.dumps({"endpoint": path, "x": 1})),
         _stderr_call(f"HTTP 404: Not Found ({path})"),
         _one_call([{"body": "ok", "endpoint": path}]),
-        _one_call([{"body": "ok", "title": f"fix {path} paging"}]),
+        _one_call([{"body": "ok", "Title": f"fix {path} paging"}]),
         _one_call({"data": {"pr": {"body": "ok", "resource": f"/{path}"}}}),
     )
     for raw in structured:
@@ -5988,6 +5986,9 @@ def test_an_api_path_is_read_in_the_structured_sources_of_a_call_only() -> None:
         _one_call([{"body": "ok", "position": {"new_path": path, "old_path": path}}]),
         _one_call(f"error: {path}\n"),
         [[exchange], [42, {"body": path}], {"path": path}],
+        _one_call([{"body": "ok", "title": f"fix {path} paging"}]),
+        _one_call([{"body": "ok", "message": f"fix {path}", "messageHeadline": path}]),
+        _one_call([{"body": "ok", "messageBody": path, "diff": f"+{path}\n"}]),
     )
     for raw in prose:
         found = needles(raw, roles={}, remote=remote)
@@ -6033,7 +6034,7 @@ def test_an_api_path_is_read_in_the_structured_sources_of_a_call_only() -> None:
 
 
 def test_an_api_path_cited_in_prose_is_the_named_residual_ng4_16() -> None:
-    """NG4-16 (0.27): an API path cited in prose names no one and is written as it stands: a body, a code block, a review path, a raw stdout, and a file a sentence cites inside a structured source; the same path as a call (a query, a fragment, a closing delimiter or nothing after it) is read."""
+    """NG4-16 (0.27, 0.28): an API path cited in prose names no one and is written as it stands: a body, a review path, a raw stdout; inside a structured string the wording after the path decides nothing (0.28, the sentence rule withdrawn): a file followed by a sentence is read as surely as a call."""
     path = "repos/kvnteam/kvnbilling/pulls/5/comments"
     for raw, text in (
         (_one_call([{"body": f"{path} returns 404"}]), f"{path} returns 404"),
@@ -6050,37 +6051,198 @@ def test_an_api_path_cited_in_prose_is_the_named_residual_ng4_16() -> None:
         "repos/kvnpay/kvnledger/tags/index.ts lists the tags",
         "repos/kvnpay/kvnledger/contents/main.tf, then more",
         "repos/kvnpay/kvnledger/contents/main.tf: the file",
-        "repos/kvnpay/kvnledger/contents/main.tf; the file",
-        "repos/kvnpay/kvnledger/contents/main.tf! the file",
-        "repos/kvnpay/kvnledger/contents/main.tf.. the file",
         "repos/kvnpay/kvnledger/contents/main.tf? Yes, the file",
-        "repos/kvnpay/kvnledger/contents/main.tf?, the file",
-        "repos/kvnpay/kvnledger/contents/main.tf,, the file",
         "repos/kvnpay/kvnledger/contents/main.tf_ holds it",
-        "repos/kvnpay/kvnledger/contents/main.tf. The file",
-        "repos/kvnpay/kvnledger/contents/A.Yaml\tholds it",
-        "repos/kvnpay/kvnledger/contents/a.b12345 holds it",
-        "repos/kvnpay/kvnledger/contents/a.b holds it",
-        "repos/kvnpay/kvnledger/contents/a.md  holds it",
-    ):
-        assert read(text) == [], text
-    for text in (
-        "GET repos/kvnpay/kvnledger/contents/README.md",
+        "repos/kvnpay/kvnledger/contents/x.md 404 Not Found",
+        "repos/kvnpay/kvnledger/contents/x.md\nexit 1",
+        "repos/kvnpay/kvnledger/contents/x.md, a b",
+        "repos/kvnpay/kvnledger/contents/x.md?: retry",
         "GET repos/kvnpay/kvnledger/contents/README.md#L3",
-        "GET repos/kvnpay/kvnledger/contents/README.md?ref=main for it",
-        "HTTP 404 (repos/kvnpay/kvnledger/contents/README.md)",
         "HTTP 404 (repos/kvnpay/kvnledger/contents/README.md), retrying",
-        'GET "repos/kvnpay/kvnledger/contents/README.md" failed',
-        "repos/kvnpay/kvnledger/contents/README.md.",
-        "repos/kvnpay/kvnledger/contents/README.md ",
-        "repos/kvnpay/kvnledger/contents/README.md -- (the readme)",
-        "repos/kvnpay/kvnledger/contents/a.b123456 holds it",
-        "repos/kvnpay/kvnledger/contents/a.1b holds it",
-        "repos/kvnpay/kvnledger/contents/ab holds it",
         "repos/kvnpay/kvnledger/pulls/5 returned 404",
-        "repos/kvnpay/kvnledger/contents/x.md/raw holds it",
     ):
         assert read(text) == owner, text
+    for text in (
+        "failed to get repos/kvnpay/kvnledger/contents/README.md: HTTP 404",
+        "repos/kvnpay/kvnledger/releases/v1.md documents the ledger release",
+    ):
+        found = needles(_stderr_call(text), roles={})
+        assert _kinds(found, "segment") == ["kvnpay", "kvnledger"], text
+
+
+def test_prose_is_declared_by_the_call_never_by_its_wording() -> None:
+    """D7 (0.28, the owner's decision of 2026-11-24): an argv value of a prose field (``-f body=``, ``-F path=``, ``--field``, ``--raw-field``, joined ``-fbody=``/``--field=title=``), the argument of ``--body``/``--title``/``--message``/``--description`` (next or joined) and a stdin declared by ``--body-file -`` or ``-F body=@-`` are prose: neither the argv reader nor the structured reader reads them. The flag itself, the argument after the prose one, a field whose key is not a prose key, a stdin no flag declares and a dict that is not an exchange stay structured."""
+    path = "repos/kvnteam/kvnbilling/pulls/5/comments"
+    declared = recording._declared_prose
+    for argv, prose, stdin in (
+        (["api", "-f", f"body={path}"], {2}, False),
+        (["api", "-F", f"path={path}", "-F", "line=3"], {2}, False),
+        (["api", "--field", f"title={path}"], {2}, False),
+        (["api", "--raw-field", f"message={path}"], {2}, False),
+        (["api", f"-fbody={path}", f"-Fpath={path}"], {1, 2}, False),
+        (["api", f"--field=title={path}", f"--raw-field=body={path}"], {1, 2}, False),
+        (["pr", "comment", "42", "--body", path], {4}, False),
+        (["pr", "create", "--title", "t", "--body", "b"], {3, 5}, False),
+        (["mr", "create", "--description", path, "--yes"], {3}, False),
+        (["x", "--message", path], {2}, False),
+        (["pr", "comment", f"--body={path}", f"--title={path}"], {2, 3}, False),
+        (["pr", "merge", "42", "--squash", "--body-file", "-"], set(), True),
+        (["pr", "merge", "42", "--body-file=-"], set(), True),
+        (["pr", "merge", "42", "--body-file", "notes.md"], set(), False),
+        (["api", "-F", "body=@-"], set(), True),
+        (["api", "--field=body=@-"], set(), True),
+        (["api", "-F", "line=@-"], set(), False),
+        (["api", "-f", f"context={path}", "-f", "body", "-f"], set(), False),
+        (["api", "--body"], {2}, False),
+        (["api", "--input", "-"], set(), False),
+        (["api", "--input", f"body={path}", "-b", path], set(), False),
+        (["api", "-f", f"Body={path}", "-F", f"PATH={path}"], set(), False),
+        (["api", "-F", "body=@notes.md", "-F", "body=@"], {2, 4}, False),
+        (["api", 5, "--body", 6, "-f", 7, "-f"], {3}, False),
+        (["api", "--bodyx", path, "-x", f"body={path}", f"-gbody={path}"], set(), False),
+        (["api", f"--fields=body={path}", f"-x=body={path}"], set(), False),
+        (["api", f"-f=body={path}", f"-F=path={path}", f"-fx=body={path}"], {1, 2}, False),
+        (["pr", "merge", "--body-file", "-", "--body-file", "notes.md"], set(), True),
+        (["x", "--body-file=notes.md", "--body-file=-"], set(), True),
+    ):
+        assert declared(argv) == (frozenset(prose), stdin), argv
+    remote = "git@github.com:zqgroup/zqmainrepo.git"
+    exchange = _one_call([{"body": "ok"}])[0]
+    for argv, stdin in (
+        (["api", "repos/:owner/:repo/pulls/5/comments", "-f", f"body={path}"], None),
+        (["api", "x", "-f", f"path={path}", "-f", f"body={path}"], None),
+        (["pr", "comment", "5", "--body", path], None),
+        (["pr", "comment", "5", f"--body={path}"], None),
+        (["api", "x", f"--raw-field=title={path}"], None),
+        (["pr", "merge", "5", "--body-file", "-"], f"see {path}"),
+        (["api", "x", "-F", "body=@-"], f"see {path}"),
+    ):
+        raw = [[{**exchange, "args": argv, "stdin": stdin}], [], {}]
+        found = needles(raw, roles={}, remote=remote)
+        assert _kinds(found, "segment") == ["zqgroup", "zqmainrepo"], argv
+        assert path not in recording._structured_strings(raw)
+        assert stdin is None or stdin not in recording._structured_strings(raw)
+    for argv, stdin in (
+        (["api", "x", "-f", f"context={path}"], None),
+        (["pr", "comment", "5", "--body", "ok", path], None),
+        (["api", path, "--body", "ok"], None),
+        (["pr", "merge", "5", "--body-file", "notes.md"], f"see {path}"),
+        (["api", "x", "-F", "line=@-"], f"see {path}"),
+        (["api", "x"], f"see {path}"),
+    ):
+        raw = [[{**exchange, "args": argv, "stdin": stdin}], [], {}]
+        found = needles(raw, roles={}, remote=remote)
+        assert _kinds(found, "segment") == ["zqgroup", "zqmainrepo", "kvnteam", "kvnbilling"], argv
+    for raw in (
+        [[exchange], [42, {"args": ["--body", path], "stdin": path}], {}],
+        [[exchange], [42], {"args": ["--body", path], "stdin": path}],
+    ):
+        found = needles(raw, roles={}, remote=remote)
+        assert _kinds(found, "segment") == ["zqgroup", "zqmainrepo", "kvnteam", "kvnbilling"], raw
+    assert recording._argv_strings(
+        [{**exchange, "args": ["pr", "comment", "--body", path, "-f", f"body={path}", path]}]
+    ) == ["pr", "comment", "--body", "-f", path]
+    assert recording._structured_strings(
+        [{"args": ["--body", "p", "-F", "body=@-", "q"], "stdin": "s", "stdout": "", "stderr": "e"}]
+    ) == ["args", "--body", "-F", "body=@-", "q", "stdin", "stdout", "stderr", "e"]
+    assert recording._structured_strings(
+        [{"args": '{"k": "v"}'}, {"args": 5, "stdin": "s"}, {"args": ["--body", "b"], "stdin": "t"}]
+    ) == ["args", "k", "v", "args", "stdin", "s", "args", "--body", "b", "stdin", "t"]
+
+
+def test_a_prose_positional_argument_is_named_by_the_method_signature() -> None:
+    """D7 (0.28): a positional argument is prose when the protocol method's signature names it as a prose key (``post_comment``'s ``body``, ``reply``'s and ``upsert_marked_comment``'s ``body``); a keyword argument is judged by its key, an argument no signature names and every argument of an unknown method stay structured. The offline transform of a posted inline comment keeps its body and review path in the argv, the arguments and the answer."""
+    params = recording._prose_parameters
+    assert params("post_comment") == frozenset({1})
+    assert params("reply") == frozenset({2})
+    assert params("upsert_marked_comment") == frozenset({2})
+    for method in (
+        "conversation_comments",
+        "create_pull_request",
+        "post_review",
+        "find_marked_comment",
+    ):
+        assert params(method) == frozenset(), method
+    for method in ("", "barrier", "no_such_method", "__class__", "a.b", "post_comment "):
+        assert params(method) == frozenset(), method
+    path = "repos/kvnteam/kvnbilling/pulls/5/comments"
+    remote = "git@github.com:zqgroup/zqmainrepo.git"
+    exchange = _one_call([{"body": "ok"}])[0]
+    for method, args in (("post_comment", [42, path]), ("reply", [42, 7, path])):
+        raw = [[exchange], args, {}]
+        found = recording.known_values(raw, roles={}, remote=remote, method=method)
+        assert _kinds(found, "segment") == ["zqgroup", "zqmainrepo"], method
+        found = recording.known_values(raw, roles={}, remote=remote)
+        assert _kinds(found, "segment") == ["zqgroup", "zqmainrepo", "kvnteam", "kvnbilling"]
+    found = recording.known_values(
+        [[exchange], [42, "x", path], {}], roles={}, remote=remote, method="post_comment"
+    )
+    assert _kinds(found, "segment") == ["zqgroup", "zqmainrepo", "kvnteam", "kvnbilling"]
+    found = recording.known_values(
+        [[exchange], [42, "ok"], {"endpoint": path}], roles={}, remote=remote, method="post_comment"
+    )
+    assert _kinds(found, "segment") == ["zqgroup", "zqmainrepo", "kvnteam", "kvnbilling"]
+    assert recording._without_prose_arguments("raw", "post_comment") == "raw"
+    assert recording._without_prose_arguments([[]], "post_comment") == [[]]
+    assert recording._without_prose_arguments([[], "a"], "post_comment") == [[], "a"]
+    assert recording._without_prose_arguments([[], [1, 2, 3], {}], "post_comment") == [
+        [],
+        [1, None, 3],
+        {},
+    ]
+    fixture = json.loads((FIXTURES / "github" / "post_comment_inline.json").read_text())
+    body = "the payments ledger release notes moved to repos/payments/ledger/releases"
+    review = "repos/payments/ledger/releases/notes.md"
+    fixture["args"] = [42, body]
+    fixture["kwargs"]["path"] = review
+    call = fixture["calls"][1]
+    call["args"] = [
+        a.replace("body=fix", f"body={body}").replace("path=a.py", f"path={review}")
+        for a in call["args"]
+    ]
+    answer = json.loads(call["stdout"])
+    answer["body"], answer["path"] = body, review
+    call["stdout"] = json.dumps(answer)
+    written = redact_fixtures.redact_fixture(fixture, forge="github", remote=remote)
+    posted = written["calls"][1]
+    assert f"body={body}" in posted["args"] and f"path={review}" in posted["args"]
+    assert written["args"] == [42, body] and written["kwargs"]["path"] == review
+    assert json.loads(posted["stdout"])["body"] == body
+
+
+def test_the_prose_keys_are_the_audited_keys_matched_as_written() -> None:
+    """D7 (0.28, verify027 W01, W02, W13, W14, W15): the prose keys are the audited ten; a key is matched as written (``Body`` is structured); a JSON stdin behind leading blanks and a JSON array stdin are walked, so their prose keys stay prose."""
+    audited = recording._PROSE_KEYS
+    assert audited == {
+        "body",
+        "description",
+        "diff",
+        "message",
+        "messageBody",
+        "messageHeadline",
+        "new_path",
+        "old_path",
+        "path",
+        "title",
+    }
+    path = "repos/kvnteam/kvnbilling/pulls/5/comments"
+    for stdin in (
+        "\n " + json.dumps({"body": path}),
+        json.dumps([{"body": path}, {"message": path}]),
+    ):
+        found = needles(_stderr_call("ok", stdin=stdin), roles={})
+        assert _kinds(found, "segment") == [], stdin
+    for stdin in (json.dumps({"Body": path}), json.dumps({"MESSAGE": path})):
+        found = needles(_stderr_call("ok", stdin=stdin), roles={})
+        assert _kinds(found, "segment") == ["kvnteam", "kvnbilling"], stdin
+
+
+def test_the_decoded_forms_of_an_api_path_are_read_in_order() -> None:
+    """D7 (0.28, verify027 W24): the API path reader reads the raw form of a string before its decoded forms, so a value the raw form names first keeps that class when a decoded form names it the other way."""
+    stderr = "repos%2Fkvnyy%2Fkvnxx%2Fpulls repos/kvnxx/kvnyy/pulls"
+    found = needles(_stderr_call(stderr), roles={})
+    assert _kinds(found, "segment") == ["kvnxx", "kvnyy"]
+    assert recording.replace_known("kvnxx kvnyy", found) == "org project"
 
 
 def test_the_api_path_reader_reads_a_whole_path_between_its_bounds() -> None:
@@ -6164,7 +6326,7 @@ def test_every_exchange_argv_is_read_by_construction() -> None:
         )
     lone = needles(_one_call({"body": "ok"}, ["repos/settings/kvnbilling/pulls/5"]), roles={})
     assert _kinds(lone, "segment") == ["settings", "kvnbilling"]
-    body = ["pr", "comment", "--body", " repos/zq/kvnbilling/pulls/1"]
+    body = ["api", "--method", "GET", " repos/zq/kvnbilling/pulls/1"]
     assert _kinds(needles(_one_call({"body": "ok"}, body), roles={}), "segment") == ["kvnbilling"]
     spec = ["api", "repos/SP-RECORDER-REDACTS-BY-CLASS/kvnbilling/pulls/1"]
     assert _kinds(needles(_one_call({"body": "ok"}, spec), roles={}), "segment") == ["kvnbilling"]
