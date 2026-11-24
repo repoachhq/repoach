@@ -6076,6 +6076,7 @@ def test_prose_is_declared_by_the_call_never_by_its_wording() -> None:
     declared = recording._declared_prose
     for argv, prose, stdin in (
         (["api", "-f", f"body={path}"], {2}, False),
+        (["api", "-f", f"body=set retries=3 in {path}"], {2}, False),
         (["api", "-F", f"path={path}", "-F", "line=3"], {2}, False),
         (["api", "--field", f"title={path}"], {2}, False),
         (["api", "--raw-field", f"message={path}"], {2}, False),

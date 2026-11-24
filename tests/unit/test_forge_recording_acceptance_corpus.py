@@ -10381,6 +10381,18 @@ ROWS: tuple[Row, ...] = (
         ),
     ),
     Row(
+        id="v28_argv_body_field_value_holding_equals_is_declared_prose",
+        source="verify028/demo_v06.py",
+        inp=Sample(
+            body="set retries=3 in repos/payments/ledger/releases/v1.md for payments",
+            argv_extra=(
+                "-f",
+                "body=set retries=3 in repos/payments/ledger/releases/v1.md for payments",
+            ),
+        ),
+        outcome=Written(text="set retries=3 in repos/payments/ledger/releases/v1.md for payments"),
+    ),
+    Row(
         id="v28_argv_joined_raw_field_title_is_declared_prose",
         source="verify027/cells27.py",
         inp=Sample(
@@ -11040,9 +11052,9 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
     assert all(_is_planted(row) for row in residual)
     refused = [row for row in ROWS if isinstance(row.outcome, Refused)]
     assert (len(ROWS), len(planted), len(ordinary), len(refused), len(residual)) == (
-        904,
+        905,
         614,
-        290,
+        291,
         74,
         25,
     )
