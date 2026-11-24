@@ -19,6 +19,7 @@ import inspect
 import json
 import os
 import re
+import shlex
 import shutil
 import string
 import subprocess
@@ -7696,3 +7697,25 @@ def test_the_denylist_test_skips_naming_the_reason_where_no_list_is_given(
     steps = workflow["jobs"]["test"]["steps"]
     with_secret = [s for s in steps if deny_list.DENYLIST_ENV in (s.get("env") or {})]
     assert [s["name"] for s in with_secret] == ["Pytest — fixture deny-list"]
+
+
+def test_the_denylist_test_is_collected_by_its_own_ci_step_only() -> None:
+    """O2, D6 (PR #319 round 6, 4683465477): the deny-list test is collected once per CI job.
+
+    The main ``Pytest`` step deselects it by node id, and the ``Pytest — fixture deny-list`` step
+    runs that one node; no other unit step collects ``tests/unit``.
+    """
+    node = "tests/unit/test_forge_recording_redaction.py::test_fixtures_hold_no_denylisted_value"
+    assert node.rpartition("::")[2] == test_fixtures_hold_no_denylisted_value.__name__
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text("utf-8"))
+    steps = {s.get("name"): s for s in workflow["jobs"]["test"]["steps"]}
+    main = shlex.split(steps["Pytest"]["run"])
+    assert main[:3] == ["pytest", "-q", "tests/unit"]
+    assert [main[i + 1] for i, arg in enumerate(main) if arg == "--deselect"] == [node]
+    assert shlex.split(steps["Pytest — fixture deny-list"]["run"]) == ["pytest", "-q", node]
+    collecting = [
+        name
+        for name, step in steps.items()
+        if "pytest" in str(step.get("run", "")) and "tests/unit" in str(step.get("run", ""))
+    ]
+    assert sorted(collecting) == ["Pytest", "Pytest — fixture deny-list"]

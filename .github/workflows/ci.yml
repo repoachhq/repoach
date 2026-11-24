@@ -176,7 +176,7 @@ jobs:
 
       - name: Pytest
         if: needs.gate.outputs.job_test == 'true'
-        run: pytest -q tests/unit -n auto --dist worksteal
+        run: pytest -q tests/unit -n auto --dist worksteal --deselect tests/unit/test_forge_recording_redaction.py::test_fixtures_hold_no_denylisted_value
 
       # SP-RECORDER-REDACTS-BY-CLASS O2, D6: the maintainer's deny-list
       # (SP-NO-PERSONAL-DATA-GATE D3) reaches this one test only, which
