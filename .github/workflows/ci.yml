@@ -191,7 +191,7 @@ jobs:
         if: needs.gate.outputs.job_test == 'true'
         env:
           REPOACH_PERSONAL_DENYLIST: ${{ secrets.REPOACH_PERSONAL_DENYLIST }}
-        run: pytest -q tests/unit/test_forge_recording_redaction.py -k denylisted
+        run: pytest -q tests/unit/test_forge_recording_redaction.py::test_fixtures_hold_no_denylisted_value
 
       - name: Pytest — integration
         if: needs.gate.outputs.job_test == 'true'

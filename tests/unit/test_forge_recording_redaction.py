@@ -1222,9 +1222,11 @@ def test_ci_passes_the_denylist_secret_to_the_denylist_test_only_and_never_echoe
     (step,) = [s for s in steps if secret in json.dumps(s)]
     assert step["name"] == "Pytest — fixture deny-list"
     assert step["env"] == {deny_list.DENYLIST_ENV: secret}
-    assert step["run"] == "pytest -q tests/unit/test_forge_recording_redaction.py -k denylisted"
-    selected = [n for n in globals() if n.startswith("test_") and "denylisted" in n]
-    assert selected == ["test_fixtures_hold_no_denylisted_value"]
+    module, _sep, name = step["run"].removeprefix("pytest -q ").partition("::")
+    assert (module, name) == (
+        "tests/unit/test_forge_recording_redaction.py",
+        test_fixtures_hold_no_denylisted_value.__name__,
+    )
     (unit,) = [s for s in steps if s.get("name") == "Pytest"]
     assert "env" not in unit
     for each in (step, unit):
