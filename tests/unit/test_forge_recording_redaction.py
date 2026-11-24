@@ -7547,3 +7547,29 @@ def test_live_and_offline_finish_through_the_one_shared_pipeline() -> None:
     assert recording.rewrite_recorded_source("recorded 2026-11-24 from zqfolder x", "github") == (
         "recorded 2026-11-24 from a live github change request, x"
     )
+
+
+def test_the_denylist_test_skips_naming_the_reason_where_no_list_is_given(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """O2, D6 (PR #319 round 5, 4683465477): the deny-list check runs once, in its own CI step.
+
+    The main ``Pytest`` step gets no secret and the runner has no deny-list file, so there the
+    test skips naming the reason; only the ``Pytest — fixture deny-list`` step, the one that
+    receives the secret, judges the fixtures. A fork's pull request gets no secret and skips the
+    same way in both steps.
+    """
+    monkeypatch.delenv(deny_list.DENYLIST_ENV, raising=False)
+    with pytest.raises(pytest.skip.Exception) as info:
+        test_fixtures_hold_no_denylisted_value(tmp_path)
+    assert str(info.value) == (
+        f"deny-list absent: {_shown(deny_list.denylist_file(tmp_path))} holds no entry "
+        f"and ${deny_list.DENYLIST_ENV} is unset or empty (SP-NO-PERSONAL-DATA-GATE D3)"
+    )
+    monkeypatch.setenv(deny_list.DENYLIST_ENV, "")
+    with pytest.raises(pytest.skip.Exception):
+        test_fixtures_hold_no_denylisted_value(tmp_path)
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text("utf-8"))
+    steps = workflow["jobs"]["test"]["steps"]
+    with_secret = [s for s in steps if deny_list.DENYLIST_ENV in (s.get("env") or {})]
+    assert [s["name"] for s in with_secret] == ["Pytest — fixture deny-list"]
