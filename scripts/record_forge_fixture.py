@@ -98,6 +98,7 @@ __all__ = [
     "FIXTURE_ROOT",
     "GIT_ENV_KEYS",
     "WRITE_METHODS",
+    "OriginRemoteError",
     "build_roles",
     "git_env",
     "main",
@@ -214,31 +215,78 @@ def git_env() -> dict[str, str]:
     return env
 
 
+class OriginRemoteError(Exception):
+    """The checkout's ``origin`` remote cannot be read; the message names a reason, never a path, a remote or git's output.
+
+    ``origin remote: unreadable (<reason>)``, the reason being ``git missing``, ``timeout``,
+    ``cannot run (<OSError class>)``, ``not UTF-8``, ``empty answer`` or ``exit <n>`` (a refusal
+    of git itself: no repository, a dubious owner, a broken configuration).
+    """
+
+
 def origin_url(cwd: Path) -> str:
     """The ``origin`` remote of the checkout at ``cwd``: a needle source, never written.
 
     ``git`` runs with :func:`git_env` only, the one subprocess the recorder starts itself; the
-    forge's own ``gh`` / ``glab`` calls need its credentials and keep the environment.
+    forge's own ``gh`` / ``glab`` calls need its credentials and keep the environment. Reading
+    fails closed (PR #319 round 9, 4689483340): a remote that could not be read would leave its
+    host, namespace and repository in the recording. "No such remote" is a fact git reports in
+    every locale and version: ``git remote get-url`` fails, and ``git remote`` succeeds and lists
+    no ``origin``.
 
     Args:
         cwd: The checkout whose forge is recorded.
 
     Returns:
-        The remote as ``git`` prints it, ``""`` when there is none or ``git`` cannot run.
+        The remote as ``git`` prints it, ``""`` when git reports that there is none.
+
+    Raises:
+        OriginRemoteError: ``git`` cannot run, times out, fails otherwise or prints nothing.
+    """
+    reason, printed = _git_output(cwd, "remote", "get-url", "origin")
+    if not reason and printed.strip():
+        return printed.strip()
+    if not reason:
+        reason = "empty answer"
+    elif reason.startswith("exit "):
+        listing, names = _git_output(cwd, "remote")
+        if not listing and "origin" not in names.split():
+            _log.info("recorder.no_origin")
+            return ""
+    _log.warning("recorder.origin_unreadable", reason=reason)
+    raise OriginRemoteError(f"origin remote: unreadable ({reason})")
+
+
+def _git_output(cwd: Path, *argv: str) -> tuple[str, str]:
+    """Why ``git -C <cwd> <argv>`` failed (``""`` when it did not) and what it printed.
+
+    Never raises, and the reason holds neither a path nor a line of git's output.
     """
     try:
         done = subprocess.run(
-            ["git", "-C", str(cwd), "remote", "get-url", "origin"],
+            ["git", "-C", str(cwd), *argv],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=False,
             timeout=30,
             env=git_env(),
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        _log.info("recorder.no_origin", error=type(exc).__name__)
-        return ""
-    return done.stdout.strip() if done.returncode == 0 else ""
+    except FileNotFoundError as exc:
+        _log.debug("recorder.git_failed", error=type(exc).__name__)
+        return "git missing", ""
+    except subprocess.TimeoutExpired as exc:
+        _log.debug("recorder.git_failed", error=type(exc).__name__)
+        return "timeout", ""
+    except UnicodeDecodeError as exc:
+        _log.debug("recorder.git_failed", error=type(exc).__name__)
+        return "not UTF-8", ""
+    except OSError as exc:
+        _log.debug("recorder.git_failed", error=type(exc).__name__)
+        return f"cannot run ({type(exc).__name__})", ""
+    if done.returncode != 0:
+        return f"exit {done.returncode}", ""
+    return "", done.stdout
 
 
 def _author_of(forge: Forge, method: str, args: list[Any]) -> str | None:
@@ -313,6 +361,7 @@ def record(
             live call before anything is recorded.
         UnclassifiedValueError: Anything the judge refuses, ``nesting too deep`` included.
         DenylistError: The maintainer's deny-list is malformed (an entry too short, a comma).
+        OriginRemoteError: The checkout's ``origin`` remote cannot be read.
         SyntheticIdsExhaustedError: The recording needs a synthetic id past its range.
         NeedleError: A structured value is a class word or a placeholder.
         ForgeError: The forge cannot be selected: ``ForgeUnavailableError`` when its CLI is not
@@ -429,6 +478,7 @@ def _collect(
     Raises:
         TypeError: ``args`` or ``kwargs`` do not fit the method's signature.
         ForgeError: The forge cannot be selected.
+        OriginRemoteError: The ``origin`` remote cannot be read.
     """
     typed_args, typed_kwargs = coerce_call(method, args, kwargs)
     forge = select_forge(override=forge_name, cwd=cwd)
@@ -520,6 +570,7 @@ def main(argv: list[str] | None = None) -> int:
     except (
         UnclassifiedValueError,
         DenylistError,
+        OriginRemoteError,
         SyntheticIdsExhaustedError,
         NeedleError,
         ForgeError,

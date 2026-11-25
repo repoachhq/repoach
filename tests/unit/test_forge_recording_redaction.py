@@ -7316,6 +7316,7 @@ def test_every_exception_main_catches_is_one_the_entry_point_documents() -> None
         "SystemExit",
         "UnclassifiedValueError",
         "DenylistError",
+        "OriginRemoteError",
         "SyntheticIdsExhaustedError",
         "NeedleError",
         "ForgeError",
@@ -7542,41 +7543,115 @@ def test_git_env_keeps_the_git_variables_only(monkeypatch: pytest.MonkeyPatch) -
     assert rec.git_env()["GIT_TERMINAL_PROMPT"] == "0"
 
 
-def test_origin_url_returns_empty_on_timeout_missing_git_and_a_failing_git(
+def test_origin_url_refuses_on_timeout_missing_git_and_a_failing_git(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """PR #319 round 5 (4683465486): every failure of the recorder's ``git`` child reads as no remote.
+    """PR #319 round 9 (4689483340): every failure of the recorder's ``git`` child is a named refusal.
 
-    A timeout, a missing ``git`` (``FileNotFoundError``), any other ``OSError`` and a non-zero
-    exit each give ``""`` and one log line naming the error class, never the command's output.
+    A timeout, a missing ``git``, any other ``OSError``, an answer that is no UTF-8 or empty, and
+    a non-zero exit whose ``git remote`` fails too or lists ``origin`` each raise
+    ``OriginRemoteError`` naming the reason, never the path, the remote or git's output.
     """
     calls: list[dict[str, Any]] = []
+    answers: list[Any] = []
 
-    def _raising(error: BaseException) -> Any:
-        def _run(argv: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
-            calls.append(kw)
-            raise error
+    def _run(argv: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(kw)
+        answer = answers.pop(0)
+        if isinstance(answer, BaseException):
+            raise answer
+        code, out = answer
+        return subprocess.CompletedProcess(argv, code, out, "fatal: zqsecret")
 
-        return _run
-
-    for error in (
-        subprocess.TimeoutExpired(["git"], 30),
-        FileNotFoundError(2, "No such file or directory", "git"),
-        PermissionError(13, "Permission denied", "git"),
+    monkeypatch.setattr(rec.subprocess, "run", _run)
+    remote = "git@h.io:zqgroup/zqrepo.git\n"
+    for script, reason in (
+        ([subprocess.TimeoutExpired(["git"], 30)], "timeout"),
+        ([FileNotFoundError(2, "No such file or directory", "git")], "git missing"),
+        ([PermissionError(13, "Permission denied", "git")], "cannot run (PermissionError)"),
+        ([UnicodeDecodeError("utf-8", b"zqsecret", 0, 1, "zq")], "not UTF-8"),
+        ([(0, "  \n")], "empty answer"),
+        ([(128, remote), (128, "")], "exit 128"),
+        ([(2, remote), (0, "upstream\norigin\n")], "exit 2"),
+        ([(2, remote), (128, "upstream\n")], "exit 2"),
+        ([(2, remote), subprocess.TimeoutExpired(["git"], 30)], "exit 2"),
     ):
-        monkeypatch.setattr(rec.subprocess, "run", _raising(error))
+        answers[:] = script
+        with capture_logs() as logs, pytest.raises(rec.OriginRemoteError) as refused:
+            rec.origin_url(tmp_path)
+        assert str(refused.value) == f"origin remote: unreadable ({reason})"
+        assert answers == [], reason
+        assert refused.value.__cause__ is None and refused.value.__context__ is None
+        assert ("recorder.origin_unreadable", reason) in [
+            (e["event"], e.get("reason")) for e in logs
+        ]
+        shown = json.dumps(logs)
+        assert not any(w in shown for w in ("zqsecret", "zqgroup", "h.io", str(tmp_path)))
+    assert all(kw["timeout"] == 30 and kw["check"] is False for kw in calls)
+    for code, names in ((2, ""), (2, "upstream\norigin-2\n"), (128, "upstream\n")):
+        answers[:] = [(code, remote), (0, names)]
         with capture_logs() as logs:
             assert rec.origin_url(tmp_path) == ""
-        assert [(e["event"], e["error"]) for e in logs] == [
-            ("recorder.no_origin", type(error).__name__)
+        assert [e["event"] for e in logs] == ["recorder.no_origin"]
+
+
+def test_a_git_error_reading_the_origin_is_a_refusal_whatever_the_locale(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """PR #319 round 9 (4689483340): real git, no repository, a broken configuration, a renamed remote, no ``git``.
+
+    ``main`` exits 2 with the reason on stderr, prints nothing on stdout and writes nothing.
+    """
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("LC_ALL", "fr_FR.UTF-8")
+    monkeypatch.setenv("LANGUAGE", "fr")
+    _no_denylist(monkeypatch, tmp_path)
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    assert "GIT_CEILING_DIRECTORIES" not in rec.git_env()
+    repo = tmp_path / "zqcheckout"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, env=rec.git_env())
+    add = ["git", "-C", str(repo), "remote", "add"]
+    subprocess.run([*add, "upstream", "git@h.io:zqgroup/zqrepo.git"], check=True, env=rec.git_env())
+    assert rec.origin_url(repo) == ""
+    subprocess.run([*add, "origin", "git@h.io:zqgroup/zqrepo.git"], check=True, env=rec.git_env())
+    assert rec.origin_url(repo) == "git@h.io:zqgroup/zqrepo.git"
+    with pytest.raises(rec.OriginRemoteError, match=r"^origin remote: unreadable \(exit 128\)$"):
+        rec.origin_url(tmp_path / "zqmissing")
+    config = repo / ".git" / "config"
+    config.write_text(config.read_text(encoding="utf-8") + "[remote\n", encoding="utf-8")
+    with pytest.raises(rec.OriginRemoteError, match=r"^origin remote: unreadable \(exit 128\)$"):
+        rec.origin_url(repo)
+    forge = GitHubForge(cwd=repo, bot_login="repoach-bot")
+    forge._spawn = ReplaySpawn(
+        [
+            Exchange(
+                "gh",
+                ["api", "--paginate", "--slurp", "repos/:owner/:repo/issues/7/comments"],
+                None,
+                0,
+                "[[]]",
+                "",
+            )
         ]
-    assert all(kw["timeout"] == 30 and kw["check"] is False for kw in calls)
-
-    def _failing(argv: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(argv, 2, "git@h.io:zqgroup/zqrepo.git\n", "fatal")
-
-    monkeypatch.setattr(rec.subprocess, "run", _failing)
-    assert rec.origin_url(tmp_path) == ""
+    )
+    monkeypatch.setattr(rec, "select_forge", lambda **_kw: forge)
+    monkeypatch.setattr(rec, "_author_of", lambda *_a: None)
+    out = tmp_path / "out"
+    argv = ["--forge", "github", "--cwd", str(repo), "--case", "c", "--out", str(out)]
+    capsys.readouterr()
+    assert rec.main([*argv, "--method", "conversation_comments", "--args", "[7]"]) == 2
+    printed = capsys.readouterr()
+    assert printed.out == ""
+    assert printed.err.endswith("origin remote: unreadable (exit 128)\n")
+    assert "zqcheckout" not in printed.err and "zqgroup" not in printed.err
+    assert not out.exists()
+    monkeypatch.setenv("PATH", str(tmp_path / "nowhere"))
+    with pytest.raises(rec.OriginRemoteError, match=r"\(git missing\)$"):
+        rec.origin_url(repo)
 
 
 def test_live_and_offline_finish_through_the_one_shared_pipeline() -> None:
