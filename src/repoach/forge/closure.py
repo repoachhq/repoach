@@ -269,8 +269,9 @@ def _namespace_pattern(
 ) -> str:
     """The pattern of a ``<namespace>:<title>`` wiki page that names an account, up to its title's first character.
 
-    ``*:`` is any namespace of letters and digits (``_`` or a space inside) that is not
-    ``public``, nor a ``public`` one's talk namespace; any other namespace is read as it stands.
+    ``*:`` is any namespace of letters and digits (``_`` or a spelled space inside, or a decoded
+    `` talk`` at its end) that is not ``public``, nor a ``public`` one's talk namespace; any other
+    namespace is read as it stands.
     The leading ``:`` and ``_`` a wiki ignores are skipped.
 
     Args:
@@ -323,8 +324,9 @@ def _tenant_route_re() -> re.Pattern[str]:
     The host is the suffix or any name under it, not preceded by a letter, digit or ``-``
     (``xstackoverflow.com`` is another host); an optional trailing dot and ``:<port>`` follow,
     then ``/`` (one or more) and, for :data:`TENANT_ROUTES`, the route and its identity
-    (:func:`_route_pattern`; the longest first, so ``users/<id>/<name>`` reads the name), or, for :data:`ACCOUNT_NAMESPACES`, an optional ``v2/`` and a
-    namespace segment led by its lead that is not one no account holds
+    (:func:`_route_pattern`; the longest first, so ``users/<id>/<name>`` reads the name), or,
+    for :data:`ACCOUNT_NAMESPACES`, an optional ``v2/`` and a namespace segment led by its lead
+    that is not one no account holds
     (``docker.io/library/…`` is public; a namespace followed by ``:``, as in
     ``ghcr.io/<owner>:tag``, is still read). Nothing before the host is required, so a scheme,
     ``//``, a bare host and a Markdown link are one case. The suffix is matched first and the
@@ -430,7 +432,8 @@ def tenant_identities(text: str) -> list[str]:
 
     The identity is the path segment holding the last character the route grammar reads
     (:func:`has_tenant_path`): the segment after a route, a ``<namespace>:<title>`` segment, or
-    a namespace. A query's is the parameter's value (:func:`_query_identities`). The redactor checks that none survives its rewrite of a tenant URL.
+    a namespace. A query's is the parameter's value (:func:`_query_identities`). The redactor
+    checks that none survives its rewrite of a tenant URL.
 
     Args:
         text: The text read, one decoded form of it.
@@ -897,6 +900,22 @@ def hosts(text: str) -> list[Host]:
         if _led(text, start) or text.endswith("//", 0, start):
             found.append(Host(text[start:end], True, start, end, literal=True))
     return found
+
+
+def is_numeric_label_host(host: str) -> bool:
+    """Whether every label of ``host`` before the last is all digits (``163.com``, ``10.node1``).
+
+    Such a name is spelt as a version is, so the recorder's text reader never replaces one by a
+    class token: it stays as it stands and :func:`judge` refuses it (PR #319 round 9, 4689483320).
+
+    Args:
+        host: A host name, in any case, with or without its trailing dot.
+
+    Returns:
+        ``True`` for a dotted name with digits only before its last label; an address is not one.
+    """
+    labels = _canonical_host(host).split(".")
+    return len(labels) > 1 and _numeric_labels(labels) and not labels[-1].isdigit()
 
 
 def is_address(host: str) -> bool:

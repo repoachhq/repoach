@@ -2264,7 +2264,9 @@ def known_values(
     user and repository ids, a user's name and mailboxes, the hosts of
     :data:`URL_KEYS` values and of the remote, the recorded project's
     namespace and repository), from the deny-list, and from the hosts
-    :func:`repoach.forge.closure.hosts` finds in any string of ``raw``.
+    :func:`repoach.forge.closure.hosts` finds in any string of ``raw``, a
+    numeric-label one aside (:func:`repoach.forge.closure.is_numeric_label_host`:
+    its path is read and it is left for the oracle to refuse).
     A login known only from a mention and shorter than
     :data:`NEEDLE_MIN_LENGTH` is no value (0.20): the convenience layer
     replaces its ``@`` form and its bare word is too short to be a token.
@@ -2434,7 +2436,7 @@ def known_values(
                 if allowed:
                     continue
                 reads_path = place.led or not closure.is_address(place.host)
-                if not allowed and reads_path:
+                if reads_path and not closure.is_numeric_label_host(place.host):
                     _host(place.host)
                 if is_public_forge_host(place.host) or not reads_path:
                     continue

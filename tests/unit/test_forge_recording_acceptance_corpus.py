@@ -11188,32 +11188,28 @@ ROWS: tuple[Row, ...] = (
         id="r9_numeric_label_host_mailbox_is_refused",
         source="PR #319 review round 9 (4689483320)",
         inp=Sample(body="write to zqkvn9@163.com for access"),
-        outcome=Refused("unknown mailbox at exchanges[0].stdout[0].body"),
+        outcome=Refused("unknown host at exchanges[0].stdout[0].body"),
     ),
     Row(
         id="r9_numeric_label_host_url_is_rewritten_and_its_path_learnt",
         source="PR #319 review round 9 (4689483320)",
-        inp=Sample(
-            body="see https://163.com/zqns9/zqrepo9/pull/3 now, the zqrepo9 of zqns9 on 163.com"
-        ),
+        inp=Sample(body="see https://163.com/zqns9/zqrepo9/pull/3 now, the zqrepo9 of zqns9"),
         outcome=Written(
-            text="see https://forge.example.com/org/project/pull/3 now, the project of org on forge.example.com"
+            text="see https://forge.example.com/org/project/pull/3 now, the project of org"
         ),
         markers=("163.com", "zqns9", "zqrepo9"),
     ),
     Row(
-        id="r9_numeric_label_host_after_slashes_is_replaced",
+        id="r9_numeric_label_host_after_slashes_is_refused",
         source="PR #319 review round 9 (4689483320)",
         inp=Sample(body='<script src="//126.com/zqns9/zqrepo9/app.js"></script>'),
-        outcome=Written(text='<script src="//forge.example.com/org/project/app.js"></script>'),
-        markers=("126.com", "zqns9", "zqrepo9"),
+        outcome=Refused("unknown host at exchanges[0].stdout[0].body"),
     ),
     Row(
-        id="r9_numeric_label_host_off_the_tld_list_after_slashes_is_replaced",
+        id="r9_numeric_label_host_off_the_tld_list_after_slashes_is_refused",
         source="PR #319 review round 9 (4689483320)",
         inp=Sample(body="load //168.zqvip/zqns9/zqrepo9/app.js"),
-        outcome=Written(text="load //forge.example.com/org/project/app.js"),
-        markers=("168.zqvip", "zqns9", "zqrepo9"),
+        outcome=Refused("unknown host at exchanges[0].stdout[0].body"),
     ),
     Row(
         id="r9_numeric_label_host_scp_remote_is_rewritten",
@@ -11225,26 +11221,22 @@ ROWS: tuple[Row, ...] = (
         markers=("360.cn", "7.1.0.rc1", "zqns9", "zqrepo9"),
     ),
     Row(
-        id="r9_numeric_label_host_bare_before_a_path_is_replaced",
+        id="r9_numeric_label_host_bare_before_a_path_is_refused",
         source="PR #319 review round 9 (4689483320)",
         inp=Sample(body="mirrored at 360.cn/zqns9/zqrepo9 and 8.163.com:8443 today"),
-        outcome=Written(
-            text="mirrored at forge.example.com/org/project and forge.example.com:8443 today"
-        ),
-        markers=("360.cn", "163.com", "zqns9", "zqrepo9"),
+        outcome=Refused("unknown host at exchanges[0].stdout[0].body"),
     ),
     Row(
-        id="r9_numeric_label_host_percent_encoded_is_replaced",
+        id="r9_numeric_label_host_percent_encoded_is_refused",
         source="PR #319 review round 9 (4689483320)",
         inp=Sample(body="see https%3A%2F%2F163.com%2Fzqns9%2Fzqrepo9 now"),
-        outcome=Written(text="see https%3A%2F%2Fforge.example.com%2Forg%2Fproject now"),
-        markers=("163.com", "zqns9", "zqrepo9"),
+        outcome=Refused("unknown host at exchanges[0].stdout[0].body"),
     ),
     Row(
         id="r9_numeric_label_private_host_mailbox_is_refused",
         source="PR #319 review round 9 (4689483320)",
         inp=Sample(stderr="rejected: zqkvn9@10.node1"),
-        outcome=Refused("unknown mailbox at exchanges[0].stderr"),
+        outcome=Refused("unknown host at exchanges[0].stderr"),
     ),
     Row(
         id="r9_numeric_version_tags_and_file_names_are_ordinary",
@@ -11343,6 +11335,24 @@ ROWS: tuple[Row, ...] = (
         outcome=Written(
             text="see https://stackoverflow.com/users?tab=Reputation and https://stackoverflow.com/users/login"
         ),
+    ),
+    Row(
+        id="r9_numeric_label_host_under_a_git_user_is_refused",
+        source="PR #319 review round 9 (4689483320)",
+        inp=Sample(body="dsn redis://git@163.com/zqpage9 and https://163.com/zqns9/zqrepo9 now"),
+        outcome=Refused("unknown host at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r9_numeric_label_authority_before_a_path_at_is_refused",
+        source="PR #319 review round 9 (4689483320)",
+        inp=Sample(body="dsn redis://163.com/zqpw9@redis now"),
+        outcome=Refused("unknown host at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r9_numeric_label_host_before_a_path_holding_a_mailbox_is_refused",
+        source="PR #319 review round 9 (4689483320)",
+        inp=Sample(body="at 360.cn/zqkvn9@pypi.org/zqns9/zqrepo9 now"),
+        outcome=Refused("unknown host at exchanges[0].stdout[0].body"),
     ),
 )
 
@@ -11796,10 +11806,10 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
     refused = [row for row in ROWS if isinstance(row.outcome, Refused)]
     bounded = [row for row in ROWS if isinstance(row.outcome, Bounded)]
     assert (len(ROWS), len(planted), len(ordinary), len(refused), len(bounded)) == (
-        1007,
-        702,
+        1010,
+        705,
         305,
-        130,
+        137,
         2,
     )
     assert len(residual) == 25

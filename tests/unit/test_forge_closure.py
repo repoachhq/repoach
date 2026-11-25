@@ -2372,11 +2372,19 @@ def test_a_host_whose_leading_labels_are_digits_is_a_host_when_led() -> None:
         "mail zqkvn@1.2.3.node1 now",
         "mail zqkvn@1.2.x3.rc1 now",
         "src=//10.5.zqcorp/x and more",
+        "dsn redis://163.com/zqpw@redis now",
+        "dsn redis://163.com:6379/zqpw@redis now",
+        "dsn redis://8.163.com/zq/zqpw@redis",
+        "dsn postgres://163.com@localhost/db",
         "src=//163.com",
         "src=//100.zqcorp:8443",
         "src=//5278.cc/x",
     ):
         assert closure.judge(text, none) is not None, text
+    for host in (*NUMERIC_HOSTS, "7.1.0.rc1", "10.node1", "163.COM."):
+        assert closure.is_numeric_label_host(host), host
+    for host in ("163.com.cn", "gitlab.dc1", "1.2.3.4", "1.example.com", "163", "", "redis"):
+        assert not closure.is_numeric_label_host(host), host
     for text in (
         "rails@7.1.0.rc1 and hibernate@5.4.0.Final, vue@3.0.beta2: done",
         "rails@7.1.0.rc1.",
