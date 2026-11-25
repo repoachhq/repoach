@@ -7415,12 +7415,57 @@ def _public_functions(tree: ast.Module) -> list[ast.FunctionDef]:
     return found
 
 
+SHARED_MODULES = (text_forms,)
+"""The modules of :mod:`repoach.core` the recorder shares with readers outside the forge package."""
+
+
+def test_the_text_forms_document_every_parameter_value_and_error() -> None:
+    """PR #319 round 9 (4689484515): ``Args:`` names each parameter, ``Returns:`` the value, ``Raises:`` a reachable raise.
+
+    Every public function of the shared modules, whatever it takes; the order
+    :func:`repoach.core.text_forms.decoded_forms` promises is the order it returns.
+    """
+    checked = []
+    for module in SHARED_MODULES:
+        for node in _public_functions(ast.parse(inspect.getsource(module))):
+            doc = inspect.cleandoc(ast.get_docstring(node) or "")
+            section = doc.split("Args:", 1)[1].split("Returns:", 1)[0] if "Args:" in doc else ""
+            named = set(re.findall(r"^    ([a-z_]+): ", section, re.M))
+            arguments = {a.arg for a in node.args.args + node.args.kwonlyargs}
+            assert named == arguments, node.name
+            assert doc.split("Returns:", 1)[-1].strip() and "Returns:" in doc, node.name
+            raises = any(isinstance(n, ast.Raise) for n in ast.walk(node))
+            assert raises == ("Raises:" in doc), node.name
+            checked.append(node.name)
+    assert sorted(checked) == [
+        "ascii_labels",
+        "decoded_forms",
+        "folded_forms",
+        "folds",
+        "node_id_numbers",
+        "token_pattern",
+    ]
+    assert text_forms.decoded_forms("a%2541") == ["a%2541", "a%41", "aA"]
+    forms = text_forms.decoded_forms("ｍ%C3%BC")
+    assert forms[:2] == ["ｍ%C3%BC", "ｍü"] and forms[2] == "m%C3%BC"
+    assert forms[3] == "mü" and "xn--m-eha" in forms[4:]
+    assert text_forms.decoded_forms("") == [""]
+    assert text_forms.node_id_numbers("U_kgDOBHdQIw x MDQ6VXNlcjc0OTI4MTYz U_1001") == [
+        "74928163",
+        "1001",
+    ]
+    match = text_forms.token_pattern("a.b").search("x%2fA.B/")
+    assert match is not None and match.group(0) == "A.B"
+
+
 def test_the_recorders_public_functions_document_their_arguments_and_value() -> None:
     """PR #319 round 4: a Google ``Args:`` and ``Returns:`` on every public function of the class.
 
     The class is every public function of the two recorder scripts that takes an argument, and
     every public function or method of the forge recorder modules that takes two or more; a
-    function returning ``None`` needs no ``Returns:``.
+    function returning ``None`` needs no ``Returns:``. In the modules a reader outside the forge
+    package shares (``SHARED_MODULES``, PR #319 round 9, 4689484515) one argument is enough, each
+    parameter is named, and a function that raises says so.
     """
     missing = []
     for module in (
@@ -7432,6 +7477,7 @@ def test_the_recorders_public_functions_document_their_arguments_and_value() -> 
         recording_tables,
         deny_list,
         fixture_judge,
+        fixture_pipeline,
         text_forms,
     ):
         rel = module.__name__
@@ -7439,7 +7485,8 @@ def test_the_recorders_public_functions_document_their_arguments_and_value() -> 
             arguments = [
                 a.arg for a in node.args.args + node.args.kwonlyargs if a.arg not in ("self", "cls")
             ]
-            if len(arguments) < (2 if rel.startswith("repoach.") else 1):
+            own = rel.startswith("repoach.") and module not in SHARED_MODULES
+            if len(arguments) < (2 if own else 1):
                 continue
             doc = ast.get_docstring(node) or ""
             returns_none = isinstance(node.returns, ast.Constant) and node.returns.value is None

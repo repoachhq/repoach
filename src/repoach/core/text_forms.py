@@ -24,6 +24,14 @@ def token_pattern(word: str) -> re.Pattern[str]:
     A ``%2F`` or ``%2f`` before the word is a delimiter as well, since
     ``projects/<ns>%2F<repo>`` is the one URL-encoded shape the forges'
     own argv carries.
+
+    Args:
+        word: The value searched for, in any case and of any characters: it is matched
+            literally. An empty one matches between any two delimiters.
+
+    Returns:
+        The compiled pattern, case-insensitive; ``search`` it in a form of the text, its match
+        being ``word`` alone, no delimiter included.
     """
     return re.compile(
         rf"(?:(?<![{_ALNUM}])|(?<=%2[Ff])){re.escape(word)}(?![{_ALNUM}])", re.IGNORECASE
@@ -139,6 +147,14 @@ def decoded_forms(text: str) -> list[str]:
     Unicode label runs in IDNA A-labels (:func:`ascii_labels`), so a host or a mailbox on an
     internationalised domain is read by the same grammar as an ASCII one. An ASCII text has
     no other form than its layers, in their order.
+
+    Args:
+        text: The text read, as it was written.
+
+    Returns:
+        The forms, each once, ``text`` itself first: its layers in the order they are peeled,
+        then those of its NFC and NFKC forms, then the NFC and NFKC form of each, then the
+        A-label form of each. Callers rely on the layers coming first. Never empty; never raises.
     """
     seeds = [text]
     for normal in ("NFC", "NFKC"):
@@ -185,7 +201,18 @@ def _legacy_number(run: str) -> int | None:
 
 
 def node_id_numbers(text: str) -> list[str]:
-    """The account number of every user node id ``text`` holds, wherever it stands in a longer run."""
+    """The account number of every user node id ``text`` holds, wherever it stands in a longer run.
+
+    A node id is GitHub's current ``U_<base64url MessagePack>``, the synthetic ``U_<digits>`` the
+    recorder writes, or the legacy ``MDQ6VXNl<base64>`` of ``04:User<n>``.
+
+    Args:
+        text: The text read, one decoded form of it, its case kept: base64 is case-sensitive.
+
+    Returns:
+        The numbers in decimal digits, each once, the ``U_`` ids in order, then the legacy ones;
+        empty when ``text`` holds none. Never raises on a malformed or a long run.
+    """
     numbers: list[str] = []
     for m in _NEW_NODE.finditer(text):
         run = m.group(1)
