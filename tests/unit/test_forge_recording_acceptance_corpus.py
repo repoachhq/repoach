@@ -11075,6 +11075,35 @@ ROWS: tuple[Row, ...] = (
         ),
         outcome=Written(text="the Zqkvnstrassenbahn and xzqkvnmüller stay"),
     ),
+    Row(
+        id="r7_unicode_mention_is_one_handle_replaced_whole",
+        source="PR #319 review round 7 (pre-existing @müller corruption)",
+        inp=Sample(body="thanks @zqmüller for the fix"),
+        outcome=Written(text="thanks @author-2 for the fix"),
+        markers=("zqm",),
+    ),
+    Row(
+        id="r7_unicode_mention_next_to_its_ascii_head_mention",
+        source="PR #319 review round 7 (pre-existing @müller corruption)",
+        inp=Sample(body="cc @zqm and @zqmüller"),
+        outcome=Written(text="cc @author-2 and @author-3"),
+        markers=("zqm",),
+    ),
+    Row(
+        id="r7_mention_followed_by_a_cjk_honorific_is_one_handle",
+        source="PR #319 review round 7 (pre-existing @müller corruption)",
+        inp=Sample(body="@zqkvnさん、ありがとう"),
+        outcome=Written(text="@author-2、ありがとう"),
+        markers=("zqkvn",),
+    ),
+    Row(
+        id="r7_unicode_text_around_an_at_sign_is_ordinary",
+        source="PR #319 review round 7 (pre-existing @müller corruption)",
+        inp=Sample(body="write to jürgen@example.com, the café@home notes and `@müller` in code"),
+        outcome=Written(
+            text="write to jürgen@example.com, the café@home notes and `@müller` in code"
+        ),
+    ),
 )
 
 
@@ -11527,9 +11556,9 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
     refused = [row for row in ROWS if isinstance(row.outcome, Refused)]
     bounded = [row for row in ROWS if isinstance(row.outcome, Bounded)]
     assert (len(ROWS), len(planted), len(ordinary), len(refused), len(bounded)) == (
-        972,
-        675,
-        297,
+        976,
+        678,
+        298,
         118,
         2,
     )

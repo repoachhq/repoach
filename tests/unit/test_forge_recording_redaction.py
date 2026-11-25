@@ -7928,3 +7928,36 @@ def test_a_denylist_entry_and_the_text_are_compared_in_their_full_casefolds() ->
     assert closure.folds("Straße") == ("strasse",)
     assert closure.folds(f"m{nfd_umlaut}") == ("mü",)
     assert closure.folds("Ｍ") == ("ｍ", "m")
+
+
+def test_a_mention_handle_is_read_on_the_letters_of_every_script() -> None:
+    """D2 (PR #319 round 7): ``@müller`` is the handle ``müller``, never ``m`` and leftover text.
+
+    The finder reads the handle on Unicode letters and digits, so a non-ASCII handle becomes one
+    role and is replaced whole, and :func:`mention_pattern` ends a handle where the finder does:
+    a role ``@m`` is not replaced inside ``@müller``. A letter of any script before ``@`` makes
+    it a mailbox or a word, not a mention.
+    """
+    assert mentions({"body": "@müller said hi"}) == ["müller"]
+    assert mentions({"body": "@zqkvnさん、あ"}) == ["zqkvnさん"]
+    assert mentions({"body": "cc @zqm and @zqmüller"}) == ["zqm", "zqmüller"]
+    assert mentions({"body": "@über und @日本"}) == ["über", "日本"]
+    for text in (
+        "jürgen@example.com",
+        "café@home",
+        "日本@x",
+        "@müller.fixture",
+        "@types/über",
+        "@müller(1)",
+    ):
+        assert mentions({"body": text}) == [], text
+    roles = {"@zqm": "author-2"}
+    assert classify_text("cc @zqm and @zqmüller", roles) == "cc @author-2 and @zqmüller"
+    assert classify_text("@zqm, @zqm. @zqm-x @zqm_x", roles) == (
+        "@author-2, @author-2. @author-2-x @author-2_x"
+    )
+    assert mention_pattern("zqm").search("@zqmüller") is None
+    assert mention_pattern("zqm").search("@zqmさん") is None
+    assert mention_pattern("zqm").search("@ZQM!") is not None
+    whole = {"@zqmüller": "author-3", "@zqm": "author-2"}
+    assert classify_text("@zqmüller and @zqm", whole) == "@author-3 and @author-2"

@@ -205,14 +205,19 @@ _MENTION_DOT_AFTER_CLASS = _char_class(_ASCII_ALNUM + "_")
 _MENTION_SLASH_AFTER_CLASS = _char_class(_ASCII_ALNUM + "_.-")
 """Characters after ``/`` that mark a scoped package such as ``@types/node`` (0.16)."""
 
+_LETTER_OR_DIGIT = r"[^\W_]"
+"""A letter or a digit of any script (PR #319 round 7): a handle is read on Unicode letters, never on its ASCII head."""
+
 _MENTION_END = (
-    rf"(?!{_MENTION_HANDLE_CLASS}|\.{_MENTION_DOT_AFTER_CLASS}"
-    rf"|/{_MENTION_SLASH_AFTER_CLASS}|\()"
+    rf"(?!{_MENTION_HANDLE_CLASS}|{_LETTER_OR_DIGIT}|\.(?:{_MENTION_DOT_AFTER_CLASS}|{_LETTER_OR_DIGIT})"
+    rf"|/(?:{_MENTION_SLASH_AFTER_CLASS}|{_LETTER_OR_DIGIT})|\()"
 )
-"""What may not follow a handle: a handle character, a dotted name (``@pytest.fixture``), a scoped package (``@types/node``) or a call."""
+"""What may not follow a handle: a handle character or any letter or digit, a dotted name (``@pytest.fixture``), a scoped package (``@types/node``) or a call."""
 
 MENTION_RE = re.compile(
-    rf"(?<!{_MENTION_BEFORE_BLOCK_CLASS})@({_TOKEN_CLASS}(?:{_MENTION_HANDLE_CLASS}*{_TOKEN_CLASS})?){_MENTION_END}",
+    rf"(?<!{_MENTION_BEFORE_BLOCK_CLASS})(?<!{_LETTER_OR_DIGIT})"
+    rf"@({_LETTER_OR_DIGIT}(?:(?:{_MENTION_HANDLE_CLASS}|{_LETTER_OR_DIGIT})*{_LETTER_OR_DIGIT})?)"
+    rf"{_MENTION_END}",
     re.I,
 )
 """The finder of unknown ``@<handle>`` mentions in free text (SP-RECORDER-REDACTS-BY-CLASS D2, 0.9).
@@ -221,9 +226,12 @@ A finder, not a boundary (0.10): it decides which unknown words become
 a role, and nothing is kept or refused by it. Not an email
 (``a@b.example``), not a dotted name (``@pytest.fixture``, and so not a
 dotted GitLab username either), not a decorator call (``@lru_cache(…)``);
-a sentence-ending ``.`` is not part of the handle. Once a login is a
-role it is replaced by :func:`mention_pattern` or :func:`token_pattern`,
-whose boundary is :data:`TOKEN_CHARS`.
+a sentence-ending ``.`` is not part of the handle. The handle is read on
+the letters and digits of every script (PR #319 round 7): ``@müller`` is
+the handle ``müller``, never ``m`` followed by text, so it becomes one
+role and is replaced whole. Once a login is a role it is replaced by
+:func:`mention_pattern` or :func:`token_pattern`, whose boundary is
+:data:`TOKEN_CHARS`.
 """
 
 
@@ -241,8 +249,13 @@ written with a leading ``@``, so the key cannot collide with one.
 
 
 def mention_pattern(login: str) -> re.Pattern[str]:
-    """The ``@<login>`` form of ``login``: :func:`token_pattern` of ``@`` and the login (I1, 0.10)."""
-    return token_pattern(f"@{login}")
+    """The ``@<login>`` form of ``login``: :func:`token_pattern` of ``@`` and the login (I1, 0.10).
+
+    The handle ends where :data:`MENTION_RE` ends it (PR #319 round 7): never before a letter or
+    a digit of any script, so ``@m`` is not replaced inside ``@müller``, which is another handle.
+    """
+    bounded = token_pattern(f"@{login}")
+    return re.compile(f"{bounded.pattern}(?!{_LETTER_OR_DIGIT})", bounded.flags)
 
 
 RECORDED_SOURCE_RE = re.compile(r"^recorded ([0-9]{4}-[0-9]{2}-[0-9]{2}) from (?!a live )[^\s;]+")
