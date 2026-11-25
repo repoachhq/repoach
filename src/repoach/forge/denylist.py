@@ -2,8 +2,16 @@
 
 SP-RECORDER-REDACTS-BY-CLASS (K8, 0.10): the recorder and the offline
 transform read the same deny-list through this one reader; an entry is
-never printed, logged or bound to a name a traceback can show. The gate
-of SP-NO-PERSONAL-DATA-GATE, when it lands, reads it from here too.
+never printed, logged or bound to a name a traceback can show.
+
+This module is the one source of the deny-list (PR #319 round 9, 4689482906): its names
+(:data:`DENYLIST_ENV`, :data:`DENYLIST_FILE_NAME`, :data:`DENYLIST_MIN_LENGTH`), its contract (one
+entry per line, ``#`` comments in the file, a comma in the variable refused) and its reader
+(:func:`read_denylist`, :func:`denylist_patterns`, :func:`denylist_hit`). The gate of
+SP-NO-PERSONAL-DATA-GATE imports them from here when it lands and adds no copy. Two places
+restate a name because they cannot import it, and neither is a source: the ``env`` of the
+deny-list step of ``.github/workflows/ci.yml``, which a test holds equal to
+:data:`DENYLIST_ENV`, and that gate's spec.
 """
 
 from __future__ import annotations
@@ -128,7 +136,7 @@ class Denylist:
 def read_denylist(config_dir: Path | None = None) -> Denylist:
     """The maintainer's deny-list, from the file and the environment merged (SP-NO-PERSONAL-DATA-GATE D3).
 
-    A copy of that gate's reader (it lands later; not imported): the file
+    The one reader (that gate imports it, module docstring): the file
     :func:`denylist_file`, one entry per line with ``#`` comments, and
     :data:`DENYLIST_ENV`, one entry per line. Both live outside the tree;
     no entry is ever printed or written, and the frame that raises binds
