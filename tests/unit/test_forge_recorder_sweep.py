@@ -1652,3 +1652,85 @@ def test_a_deterministic_sample_of_the_sweep_meets_the_owners_goal(
             failures.append(f"{cell.id}: {outcome.verdict} {outcome.detail}")
     assert count >= 500
     assert failures == [], f"{len(failures)} of {count} cells: " + json.dumps(failures[:20])
+
+
+NUMERIC_LABEL_HOSTS = (
+    "163.com",
+    "126.com",
+    "126.net",
+    "127.net",
+    "360.cn",
+    "360.com",
+    "166.com",
+    "1688.com",
+    "10086.cn",
+    "10010.com",
+    "12306.cn",
+    "189.cn",
+    "58.com",
+    "39.net",
+    "4399.com",
+    "17173.com",
+    "2345.com",
+    "51.la",
+    "444.hu",
+    "24.hu",
+)
+"""Real public hosts whose labels before the last are digits: the first of the Tranco list JZW4Y."""
+
+NUMERIC_LABEL_TWINS = ("7.1.0.rc1", "1.2.3.beta2", "5.4.0.Final", "v1.2.3", "0.1.md", "2.0.py")
+"""Versions and file names spelt the same way: ordinary text wherever no URL, mailbox or remote leads them."""
+
+
+def _numeric_label_cells() -> list[Cell]:
+    """Every real numeric-label host in every position a host can stand, and the ordinary twins."""
+    found: list[Cell] = []
+    shapes = {
+        "mailbox": ("mail zqsweep@{h} now", False),
+        "scheme": (f"see https://{{h}}/{NS}/{REPO} now", True),
+        "scheme_port": (f"see http://{{h}}:8443/{NS}/{REPO} now", True),
+        "userinfo": (f"clone ssh://git@{{h}}/{NS}/{REPO}.git", True),
+        "scp": (f"git clone git@{{h}}:{NS}/{REPO}.git", True),
+        "slashes": (f"src=//{{h}}/{NS}/{REPO}/x", True),
+        "bare_path": (f"at {{h}}/{NS}/{REPO} now", True),
+        "bare_port": ("at {h}:8443 now", False),
+        "encoded": (f"see https%3A%2F%2F{{h}}%2F{NS}%2F{REPO} now", True),
+    }
+    for host in NUMERIC_LABEL_HOSTS:
+        for name, (shape, path) in shapes.items():
+            markers = (host, NS, REPO) if path else (host,)
+            found.append(
+                Cell(f"num_{name}_{host}", "hosts", shape.format(h=host), PLANTED, markers)
+            )
+        for position in ("title", "stderr", "stdin", "stdout_text", "kwargs", "json_value"):
+            text = f"see https://{host}/{NS}/{REPO} now"
+            cell_id = f"num_{position}_{host}"
+            found.append(Cell(cell_id, "hosts", text, PLANTED, (host, NS, REPO), position=position))
+    for twin in NUMERIC_LABEL_TWINS:
+        for name, text in (
+            ("prose", f"bump to {twin} now"),
+            ("path", f"open /gems/{twin}/lib"),
+            ("head", f"open {twin}/lib/x"),
+            ("line", f"at {twin}:10"),
+        ):
+            found.append(Cell(f"num_twin_{name}_{twin}", "hosts", text, ORDINARY))
+    for twin in ("7.1.0.rc1", "1.2.3.beta2", "5.4.0.Final", "v1.2.3"):
+        found.append(Cell(f"num_twin_at_{twin}", "hosts", f"gem i rails@{twin} now", ORDINARY))
+        found.append(Cell(f"num_twin_slashes_{twin}", "hosts", f"dir//{twin}/x", ORDINARY))
+    return found
+
+
+def test_numeric_label_hosts_are_hosts_in_every_position(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """PR #319 round 9 (4689483320): no marker of a numeric-label host is written; its version twins are."""
+    logging.disable(logging.CRITICAL)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    cells_ = _numeric_label_cells()
+    assert len(cells_) == 20 * 15 + 6 * 4 + 4 * 2
+    failures = [
+        f"{cell.id}: {outcome.verdict} {outcome.detail}"
+        for cell in cells_
+        if (outcome := run_cell(cell, monkeypatch, tmp_path)).verdict != "ok"
+    ]
+    assert failures == [], f"{len(failures)} of {len(cells_)} cells: " + json.dumps(failures[:20])

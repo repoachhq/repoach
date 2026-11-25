@@ -11184,6 +11184,88 @@ ROWS: tuple[Row, ...] = (
         outcome=Written(text="see https://forge.example.com/org/project/blob/x/@types now"),
         markers=("zqo/zqr",),
     ),
+    Row(
+        id="r9_numeric_label_host_mailbox_is_refused",
+        source="PR #319 review round 9 (4689483320)",
+        inp=Sample(body="write to zqkvn9@163.com for access"),
+        outcome=Refused("unknown mailbox at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r9_numeric_label_host_url_is_rewritten_and_its_path_learnt",
+        source="PR #319 review round 9 (4689483320)",
+        inp=Sample(
+            body="see https://163.com/zqns9/zqrepo9/pull/3 now, the zqrepo9 of zqns9 on 163.com"
+        ),
+        outcome=Written(
+            text="see https://forge.example.com/org/project/pull/3 now, the project of org on forge.example.com"
+        ),
+        markers=("163.com", "zqns9", "zqrepo9"),
+    ),
+    Row(
+        id="r9_numeric_label_host_after_slashes_is_replaced",
+        source="PR #319 review round 9 (4689483320)",
+        inp=Sample(body='<script src="//126.com/zqns9/zqrepo9/app.js"></script>'),
+        outcome=Written(text='<script src="//forge.example.com/org/project/app.js"></script>'),
+        markers=("126.com", "zqns9", "zqrepo9"),
+    ),
+    Row(
+        id="r9_numeric_label_host_off_the_tld_list_after_slashes_is_replaced",
+        source="PR #319 review round 9 (4689483320)",
+        inp=Sample(body="load //168.zqvip/zqns9/zqrepo9/app.js"),
+        outcome=Written(text="load //forge.example.com/org/project/app.js"),
+        markers=("168.zqvip", "zqns9", "zqrepo9"),
+    ),
+    Row(
+        id="r9_numeric_label_host_scp_remote_is_rewritten",
+        source="PR #319 review round 9 (4689483320)",
+        inp=Sample(body="git clone git@360.cn:zqns9/zqrepo9.git then git@7.1.0.rc1:zqns9/zqrepo9"),
+        outcome=Written(
+            text="git clone git@forge.example.com:org/project.git then git@forge.example.com:org/project"
+        ),
+        markers=("360.cn", "7.1.0.rc1", "zqns9", "zqrepo9"),
+    ),
+    Row(
+        id="r9_numeric_label_host_bare_before_a_path_is_replaced",
+        source="PR #319 review round 9 (4689483320)",
+        inp=Sample(body="mirrored at 360.cn/zqns9/zqrepo9 and 8.163.com:8443 today"),
+        outcome=Written(
+            text="mirrored at forge.example.com/org/project and forge.example.com:8443 today"
+        ),
+        markers=("360.cn", "163.com", "zqns9", "zqrepo9"),
+    ),
+    Row(
+        id="r9_numeric_label_host_percent_encoded_is_replaced",
+        source="PR #319 review round 9 (4689483320)",
+        inp=Sample(body="see https%3A%2F%2F163.com%2Fzqns9%2Fzqrepo9 now"),
+        outcome=Written(text="see https%3A%2F%2Fforge.example.com%2Forg%2Fproject now"),
+        markers=("163.com", "zqns9", "zqrepo9"),
+    ),
+    Row(
+        id="r9_numeric_label_private_host_mailbox_is_refused",
+        source="PR #319 review round 9 (4689483320)",
+        inp=Sample(stderr="rejected: zqkvn9@10.node1"),
+        outcome=Refused("unknown mailbox at exchanges[0].stderr"),
+    ),
+    Row(
+        id="r9_numeric_version_tags_and_file_names_are_ordinary",
+        source="PR #319 review round 9 (4689483320)",
+        inp=Sample(
+            body="bump 7.1.0.rc1 to 1.2.3.beta2, rails@7.1.0.rc1 and hibernate@5.4.0.Final; open 0.1.md:3, 2.0.py:10 and /gems/7.1.0.rc1/lib; v1.2.3"
+        ),
+        outcome=Written(
+            text="bump 7.1.0.rc1 to 1.2.3.beta2, rails@7.1.0.rc1 and hibernate@5.4.0.Final; open 0.1.md:3, 2.0.py:10 and /gems/7.1.0.rc1/lib; v1.2.3"
+        ),
+    ),
+    Row(
+        id="r9_numbered_comments_and_decimals_are_ordinary",
+        source="PR #319 review round 9 (4689483320)",
+        inp=Sample(
+            body="//1.build the list //2.get/set it //7.1.0.rc1/x, 163.com in prose, 3.14/2 and 10.5:3"
+        ),
+        outcome=Written(
+            text="//1.build the list //2.get/set it //7.1.0.rc1/x, 163.com in prose, 3.14/2 and 10.5:3"
+        ),
+    ),
 )
 
 
@@ -11636,10 +11718,10 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
     refused = [row for row in ROWS if isinstance(row.outcome, Refused)]
     bounded = [row for row in ROWS if isinstance(row.outcome, Bounded)]
     assert (len(ROWS), len(planted), len(ordinary), len(refused), len(bounded)) == (
-        987,
-        686,
-        301,
-        124,
+        997,
+        694,
+        303,
+        126,
         2,
     )
     assert len(residual) == 25

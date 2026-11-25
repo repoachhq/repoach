@@ -2209,10 +2209,109 @@ def test_a_host_is_read_by_dns_label_grammar_in_every_label() -> None:
         "pinned image@sha256:abc and node@18.19.1",
     ):
         assert closure.judge(text, none) is None, text
-    for run in ("1.2.3", "7.1.0.rc1", "1.0.0-rc1", "x.y", "x.1a", "x.-a", "x.a"):
-        assert closure._label_run(run) is None, run
+    for run in ("1.2.3", "1.0.0-rc1", "x.y", "x.1a", "x.-a", "x.a"):
+        assert closure._label_run(run, led=True) is None, run
+        assert closure._label_run(run, led=False) is None, run
     for run in ("gitlab.dc1", "ci.node1", "a.b.c9", "zq.xn--p1ai", "1.example.com"):
-        assert closure._label_run(run) is not None, run
+        assert closure._label_run(run, led=True) is not None, run
+        assert closure._label_run(run, led=False) is not None, run
+
+
+NUMERIC_HOSTS = (
+    "163.com",
+    "126.com",
+    "360.cn",
+    "8.163.com",
+    "5278.cc",
+    "168.vip",
+    "163.xn--fiqs8s",
+)
+
+
+def test_a_host_whose_leading_labels_are_digits_is_a_host_when_led() -> None:
+    """D8 (PR #319 round 9, 4689483320): a led run is a host by label grammar, whatever its labels hold.
+
+    After a ``<local>@``, a scheme, a URL userinfo, an scp user or ``//`` and a path,
+    ``163.com`` is a host as ``zq.com`` is. The version of a ``<package>@<version>`` is the one
+    led run that is not (``rails@7.1.0.rc1``), and only outside a URL and an scp remote.
+    """
+    none = closure.Known(())
+    for host in NUMERIC_HOSTS:
+        for text, reason in (
+            (f"mail zqkvn@{host} now", "unknown host"),
+            (f"see https://{host}/zqns/zqrepo now", "unknown host"),
+            (f"see HTTPS://{host.upper()}:8443", "unknown host"),
+            (f"push git@{host}:zqns/zqrepo.git", "unknown host"),
+            (f"clone ssh://git@{host}/zqns/zqrepo.git", "unknown host"),
+            (f"src=//{host}/zqns/zqrepo", "unknown host"),
+            (f"see https%3A%2F%2F{host}%2Fzqns", "unknown host"),
+        ):
+            assert closure.judge(text, none) == closure.Refusal(reason), text
+        assert [b.host for b in closure.mailboxes(f"zqkvn@{host}")] == [host]
+        assert closure.hosts(f"https://{host}/x") == [closure.Host(host, True, 8, 8 + len(host))], (
+            host
+        )
+        assert closure._label_run(host, led=True) == host.split(".")
+    for text in (
+        "mail zqkvn@10.node1 now",
+        "mail zqkvn@163.rc1 now",
+        "see https://7.1.0.rc1/x",
+        "clone ssh://git@7.1.0.rc1/zqns/zqrepo",
+        "dsn postgres://zqapp@7.1.0.rc1/db",
+        "push git@7.1.0.rc1:zqns/zqrepo.git",
+        "push git@7.1.0.rc1:/srv/x.git",
+        "mail zqkvn@1.2.3.node1 now",
+        "mail zqkvn@1.2.x3.rc1 now",
+        "src=//10.5.zqcorp/x and more",
+        "src=//163.com",
+        "src=//100.zqcorp:8443",
+        "src=//5278.cc/x",
+    ):
+        assert closure.judge(text, none) is not None, text
+    for text in (
+        "rails@7.1.0.rc1 and hibernate@5.4.0.Final, vue@3.0.beta2: done",
+        "rails@7.1.0.rc1.",
+        "see https://unpkg.com/rails@7.1.0.rc1/x.js and rails@7.1.0.rc1/lib",
+        "//7.1.0.rc1/x and dir//0.1.md, //2.0.py:3",
+        "//1.build the list, //2.get/set and //12.run",
+        "//100.zqcorp here and //200.zqcorp.",
+    ):
+        assert closure.judge(text, none) is None, text
+
+
+def test_an_unled_numeric_label_run_is_a_host_only_on_a_host_tld() -> None:
+    """D8 (PR #319 round 9, 4689483320): un-led, digits before a host TLD name a host; a version or a file does not.
+
+    ``360.cn/<ns>/<repo>`` and ``163.com:8443`` need no third label. A last label outside
+    :data:`repoach.forge.closure_tables.HOST_TLDS` (a tag, a word) or one that is also a file
+    extension stays ordinary text, and so does a bare dotted name in prose (NG4-8).
+    """
+    none = closure.Known(())
+    for host in ("163.com", "126.com", "360.cn", "8.163.com", "163.xn--fiqs8s"):
+        for text in (
+            f"at {host}/zqns/zqrepo now",
+            f"at {host}:8443 now",
+            f"[x]({host}/zqns/zqrepo)",
+        ):
+            assert closure.judge(text, none) == closure.Refusal("unknown host"), text
+        assert closure.judge(f"the {host} site", none) is None, host
+        assert closure.hosts(f"{host}/x") == [closure.Host(host, False, 0, len(host))]
+    for text in (
+        "7.1.0.rc1/lib, 1.2.3.beta2:3 and 5.4.0.Final/x",
+        "0.1.md/x, 0.1.md:3, 2.0.py:10 and 5278.cc/x",
+        "v1.2.3/x, 1.2.3/x, 3.14/2 and 10.5:3",
+        "168.vip/x, 10.node1/x and 10.node1:8443",
+        "zqhost.cn/x and zqhost.cn:80",
+    ):
+        assert closure.judge(text, none) is None, text
+    for run in ("7.1.0.rc1", "0.1.md", "10.node1", "168.vip"):
+        assert closure._label_run(run, led=False) is None, run
+        assert closure._label_run(run, led=True) is not None, run
+    assert closure.hosts("org.8.163.com/x") == []
+    started = time.perf_counter()
+    closure.judge("1." * 20000 + "com/x", none)
+    closure.judge("rails@1.2.rc1 " * 5000, none)
+    assert time.perf_counter() - started < 4.0
 
 
 def test_an_account_route_or_an_embedded_forge_path_on_a_public_host_is_refused() -> None:

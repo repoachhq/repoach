@@ -27,6 +27,7 @@ from repoach.core import text_forms
 
 from .closure_tables import (
     ACCOUNT_NAMESPACES,
+    EXTENSION_TLDS,
     HOST_TLDS,
     IPV4_RESERVED,
     IPV6_DOCUMENTATION,
@@ -398,7 +399,24 @@ _PUNYCODE_LABEL = re.compile(r"xn--[a-z0-9-]+", re.I)
 """An IDNA A-label (RFC 5890): a top-level domain such as ``xn--p1ai`` is a last label."""
 
 
-def _label_run(run: str) -> list[str] | None:
+_RELEASE_TAG = re.compile(
+    r"(?:a|alpha|b|beta|c|cr|dev|m|post|pre|preview|rc)[0-9]+"
+    r"|alpha|beta|final|pre|preview|rc|release|snapshot",
+    re.I,
+)
+"""The pre-release tag that ends a dotted version (``7.1.0.rc1``, ``5.4.0.Final``).
+
+A closed list of words: the first group takes a number, and no delegated top-level domain holds a
+digit (``xn--`` aside); none of the second is one either, so no public host ends in a tag.
+"""
+
+
+def _numeric_labels(labels: list[str]) -> bool:
+    """Whether every label before the last is all digits (``163.com``, ``7.1.0.rc1``)."""
+    return all(label.isdigit() for label in labels[:-1])
+
+
+def _label_run(run: str, *, led: bool) -> list[str] | None:
     """The labels of a dotted host name read by DNS label grammar, else ``None``.
 
     Every label is letters, digits and hyphens (RFC 1123 2.1), neither led nor ended by a hyphen.
@@ -406,7 +424,18 @@ def _label_run(run: str) -> list[str] | None:
     private name whose last label holds a digit is a host (``gitlab.dc1``, ``ci.node1``, PR #319
     round 7, 4687852986), while an all-numeric last label is not (RFC 3696 2: ``v1.2.3``,
     ``1.2.3.4``, read as an address elsewhere). A run whose labels before the last are all
-    digits is a version with a tag (``7.1.0.rc1``), never a host.
+    digits (PR #319 round 9, 4689483320) is a host wherever it is led, whatever its labels hold
+    (``zq@163.com``, ``https://10.node1/x``); un-led, it is a host on a last label of
+    :data:`HOST_TLDS` only (``360.cn/<ns>/<repo>``), and otherwise a version or a file name
+    (``7.1.0.rc1``, ``0.1.md``).
+
+    Args:
+        run: A run of letters, digits, dots and hyphens.
+        led: Whether a scheme ``://`` (its userinfo included), a ``<local>@`` or ``//`` stands
+            right before it. A caller that cannot say passes ``True``, which reads more hosts.
+
+    Returns:
+        The labels, or ``None`` when the run names no host.
     """
     body = run[:-1] if run.endswith(".") else run
     labels = body.split(".")
@@ -417,9 +446,86 @@ def _label_run(run: str) -> list[str] | None:
         return labels
     if len(last) < 2 or not (last[0].isascii() and last[0].isalpha()):
         return None
-    if all(label.isdigit() for label in labels[:-1]):
+    if not led and _numeric_labels(labels) and last.casefold() not in HOST_TLDS:
         return None
     return labels
+
+
+def _package_version(text: str, start: int, end: int, labels: list[str]) -> bool:
+    """Whether the run at ``start:end`` is the version of ``<package>@<version>`` (``rails@7.1.0.rc1``).
+
+    The one led run that is no host: two all-digit labels or more, then a release tag
+    (:data:`_RELEASE_TAG`), right after an ``@`` that ends no URL userinfo, and not followed by
+    an scp path (``git@<host>:<ns>/<repo>``).
+
+    Args:
+        text: The text read.
+        start: Offset of the run.
+        end: Offset after the run.
+        labels: The run's labels.
+
+    Returns:
+        ``True`` when the run is a version, never a host.
+    """
+    if not (len(labels) >= 3 and _numeric_labels(labels) and _RELEASE_TAG.fullmatch(labels[-1])):
+        return False
+    if not text.endswith("@", 0, start) or _userinfo_before(text, start - 1):
+        return False
+    path = text[end + 1 : end + 2]
+    return not (text[end : end + 1] == ":" and path and (path == "/" or path in _SEGMENT_START))
+
+
+def _followed_host(text: str, start: int, end: int, labels: list[str]) -> bool:
+    """Whether the run at ``start:end``, led by neither a scheme nor an ``@``, is a host: what stands around it.
+
+    A run of :data:`HOST_TLDS` with three labels or more is one after ``//`` or before
+    ``/<segment>`` or ``:<port digits>``. A run whose labels before the last are all digits
+    (:func:`_numeric_host`, PR #319 round 9, 4689483320) is judged by what it names, not by how
+    many labels it holds.
+
+    Args:
+        text: The text read.
+        start: Offset of the run.
+        end: Offset after the run.
+        labels: The run's labels.
+
+    Returns:
+        ``True`` when the run is a host.
+    """
+    slashes, followed = text.endswith("//", 0, start), _followed(text, end)
+    if _numeric_labels(labels):
+        mark = text[end : end + 1] if followed else ""
+        return _numeric_host(labels, slashes=slashes, mark=mark)
+    if len(labels) < 3 or labels[-1].casefold() not in HOST_TLDS:
+        return False
+    package = labels[0].casefold() in REVERSE_DNS_HEADS and not _port_after(text, end)
+    return slashes or (followed and not package)
+
+
+def _numeric_host(labels: list[str], *, slashes: bool, mark: str) -> bool:
+    """Whether a run with digits only before its last label is a host (``360.cn/<ns>/<repo>``).
+
+    A last label of :data:`HOST_TLDS` (or an IDNA one) is a host after ``//`` or before a path or a
+    port. After ``//`` and before a path or a port, any other last label is one too, a release
+    tag (:data:`_RELEASE_TAG`) and, before a port, a file extension (:data:`EXTENSION_TLDS`,
+    ``//2.0.py:3``) aside. Two labels whose first holds one or two digits are a numbered comment
+    (``//1.build the list``, ``//1.get/set``) where the follow or the top-level domain is missing.
+
+    Args:
+        labels: The run's labels.
+        slashes: Whether ``//`` stands right before the run.
+        mark: ``/`` before a path segment, ``:`` before port digits, ``""`` before neither.
+
+    Returns:
+        ``True`` when the run is a host.
+    """
+    last = labels[-1].casefold()
+    ordinal = len(labels) == 2 and len(labels[0]) <= 2
+    if last in HOST_TLDS or _PUNYCODE_LABEL.fullmatch(last):
+        return mark != "" or (slashes and not ordinal)
+    if last in EXTENSION_TLDS:
+        return slashes and mark == "/"
+    return slashes and mark != "" and not ordinal and not _RELEASE_TAG.fullmatch(last)
 
 
 def _dotless_authority(text: str, start: int, host: str) -> bool:
@@ -537,7 +643,8 @@ def _host_port(authority: str, empty: bool) -> bool:
         port = rest[1:]
     else:
         host, _, port = authority.partition(":")
-        if not (_label_run(host) or _ipv4(host) or (host and is_placeholder_host(host))):
+        named = _label_run(host, led=True) or _ipv4(host)
+        if not (named or (host and is_placeholder_host(host))):
             return False
     return all(c in _DIGITS for c in port)
 
@@ -646,11 +753,15 @@ def hosts(text: str) -> list[Host]:
 
     A dotted name is a host only when it is **led** or **followed**, and
     never otherwise, whatever its last label. Led by a scheme ``://`` or
-    by ``<local>@``, a label run of two or more labels is a host. Led by
-    ``//`` or followed by ``/<segment>`` or ``:<port digits>``, it is a
-    host when it has three labels or more and a last label of
-    :data:`HOST_TLDS`; followed by ``/<segment>`` only, its first label must
-    also not be a reverse-DNS head (:data:`REVERSE_DNS_HEADS`).
+    by ``<local>@``, a label run of two or more labels is a host, whatever
+    its labels hold, the version of a ``<package>@<version>`` aside
+    (:func:`_package_version`). Led by ``//`` or followed by
+    ``/<segment>`` or ``:<port digits>``, it is a host when it has a last
+    label of :data:`HOST_TLDS` and three labels or more; followed by
+    ``/<segment>`` only, its first label must also not be a reverse-DNS
+    head (:data:`REVERSE_DNS_HEADS`). A run with digits only before its
+    last label needs no third label there (:func:`_numeric_host`:
+    ``360.cn/<ns>/<repo>``).
     A dotted IPv4 address follows the same rule whatever its octets: it is
     a host when it is led by a scheme, a ``<local>@`` or ``//``, or followed
     by ``/<segment>`` or ``:<port digits>``, outside a version context
@@ -671,20 +782,15 @@ def hosts(text: str) -> list[Host]:
             and not _version_context(text, start, end)
         ):
             found.append(Host(run.rstrip("."), led or slashes, start, end))
-        labels = _label_run(run)
+        labels = _label_run(run, led=led or slashes)
         host = run[:-1] if run.endswith(".") else run
         if labels is None:
             if _dotless_authority(text, start, host):
                 found.append(Host(host, True, start, end))
-            continue
-        if led:
-            found.append(Host(host, True, start, end))
-        elif (
-            len(labels) >= 3
-            and labels[-1].casefold() in HOST_TLDS
-            and (slashes or _followed(text, end))
-            and (slashes or _port_after(text, end) or labels[0].casefold() not in REVERSE_DNS_HEADS)
-        ):
+        elif led:
+            if not _package_version(text, start, end, labels):
+                found.append(Host(host, True, start, end))
+        elif _followed_host(text, start, end, labels):
             found.append(Host(host, False, start, end))
     for start, end, _address in _bracketed(text):
         if _led(text, start) or text.endswith("//", 0, start):
@@ -730,7 +836,10 @@ def mailboxes(text: str) -> list[Mailbox]:
             continue
         run = m.group(0).rstrip("-")
         body = run[:-1] if run.endswith(".") else run
-        if _label_run(run) is None and _ipv4(body) is None:
+        labels = _label_run(run, led=True)
+        if labels is None and _ipv4(body) is None:
+            continue
+        if labels is not None and _package_version(text, at + 1, at + 1 + len(run), labels):
             continue
         if local.casefold().startswith("mailto:"):
             begin += 7
