@@ -177,7 +177,14 @@ escaped values, non-node-id base64 and JSON-in-a-string escapes are out of
 scope (SP-RECORDER-REDACTS-BY-CLASS Threat model & NG4).
 A `<user>@` lead is a local part of ASCII mailbox characters or any Unicode
 letter or digit (`josé@<host>`), or a URL's userinfo from `<scheme>://` to the
-`@` whatever it ends with (`https://u:p=@<host>`); a fixture is refused when
+`@` whatever it ends with (`https://u:p=@<host>`). When the authority read to its
+first `/` names no `<host>[:<port>]`, a `/` stood in the password
+(`redis://:<pw>/<pw>@<host>`): the userinfo then runs to the last `@` of the token,
+whatever it crosses, and is refused, and the redactor leaves such a URL as it
+stands for the judge, never rewritten; a path holding an `@` after a host
+(`https://www.npmjs.com/package/@scope/name`) stays a path, and a one-label host
+other than a placeholder followed by a path `@` is refused, since it reads as a
+user and a password as well. A fixture is refused when
 any string it writes, the method's arguments and argv included, carries a
 token-shaped value, or a home path in any decoded form (`/home/<x>`,
 `/Users/<x>`, `/var/home/<x>`, `C:\Users\<x>`, `C:/Users/<x>`, and the Windows
@@ -212,7 +219,10 @@ was typed, and a mention's handle is read on the letters of every script, so
 live in `repoach.forge.denylist` and `repoach.forge.fixture_judge`, shared by
 the live recorder and the offline transform, as is the one role builder,
 `repoach.forge.recording.assign_roles`; the judge reads a fixture through
-`repoach.forge.fixture_reading`, never the recorder's internals. The deny-list fails closed: an entry point
+`repoach.forge.fixture_reading`, never the recorder's internals. The forms a text
+is judged in (its decoded layers, full casefolds, A-labels and node-id numbers)
+are read in `repoach.core.text_forms`, which imports the standard library only, so
+the deny-list reader depends on no forge module. The deny-list fails closed: an entry point
 called without one reads the maintainer's, and only an explicit empty
 `Denylist()` is empty. A deny-list file that exists but cannot be read is a refusal naming the reason, never an
 empty list, and no caller is handed an entry. The token shapes are judged on every decoded
