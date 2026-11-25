@@ -207,15 +207,27 @@ such a route, including one that embeds another forge's path: a Go host's
 `pkg.go.dev/github.com/<owner>/…` (the module proxy and checksum database too),
 the npm, yarn and npmmirror registries' `-/user/org.couchdb.user:<login>`, `-/org`
 and `-/team`, docs.rs owners, Discourse, Mozilla, Apache, Read the Docs and Stack
-Overflow profiles and Wikipedia's user namespaces, in any language; a URL whose
+Overflow profiles (by id alone too), Mozilla's support and wiki users, Apache's
+Confluence personal spaces (`display/~<id>`) and Wikipedia's user namespaces, in any
+language. An account a query names is read as one in a path (`TENANT_QUERIES`:
+`index.php?title=User:<name>`, `viewspace.action?key=~<id>`). A URL whose
 identity the rewrite cannot place is left for the judge to refuse, never written.
 A host name is read by DNS label grammar, so a private name whose last label holds
 a digit (`gitlab.dc1`, `ci.node1`) is a host, while a version (`v1.2.3`,
-`7.1.0.rc1`) or an address is not. The deny-list and the judge compare full
+`7.1.0.rc1`) or an address is not. A name whose labels before the last are all
+digits (`163.com`, `360.cn`) is a host wherever a scheme, a `<user>@`, an scp user or
+`//` and a path lead it, whatever its labels hold, the version of a
+`<package>@<version>` aside (`rails@7.1.0.rc1`); un-led, it is one before a path or a
+port on a host top-level domain only. Such a host is never replaced in running text:
+a URL or an scp remote on it is rewritten whole, and anywhere else the judge refuses
+the recording. Named costs: `pkg@0.1.md`, `1.0.dev/<x>` and `10.ms/2` are refused;
+un-led on a label outside the list (`168.vip/<ns>`), a two-digit first label after
+`//` on such a label and a bare `163.com` in prose are written. The deny-list and the judge compare full
 casefolds on both sides (NFC and NFKC, each normalised, casefolded and normalised
 again), so `ß`, a decomposed entry and a fullwidth one match however either side
 was typed, and a mention's handle is read on the letters of every script, so
-`@müller` is one handle replaced whole. The deny-list reader and the last judge before a write
+`@müller` is one handle replaced whole. The deny-list reader, the one source of its names and
+contract, and the last judge before a write
 live in `repoach.forge.denylist` and `repoach.forge.fixture_judge`, shared by
 the live recorder and the offline transform, as is the one role builder,
 `repoach.forge.recording.assign_roles`; the judge reads a fixture through
@@ -229,6 +241,12 @@ empty list, and no caller is handed an entry. The token shapes are judged on eve
 form of a string, as the home path and the deny-list are. The recorder's own `git` child (`origin_url`) runs with
 `PATH`, `HOME`, `XDG_CONFIG_HOME`, `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`,
 `GIT_CONFIG_NOSYSTEM` and `SYSTEMROOT` only (`GIT_ENV_KEYS`), never a token or the deny-list.
+Reading the remote fails closed: a missing `git`, a timeout, an unreadable answer and any exit
+but git's own report of no such remote (`git remote` succeeds and lists no `origin`, whatever
+the locale) refuse the recording (exit 2, `origin remote: unreadable (<reason>)`), naming
+neither the path nor the remote. The live recorder is
+`repoach.forge.fixture_pipeline.record_live`; `scripts/record_forge_fixture.py` is its command
+line.
 
 Public attribution is not personal data: the copyright holder in `LICENSE`,
 the `authors` of `pyproject.toml`, the security contact in `SECURITY.md`, the
