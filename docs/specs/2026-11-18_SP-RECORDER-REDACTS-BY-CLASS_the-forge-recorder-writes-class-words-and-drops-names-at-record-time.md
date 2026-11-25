@@ -1861,6 +1861,58 @@ no forge module (`Denylist.judged_with` copies the oracle's `Known` as the
 dataclass it is), so the gate of SP-NO-PERSONAL-DATA-GATE can read the
 deny-list without depending on the forge package. Counts: 987 rows = 686
 planted + 301 ordinary = 861 written + 124 refused + 2 bounded, 25 residuals.
+(p) **Review round 9 of PR #319: numeric-label hosts, account pages, an origin
+that cannot be read, and one live recorder.** D8: round 7's rule that a run
+whose labels before the last are all digits is a version dropped `163.com`,
+`126.com` and `360.cn`, and a mailbox or a URL on one passed the judge. A run
+led by a scheme, a userinfo, a `<local>@` or an scp user is now a host by
+label grammar alone, whatever its labels hold (`closure._label_run(run, *,
+led)`, the keyword without a default). One led run is not a host: the version
+of a `<package>@<version>`, two all-digit labels or more and a release tag of
+a closed list, outside a URL and an scp remote (`rails@7.1.0.rc1`, pinned
+since round 7). Un-led, such a run is a host before a path or a port on a last
+label of `HOST_TLDS`, with two labels too (`360.cn/<ns>/<repo>`,
+`163.com:8443`). After `//`, it is one before a path or a port on any last
+label, a release tag and, before a port, an extension code aside, and with
+nothing after it on a `HOST_TLDS` label; two labels whose first holds one or
+two digits are a numbered comment (`//1.build the list`, `//1.get/set`) where
+the follow or the top-level domain is missing. D7: the text reader learns the
+namespace and repository after such a host but never the host itself
+(`closure.is_numeric_label_host`), so nothing is replaced by a class token
+that would make a refused text weaker: a URL or an scp remote on it is
+rewritten whole by the convenience layer, and anywhere else the judge refuses
+the recording as `unknown host`. Measured: 4 091 real numeric-label hosts (the
+Tranco list JZW4Y) in 13 positions, 0 marker written in the ten led ones and
+`//` (16 of 862 hosts off the list after `//`, the numbered-comment shape), 0
+un-led on a listed label; 17 735 generated texts, none refused at `638dcf5` or
+`27d9654` written with a marker. Named costs: `pkg@0.1.md` (an extension code
+after `@`), `1.0.dev/<x>` and `10.ms/2` (a top-level domain word un-led before
+a path) and a path double slash before such a run (`a//100.x/y`) are refused.
+Residuals: un-led on a label outside `HOST_TLDS` (`168.vip/<ns>`, NG4-3) and a
+bare `163.com` in prose (NG4-8). D8: `TENANT_ROUTES` gains Mozilla support and
+wiki users, Apache Confluence personal spaces (a route ending in `~`), Stack
+Overflow profiles by id alone and developer stories, Wikipedia
+`w/index.php/<Ns>:`, Mozilla's Mercurial and Apache's Review Board users; a
+longer route is read first, so a profile's name is read before its id.
+`TENANT_QUERIES` names the accounts a query holds (`title`, `titles` and
+`page` of MediaWiki, `key`, `spaceKey` and `username` of Confluence, Jira's
+and Bugzilla's profiles), read after their host in every decoded form and
+whatever leads it; the redactor hands the oracle the query with the path and
+drops it with the URL it rewrites. A wiki namespace may spell its space `%20`
+(`+` in a query), and a leading `:` is skipped. D4: the live recorder moves to
+`repoach.forge.fixture_pipeline.record_live`, text unchanged, with
+`build_roles`, `origin_url`, `git_env`, `GIT_ENV_KEYS` and `WRITE_METHODS`;
+the script keeps its command line and exit codes. D7: `origin_url` fails
+closed (`OriginRemoteError`, exit 2 `origin remote: unreadable (<reason>)`):
+a missing `git`, a timeout, an unreadable or empty answer and any failure but
+git's own report of no such remote (`git remote get-url` fails, and `git
+remote` succeeds and lists no `origin`), whatever the locale and version. K8:
+`repoach.forge.denylist` states that it is the one source of the deny-list's
+names, contract and reader; a test holds every module, every script and
+`ci.yml` to it. O2: every `--deselect` of `ci.yml` is held to one collected
+test. The docstrings of `repoach.core.text_forms` state every parameter and
+value, and the order of `decoded_forms`. Counts: 1 010 rows = 705 planted +
+305 ordinary = 871 written + 137 refused + 2 bounded, 25 residuals.
 
 ## Intent
 
@@ -2037,8 +2089,8 @@ whole behaviour row by row.
   reader each, never a regex shared with `recording.py`:
   - a **label run**: `L1.L2…Ln`, `n >= 2`, each label `[A-Za-z0-9-]{1,63}`
     not starting or ending with `-`, an optional trailing `.`, delimited by
-    any character outside `[A-Za-z0-9.-]`; `Ln` alphabetic, at least two
-    letters;
+    any character outside `[A-Za-z0-9.-]`; `Ln` led by a letter, at least two
+    characters (0.28 (n)); a run with digits only before `Ln` follows 0.28 (p);
   - **H1, led**: the run is immediately preceded by `<scheme>://`
     (`URL_SCHEMES` or any `[A-Za-z][A-Za-z0-9+.-]*://`) or by
     `<local>@` (a non-empty run of `LOCAL_CHARS` = letters, digits,
@@ -2555,17 +2607,17 @@ ids declared) stand.
 ## Interface
 
 Inputs (0.17; the 0.6–0.16 names not listed here are deleted or demoted per **What 0.17 removes or demotes**):
-- `src/repoach/forge/closure.py`: `LOCAL_CHARS`, and from `closure_tables.py` (0.28 (k)) `HOST_TLDS`, `EXTENSION_TLDS`, `REVERSE_DNS_HEADS`, `IPV4_RESERVED`, `PUBLIC_SUFFIXES` (the 25 registrable suffixes), `PUBLIC_HOSTS`, `TENANT_ROUTES`, `ACCOUNT_NAMESPACES` (0.28 (m)), `FORGE_PATH_HOSTS`, `GO_MODULE_HOSTS`, `TENANT_ROUTE_PUBLIC` (0.28 (n)); `is_placeholder_host(host)`, `is_public_host(host)`, `is_tenant_path(host, path)`, `has_tenant_path(text)` (0.28 (l)), `tenant_identities(text) -> list[str]` (0.28 (n)), `userinfos(text) -> list[Mailbox]`, `is_doc_mailbox_host(host)`, `Host(host, led, start, end, literal=False)`, `hosts(text) -> list[Host]`, `Mailbox(local, host, start, end)`, `mailboxes(text) -> list[Mailbox]`, `public_addresses(text) -> list[str]`, `forms_of(text, *, literals=())`, `is_literal_mailbox(box)`, `JUDGED_KINDS`, `Known` (an opaque, count-only repr; `values(kind)`), `residual(text, known) -> tuple[kind, n] | None`, `judge(text, known) -> Refusal | None` with `Refusal(reason, kind, n)` and reasons `residual`, `tenant path`, `unknown host`, `public address`, `unknown mailbox`, `url userinfo`.
+- `src/repoach/forge/closure.py`: `LOCAL_CHARS`, and from `closure_tables.py` (0.28 (k)) `HOST_TLDS`, `EXTENSION_TLDS`, `REVERSE_DNS_HEADS`, `IPV4_RESERVED`, `PUBLIC_SUFFIXES` (the 25 registrable suffixes), `PUBLIC_HOSTS`, `TENANT_ROUTES`, `ACCOUNT_NAMESPACES` (0.28 (m)), `FORGE_PATH_HOSTS`, `GO_MODULE_HOSTS`, `TENANT_ROUTE_PUBLIC` (0.28 (n)), `TENANT_QUERIES` (0.28 (p)); `is_numeric_label_host(host)` (0.28 (p)), `is_placeholder_host(host)`, `is_public_host(host)`, `is_tenant_path(host, path)`, `has_tenant_path(text)` (0.28 (l)), `tenant_identities(text) -> list[str]` (0.28 (n)), `userinfos(text) -> list[Mailbox]`, `is_doc_mailbox_host(host)`, `Host(host, led, start, end, literal=False)`, `hosts(text) -> list[Host]`, `Mailbox(local, host, start, end)`, `mailboxes(text) -> list[Mailbox]`, `public_addresses(text) -> list[str]`, `forms_of(text, *, literals=())`, `is_literal_mailbox(box)`, `JUDGED_KINDS`, `Known` (an opaque, count-only repr; `values(kind)`), `residual(text, known) -> tuple[kind, n] | None`, `judge(text, known) -> Refusal | None` with `Refusal(reason, kind, n)` and reasons `residual`, `tenant path`, `unknown host`, `public address`, `unknown mailbox`, `url userinfo`.
 - `src/repoach/forge/recording.py`: `rename_logins_in_text(text, roles)`, `rename_logins_in_argument(arg, roles)`, `rewrite_recorded_source(source, forge)`, `replace_known_in_source(source, known)` (0.28 (l)), `login_sightings(values)`, `assign_roles(sightings, *, bot="", maintainer=None, author=None, held=...)` (0.28 (k)), `known_values(raw, *, roles, remote="", denylist=None, min_length=4, ids=None, projects=None, forge="github", keep_users=frozenset(), keep_projects=frozenset()) -> Known`, `replace_known(text, known, mapping=None) -> str`, `replace_known_in_value`, `replace_known_in_stdout`, `Known.mapping()`, `ReplaySpawn(exchanges, normalize=None)`, `_PROJECT_ID_RE`, `project_id_values` (D9), `_api_route(path)`, `LANGUAGE_AT_WORDS` with its parts `PYTHON_DECORATORS`, `CSS_AT_RULES`, `DOC_TAGS`, `LANGUAGE_ANNOTATIONS` (in `recording_tables.py` since 0.28 (k)), `_URL_IPV6_HOST` and `_URL_BODY` of `_URL_IN_TEXT_RE` (0.20), plus the unchanged 0.16 names of D1, D1b (demoted), D1c and D2.
-- `src/repoach/forge/fixture_pipeline.py` (0.28 (l)): `classify_calls`, `synthesize_user_ids`, `replace_known_in_calls`, `redact_recording(calls, args, kwargs, *, raw, roles, remote, denylist, forge, method) -> RedactedRecording`, `seal_fixture(fixture, *, denylist, known, users_in=None, sort_keys=False)`, and since 0.28 (m) the offline transform: `redact_fixture(data, ids=None, *, forge, projects=None, remote="", denylist=None)`, `redact_corpus(root, *, check, denylist=None)`, `fixture_known`, `fixture_roles`, `fixture_forge`, `redact_output`, `corpus_start`, `render`, `ResidualValueError`, `UnknownForgeError`; `repoach.forge.fixture_judge.has_secret_token(text)`, and since 0.28 (n) `find_secret_tokens(text)`, `SECRET_TOKEN_PATTERNS`, `CONSTANT_FIELDS`; `repoach.forge.denylist.Denylist.judged_with(known)`, `entry_fold(entry)` (0.28 (n)).
+- `src/repoach/forge/fixture_pipeline.py` (0.28 (l)): `classify_calls`, `synthesize_user_ids`, `replace_known_in_calls`, `redact_recording(calls, args, kwargs, *, raw, roles, remote, denylist, forge, method) -> RedactedRecording`, `seal_fixture(fixture, *, denylist, known, users_in=None, sort_keys=False)`, and since 0.28 (m) the offline transform: `redact_fixture(data, ids=None, *, forge, projects=None, remote="", denylist=None)`, `redact_corpus(root, *, check, denylist=None)`, `fixture_known`, `fixture_roles`, `fixture_forge`, `redact_output`, `corpus_start`, `render`, `ResidualValueError`, `UnknownForgeError`, and since 0.28 (p) the live recorder: `record_live(*, forge_name, cwd, case, method, args, kwargs, trim, out_root) -> Path`, `build_roles(calls, *, bot, maintainer, author, also=())`, `origin_url(cwd) -> str`, `OriginRemoteError`, `git_env()`, `GIT_ENV_KEYS`, `WRITE_METHODS`; `repoach.forge.fixture_judge.has_secret_token(text)`, and since 0.28 (n) `find_secret_tokens(text)`, `SECRET_TOKEN_PATTERNS`, `CONSTANT_FIELDS`; `repoach.forge.denylist.Denylist.judged_with(known)`, `entry_fold(entry)` (0.28 (n)).
 - `src/repoach/forge/fixture_reading.py` (0.28 (n)): `RECORDED_FIELDS`, `FIXTURE_SCHEMA_KEYS`, `CODE_KEYS`, `LOGIN_KEYS`, `CLASS_WORD_RE`, `NON_PERSON_LOGINS`, `SECRET_KEY_RE`, `SYNTHETIC_IDS_KEY`, `SYNTHETIC_PROJECT_IDS_KEY`, `RECORDED_SOURCE_HEAD_RE`, `is_classified_login(login)`, `login_values(payload, path="")`, `decode_json_values(text)`, `secret_keys(value)`, `fixture_strings(value, path)`, `scanned_strings(fixture)`.
 - `src/repoach/core/text_forms.py` (0.28 (o), standard library only): `decoded_forms(text) -> list[str]`, `ascii_labels(text) -> str`, `folds(text) -> tuple[str, ...]`, `node_id_numbers(text) -> list[str]`, `token_pattern(word)`, `folded_forms(text) -> list[str]`; `repoach.forge.recording.userinfo_crosses_path(url) -> bool` (0.28 (o)); `repoach.forge.denylist.KnownValues`.
-- `scripts/record_forge_fixture.py`: `refuse_unclassified(fixture, denylist, known)`, `generic_class` (home path only), `build_roles` (through `assign_roles`), `Denylist`, `read_denylist`, `GIT_ENV_KEYS`, `git_env()`, `origin_url`, `record`, the CLI unchanged.
+- `scripts/record_forge_fixture.py`: `main(argv=None)`, `FIXTURE_ROOT`, the CLI unchanged; the recorder is `fixture_pipeline.record_live` (0.28 (p)).
 - `scripts/redact_forge_fixtures.py`: `redact_fixture(data, ids=None, *, forge, projects=None, remote="", denylist=None)`, `fixture_known(data, *, roles=None, remote="", denylist=None, ids=None, projects=None, forge="github")` (`None` is the maintainer's deny-list since 0.28 (k)), `fixture_roles(data, also=())`, `ResidualValueError`, `run`, the CLI unchanged.
 
-Outputs: a fixture file, or exit 2 with one of `unclassified: <path>`, `generic class home_path at <path>`, `deny-list entry <n> at <path>`, `deny-list entry <n>: too short`, `residual <kind> <n> at <path>` (kinds `login`, `host`, `segment`, `id`, `name`, `mailbox`), `tenant path at <path>`, `unknown host at <path>`, `public address at <path>`, `unknown mailbox at <path>`, `url userinfo at <path>`, `refusing to record <method>: no protocol method has that name`, `needle <kind> <n>: too short`, `needle <kind> <n>: a class word or placeholder`, `synthetic user id <n> past 1999`, `synthetic project id <n> past 2999`, `secret-shaped value at <path>`, `nesting too deep: the recording cannot be walked` (0.21, a `RecursionError` of any reader; offline `nesting too deep: the fixture cannot be walked`) on stderr, stdout empty. `generic class mailbox`, `generic class public_ipv4` and `unredacted host` are no longer written by anything.
+Outputs: a fixture file, or exit 2 with one of `unclassified: <path>`, `generic class home_path at <path>`, `deny-list entry <n> at <path>`, `deny-list entry <n>: too short`, `residual <kind> <n> at <path>` (kinds `login`, `host`, `segment`, `id`, `name`, `mailbox`), `tenant path at <path>`, `unknown host at <path>`, `public address at <path>`, `unknown mailbox at <path>`, `url userinfo at <path>`, `refusing to record <method>: no protocol method has that name`, `needle <kind> <n>: too short`, `needle <kind> <n>: a class word or placeholder`, `synthetic user id <n> past 1999`, `synthetic project id <n> past 2999`, `secret-shaped value at <path>`, `nesting too deep: the recording cannot be walked` (0.21, a `RecursionError` of any reader; `origin remote: unreadable (<reason>)`, 0.28 (p); offline `nesting too deep: the fixture cannot be walked`) on stderr, stdout empty. `generic class mailbox`, `generic class public_ipv4` and `unredacted host` are no longer written by anything.
 
-Errors: `UnclassifiedValueError`, `DenylistError`, `UnknownForgeError`, `NeedleError`, `ResidualValueError`, `SyntheticIdsExhaustedError` as at 0.16; every message carries a kind, an ordinal or a path, never a value.
+Errors: `UnclassifiedValueError`, `DenylistError`, `OriginRemoteError` (0.28 (p)), `UnknownForgeError`, `NeedleError`, `ResidualValueError`, `SyntheticIdsExhaustedError` as at 0.16; every message carries a kind, an ordinal or a path, never a value.
 
 ## Behavior
 
