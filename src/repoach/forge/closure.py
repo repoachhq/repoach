@@ -313,7 +313,7 @@ def _route_pattern(suffix: str, route: str) -> str:
     if marked:
         return lead + _namespace_pattern(last, public, _SEGMENT_END)
     exempt = "".join(
-        rf"(?!{re.escape(word)}[.,;:!)\]]*(?:[{_SEGMENT_END}]|$))" for word in sorted(public)
+        rf"(?!{re.escape(word)}[.,;:!)\]`*]*(?:[{_SEGMENT_END}]|$))" for word in sorted(public)
     )
     return rf"{lead}{exempt}[^{_SEGMENT_END}]"
 

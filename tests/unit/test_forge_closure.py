@@ -2261,6 +2261,9 @@ def test_an_account_named_in_a_query_is_read_as_one_in_a_path() -> None:
             assert closure.is_tenant_path(host.partition(":")[0], path), shape
         written = recording.redact_urls_in_text(f"see https://{shape} now")
         assert "kvn" not in written.casefold(), written
+    assert closure.has_tenant_path("en.wikipedia.org/?title=User:Kvnuser|en.wikipedia.org/x")
+    assert not closure.has_tenant_path("notwikipedia.org/?title=User:Kvnuser")
+    assert not closure.has_tenant_path("en.wikipedia.org/wiki/A&title=User:Kvnuser")
     assert closure.tenant_identities(
         "en.wikipedia.org/w/index.php?title=User:Kvnuser&x=1 cwiki.apache.org/x?key=~kvnid#a"
     ) == ["User:Kvnuser", "~kvnid"]
@@ -2381,6 +2384,13 @@ def test_a_host_whose_leading_labels_are_digits_is_a_host_when_led() -> None:
         "src=//5278.cc/x",
     ):
         assert closure.judge(text, none) is not None, text
+    for text, host in (
+        ("clone ssh://git@7.1.0.rc1/x", "7.1.0.rc1"),
+        ("dsn postgres://zq:p^w@7.1.0.rc1/db", "7.1.0.rc1"),
+        ("see https://10.node1/@zqscope/x", "10.node1"),
+    ):
+        assert [h.host for h in closure.hosts(text)] == [host], text
+    assert closure.userinfos("see https://10.node1/@zqscope/x") == []
     for host in (*NUMERIC_HOSTS, "7.1.0.rc1", "10.node1", "163.COM."):
         assert closure.is_numeric_label_host(host), host
     for host in ("163.com.cn", "gitlab.dc1", "1.2.3.4", "1.example.com", "163", "", "redis"):
@@ -2406,6 +2416,7 @@ def test_an_unled_numeric_label_run_is_a_host_only_on_a_host_tld() -> None:
     none = closure.Known(())
     for host in ("163.com", "126.com", "360.cn", "8.163.com", "163.xn--fiqs8s"):
         for text in (
+            f"AT {host.upper()}/ZQNS/ZQREPO NOW",
             f"at {host}/zqns/zqrepo now",
             f"at {host}:8443 now",
             f"[x]({host}/zqns/zqrepo)",
@@ -2425,6 +2436,9 @@ def test_an_unled_numeric_label_run_is_a_host_only_on_a_host_tld() -> None:
         assert closure._label_run(run, led=False) is None, run
         assert closure._label_run(run, led=True) is not None, run
     assert closure.hosts("org.8.163.com/x") == []
+    for labels in (["168", "vip"], ["5278", "cc"], ["100", "zqcorp"]):
+        assert not closure._numeric_host(labels, slashes=False, mark="/"), labels
+        assert closure._numeric_host(labels, slashes=True, mark="/"), labels
     started = time.perf_counter()
     closure.judge("1." * 20000 + "com/x", none)
     closure.judge("rails@1.2.rc1 " * 5000, none)
@@ -2526,6 +2540,7 @@ def test_an_account_route_or_an_embedded_forge_path_on_a_public_host_is_refused(
         "see https://wiki.mozilla.org/Firefox:Home and https://wiki.mozilla.org/Firefox/Planning",
         "see https://cwiki.apache.org/confluence/display/KAFKA/KIP-1 and confluence/display/~ there",
         "see https://stackoverflow.com/users/login, https://stackoverflow.com/users/ and /users?tab=x",
+        "see `stackoverflow.com/users/login` and **docs.rs/releases/recent**",
         "see https://en.wikipedia.org/w/index.php/Help:Contents and https://en.wikipedia.org/wiki/C++:_x",
         "see https://hg.mozilla.org/mozilla-central/ and https://reviews.apache.org/r/1/",
     ):
