@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 import functools
 import inspect
+import ipaddress
 import itertools
 import json
 import re
@@ -757,6 +758,69 @@ def _repository_root(path: str) -> str | None:
     return _bare(core[-1])
 
 
+_URL_HOST_NAME_RE = re.compile(
+    r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:xn--[a-z0-9-]+|[a-z][a-z0-9-]*[a-z0-9])\.?",
+    re.I,
+)
+"""A dotted host name by DNS label grammar (RFC 1123 2.1): its last label an A-label or led by a letter."""
+
+
+def _names_host_and_port(authority: str) -> bool:
+    """Whether ``authority`` reads as ``<host>[:<port>]`` (RFC 3986 3.2.2, 3.2.3), the port ASCII digits.
+
+    The host is a dotted name (:data:`_URL_HOST_NAME_RE`), an IPv4 address, a bracketed IPv6
+    literal (zone id included) or a placeholder-class host such as ``localhost``. A one-label
+    name other than a placeholder is not: followed by a ``/`` and an ``@`` it reads as a user and
+    a password as well.
+    """
+    if authority.startswith("["):
+        literal, bracket, tail = authority[1:].partition("]")
+        try:
+            ipaddress.IPv6Address(literal.partition("%")[0])
+        except ValueError as exc:
+            _log.debug("forge.recording.not_an_ipv6_host", error=type(exc).__name__)
+            return False
+        if not bracket or (tail and not tail.startswith(":")):
+            return False
+        port = tail[1:]
+    else:
+        name, _, port = authority.partition(":")
+        if not name:
+            return False
+        try:
+            ipaddress.IPv4Address(name)
+        except ValueError as exc:
+            _log.debug("forge.recording.not_an_ipv4_host", error=type(exc).__name__)
+            if not (_URL_HOST_NAME_RE.fullmatch(name) or closure.is_placeholder_host(name)):
+                return False
+    return all(c in "0123456789" for c in port)
+
+
+def userinfo_crosses_path(url: str) -> bool:
+    """Whether a ``/``, ``?`` or ``#`` stands inside the userinfo of ``url`` (PR #319 round 8, 4688674758).
+
+    The authority runs from ``<scheme>://`` to its first ``/``, ``?`` or ``#`` (RFC 3986 3.2).
+    When what follows its last ``@`` (or the whole of it, when it holds none) is no
+    ``<host>[:<port>]`` (:func:`_names_host_and_port`) and an ``@`` stands later in ``url``, the
+    authority was cut inside a userinfo: ``redis://:Ab/cd@<host>`` names the host ``<host>`` with
+    the password ``Ab/cd``, not an empty host with the port ``Ab``. Such a URL is never
+    rewritten; it is left for the closure oracle, which refuses it. A path holding an ``@`` after
+    a host (``https://www.npmjs.com/package/@scope/name``) is a path, and an empty authority
+    (``file:///<path>``) holds no userinfo.
+
+    Args:
+        url: One URL, its scheme included.
+
+    Returns:
+        ``True`` when the userinfo crosses the path, query or fragment delimiter.
+    """
+    _, sep, rest = url.partition("://")
+    end = next((i for i, c in enumerate(rest) if c in "/?#"), len(rest))
+    if not sep or end == 0 or "@" not in rest[end:]:
+        return False
+    return not _names_host_and_port(rest[:end].rpartition("@")[2])
+
+
 def redact_url(value: str) -> str:
     """Rewrite a forge URL by class: placeholder host, namespace and repository, path shape kept.
 
@@ -769,10 +833,14 @@ def redact_url(value: str) -> str:
     an ``ssh://`` or ``git://`` remote that had one is written ``git@``,
     any other drops it. The scheme and host are written lowercase. The
     query is dropped, and the fragment too unless it is a
-    :data:`FRAGMENT_ANCHOR_RE` anchor (0.10).
+    :data:`FRAGMENT_ANCHOR_RE` anchor (0.10). A URL whose userinfo
+    crosses a ``/``, ``?`` or ``#`` (:func:`userinfo_crosses_path`) is
+    returned as it stands, never rewritten: the closure oracle refuses
+    the recording (PR #319 round 8, 4688674758).
 
     Returns:
-        The redacted URL, or ``""`` when ``value`` is not a URL of
+        The redacted URL, ``value`` itself when its userinfo crosses its
+        path, or ``""`` when ``value`` is not a URL of
         :data:`URL_SCHEMES` with a host (the caller drops the key).
     """
     try:
@@ -782,6 +850,8 @@ def redact_url(value: str) -> str:
         return ""
     if parts.scheme not in URL_SCHEMES or not parts.hostname:
         return ""
+    if userinfo_crosses_path(value.strip()):
+        return value
     path = parts.path
     if path.startswith("/") and len(path) > 1:
         path = "/" + "/".join(_namespaced(path[1:].split("/")))
@@ -910,6 +980,8 @@ def redact_urls_in_text(text: str) -> str:
             return match.group(0)
         host = parts.hostname or ""
         if not host:
+            return match.group(0)
+        if userinfo_crosses_path(url):
             return match.group(0)
         if "@" in parts.netloc:
             return (redact_url(url) or url) + tail

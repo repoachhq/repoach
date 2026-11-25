@@ -11104,6 +11104,86 @@ ROWS: tuple[Row, ...] = (
             text="write to jürgen@example.com, the café@home notes and `@müller` in code"
         ),
     ),
+    Row(
+        id="r8_url_password_holding_a_slash_is_refused",
+        source="PR #319 review round 8 (4688674758)",
+        inp=Sample(body="REDIS_URL=redis://:zqpw4471/zqcd9@redis:6379 now"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r8_url_password_holding_a_slash_on_localhost_is_refused",
+        source="PR #319 review round 8 (4688674758)",
+        inp=Sample(body="DATABASE_URL=postgres://app:zqpw4471/zqcd9@localhost/db"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r8_url_password_holding_a_slash_then_a_hash_is_refused",
+        source="PR #319 review round 8 (4688674758)",
+        inp=Sample(body="REDIS_URL=redis://app:zqpw4471/q#zqcd9@redis"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r8_url_password_holding_a_slash_percent_encoded_is_refused",
+        source="PR #319 review round 8 (4688674758)",
+        inp=Sample(body="dsn redis%3A%2F%2F%3Azqpw4471%2Fzqcd9%40redis%3A6379"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r8_https_password_holding_a_slash_on_a_public_host_is_refused",
+        source="PR #319 review round 8 (4688674758)",
+        inp=Sample(body="git clone https://app:zqpw4471/zqcd9@github.com/zqo/zqr.git"),
+        outcome=Refused("unknown mailbox at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r8_a_path_at_after_a_one_label_host_is_refused",
+        source="PR #319 review round 8 (4688674758)",
+        inp=Sample(body="publish to http://verdaccio:4873/@scope/pkg"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r8_a_path_at_after_a_public_host_is_ordinary",
+        source="PR #319 review round 8 (4688674758)",
+        inp=Sample(
+            body="see https://www.npmjs.com/package/@scope/name, https://unpkg.com/@babel/core@7.24.0/lib/index.js and https://cdn.jsdelivr.net/npm/@scope/pkg@1/x.js"
+        ),
+        outcome=Written(
+            text="see https://www.npmjs.com/package/@scope/name, https://unpkg.com/@babel/core@7.24.0/lib/index.js and https://cdn.jsdelivr.net/npm/@scope/pkg@1/x.js"
+        ),
+    ),
+    Row(
+        id="r8_a_path_at_after_a_placeholder_host_is_ordinary",
+        source="PR #319 review round 8 (4688674758)",
+        inp=Sample(
+            body="publish to http://localhost:4873/@scope%2fpkg and http://127.0.0.1:4873/@scope/pkg"
+        ),
+        outcome=Written(
+            text="publish to http://localhost:4873/@scope%2fpkg and http://127.0.0.1:4873/@scope/pkg"
+        ),
+    ),
+    Row(
+        id="r8_an_at_in_a_query_or_a_fragment_is_ordinary",
+        source="PR #319 review round 8 (4688674758)",
+        inp=Sample(
+            body="see https://example.com/search?q=a@b.c and https://example.com/doc#user@x"
+        ),
+        outcome=Written(
+            text="see https://example.com/search?q=a@b.c and https://example.com/doc#user@x"
+        ),
+    ),
+    Row(
+        id="r8_a_path_at_on_an_unknown_host_is_rewritten_by_class",
+        source="PR #319 review round 8 (4688674758)",
+        inp=Sample(body="read https://medium.com/@zqwriter/post-1 today"),
+        outcome=Written(text="read https://forge.example.com/org/project today"),
+        markers=("medium.com", "zqwriter"),
+    ),
+    Row(
+        id="r8_a_path_at_on_the_forge_host_keeps_its_shape",
+        source="PR #319 review round 8 (4688674758)",
+        inp=Sample(body="see https://github.com/zqo/zqr/blob/x/@types now"),
+        outcome=Written(text="see https://forge.example.com/org/project/blob/x/@types now"),
+        markers=("zqo/zqr",),
+    ),
 )
 
 
@@ -11556,10 +11636,10 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
     refused = [row for row in ROWS if isinstance(row.outcome, Refused)]
     bounded = [row for row in ROWS if isinstance(row.outcome, Bounded)]
     assert (len(ROWS), len(planted), len(ordinary), len(refused), len(bounded)) == (
-        976,
-        678,
-        298,
-        118,
+        987,
+        686,
+        301,
+        124,
         2,
     )
     assert len(residual) == 25

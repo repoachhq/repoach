@@ -84,6 +84,14 @@ The userinfo is read by grammar, not by an allowlist of characters: everything b
 ``<https://<host>><a@<host>>`` is prose.
 """
 
+_TOKEN_END = frozenset('<>"')
+"""What ends the token a URL stands in, with any whitespace: the prose delimiters of :data:`_AUTHORITY_END`.
+
+When the authority read to its first ``/`` is no ``<host>[:<port>]`` (:func:`_host_port`), a
+``/`` stood in a userinfo (``redis://:Ab/cd@<host>``, PR #319 round 8, 4688674758): the userinfo
+then runs to the last ``@`` of the token, whatever it crosses (``/``, ``:``, ``?``, ``#``).
+"""
+
 
 KINDS: tuple[str, ...] = ("login", "host", "segment", "id", "name", "mailbox")
 """The kinds of known value the recorder replaces, in the order they are judged."""
@@ -467,8 +475,13 @@ def _url_userinfo_spans(text: str) -> dict[int, int]:
 
     Read by URL grammar: after each ``<scheme>://`` the authority runs to the first whitespace or
     :data:`_AUTHORITY_END` character, and its LAST ``@`` ends the userinfo, whatever characters
-    stand before it (an unescaped ``@`` in a password included). The authorities of a text are
-    disjoint, so each character is read once and the reader stays linear.
+    stand before it (an unescaped ``@`` in a password included). What follows that ``@``, or the
+    whole authority when it holds none, must be a ``<host>[:<port>]`` (:func:`_host_port`). When
+    it is not, a ``/`` stood inside a userinfo (``redis://:Ab/cd@<host>``: ``:Ab`` names no host,
+    PR #319 round 8, 4688674758), and the userinfo runs to the last ``@`` before the token ends
+    (:data:`_TOKEN_END`), whatever it crosses. A path holding an ``@`` after a host stays a path
+    (``https://www.npmjs.com/package/@scope/name``). The spans of a text are disjoint, so each
+    character is read once and the reader stays linear.
 
     Args:
         text: The text read.
@@ -486,10 +499,47 @@ def _url_userinfo_spans(text: str) -> dict[int, int]:
                 if text[end] == "@":
                     last = end
                 end += 1
+            if not _host_port(text[last + 1 if last != -1 else begin : end], begin == end):
+                while end < len(text) and not text[end].isspace() and text[end] not in _TOKEN_END:
+                    if text[end] == "@":
+                        last = end
+                    end += 1
             if last != -1:
                 spans[last] = begin
         colon = text.find("://", end)
     return spans
+
+
+def _host_port(authority: str, empty: bool) -> bool:
+    """Whether ``authority`` reads as ``<host>[:<port>]`` by URL grammar (RFC 3986 3.2.2, 3.2.3).
+
+    The host is a dotted name by DNS label grammar (:func:`_label_run`), an IPv4 address, a
+    bracketed IPv6 literal or a placeholder-class host (``localhost``); the port, when a ``:``
+    stands, is ASCII digits only. A one-label name other than a placeholder is no host here: after
+    it a ``/`` and an ``@`` read as ``<user>/<password>@<host>`` as well as a path, so the reader
+    fails closed. An empty authority (``file:///<path>``, ``empty``) is one.
+
+    Args:
+        authority: The authority after its last ``@``, or the whole of it when it holds none.
+        empty: Whether the authority, userinfo included, is empty.
+
+    Returns:
+        ``True`` when the authority names a host and a port, nothing else.
+    """
+    if empty:
+        return True
+    host, port = authority, ""
+    if authority.startswith("["):
+        close = authority.find("]")
+        host, rest = authority[: close + 1], authority[close + 1 :]
+        if close == -1 or _ipv6(host) is None or (rest and not rest.startswith(":")):
+            return False
+        port = rest[1:]
+    else:
+        host, _, port = authority.partition(":")
+        if not (_label_run(host) or _ipv4(host) or (host and is_placeholder_host(host))):
+            return False
+    return all(c in _DIGITS for c in port)
 
 
 @functools.lru_cache(maxsize=64)
@@ -775,7 +825,9 @@ def judge(text: str, known: Known) -> Refusal | None:
     ``<userinfo>@<host>`` (:func:`is_literal_mailbox`): ``git`` on a placeholder-class host and a
     password-less user on a documentation host (``postgres://app@localhost``) name no one; a
     credential (a ``:``) and any userinfo on a public or an unknown host are refused, whatever
-    characters they hold (``^``, ``|``, ``\``, ``[``, ``#``, ``?``, an ``@`` included).
+    characters they hold (``^``, ``|``, ``\``, ``[``, ``#``, ``?``, an ``@`` included). A userinfo
+    that crosses a ``/`` (``redis://:Ab/cd@<host>``) is always refused: its authority named no
+    host, so the reader cannot tell a user from a host.
 
     Args:
         text: One string of the built fixture.
@@ -801,6 +853,6 @@ def judge(text: str, known: Known) -> Refusal | None:
         return Refusal("public address")
     if any(not is_literal_mailbox(b) for form in forms for b in mailboxes(form)):
         return Refusal("unknown mailbox")
-    if any(not is_literal_mailbox(u) for form in forms for u in userinfos(form)):
+    if any("/" in u.local or not is_literal_mailbox(u) for form in forms for u in userinfos(form)):
         return Refusal("url userinfo")
     return None

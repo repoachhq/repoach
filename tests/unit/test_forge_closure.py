@@ -1954,6 +1954,64 @@ def test_a_url_userinfo_is_read_by_grammar_whatever_it_holds() -> None:
         assert closure.judge(text, none) is None, text
 
 
+def test_a_url_userinfo_that_crosses_a_slash_is_read_by_grammar_and_refused() -> None:
+    """D8 (PR #319 round 8, 4688674758): a ``/`` in a password does not end the authority early.
+
+    When the authority read to its first ``/`` names no ``<host>[:<port>]``, the userinfo runs to
+    the last ``@`` of the token, whatever it crosses, and the oracle refuses it on every host; a
+    path holding an ``@`` after a host stays a path. The redactor reads the same grammar
+    (:func:`repoach.forge.recording.userinfo_crosses_path`) and leaves such a URL as it stands,
+    never rewritten, so the recording is refused.
+    """
+    none = closure.Known(())
+    hosts = ("redis", "localhost", "127.0.0.1", "[::1]", "pypi.org", "github.com", "db.acme.io")
+    for host in hosts:
+        for head, cut in (
+            ("redis://:", "zqpw/zqcd"),
+            ("redis://app:", "zqpw/zqcd"),
+            ("postgres://app:", "zqpw/a/zqcd"),
+            ("redis://app:", "zqpw/q#zqcd"),
+            ("redis://app:", "zqpw/q?zqcd"),
+            ("redis://app:", "zq@pw/zqcd"),
+            ("redis://app:", "6379/zqcd"),
+            ("redis://:", "/zqcd"),
+            ("https://", "zqtok/zqcd"),
+        ):
+            text = f"DSN {head}{cut}@{host}:6379/0 now"
+            assert closure.judge(text, none) is not None, text
+            boxes = closure.userinfos(text)
+            assert [b.local for b in boxes] == [f"{head.partition('://')[2]}{cut}"], text
+            assert [b.host for b in boxes] == [host], text
+            for form in (text.upper(), f"[db]({text.split()[1]})", text.replace("/", "%2F")):
+                assert closure.judge(form, none) is not None, form
+            url = text.split()[1]
+            assert recording.userinfo_crosses_path(url), url
+            if url.startswith("https"):
+                assert recording.redact_urls_in_text(text) == text
+                assert recording.redact_url(url) == url
+    for text in (
+        "see https://www.npmjs.com/package/@scope/name for it",
+        "read https://unpkg.com/@babel/core@7.24.0/lib/index.js",
+        "see https://pypi.org:443/simple/@scope/x and https://127.0.0.1:4873/@scope/pkg",
+        "publish to http://localhost:4873/@scope%2fpkg",
+        "see https://example.com/search?q=a@b.c and https://example.com/doc#user@x",
+        "see https://example.com/x and write to a@example.com",
+        "open file:///srv/share/@team/notes.md",
+        "see https://[::1]:8080/@x",
+    ):
+        assert closure.judge(text, none) is None, text
+        assert closure.userinfos(text) == [], text
+        for url in (w for w in text.split() if "://" in w):
+            assert not recording.userinfo_crosses_path(url.rstrip(",")), url
+    assert closure.judge("publish to http://verdaccio:4873/@scope/pkg", none) == closure.Refusal(
+        "url userinfo"
+    )
+    assert recording.userinfo_crosses_path("http://verdaccio:4873/@scope/pkg")
+    assert [b.local for b in closure.userinfos("https://u:p@github.com/o/r/@x")] == ["u:p"]
+    assert not recording.userinfo_crosses_path("https://u:p@github.com/o/r/@x")
+    assert not recording.userinfo_crosses_path("https://github.com/o/r")
+
+
 def test_a_tenant_route_is_refused_whatever_leads_its_host() -> None:
     """D8 (PR #319 round 5, 4683464700): a tenant route is judged by host and path, lexically.
 
