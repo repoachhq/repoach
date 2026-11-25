@@ -8013,6 +8013,47 @@ def test_the_denylist_test_is_collected_by_its_own_ci_step_only() -> None:
     assert sorted(collecting) == ["Pytest", "Pytest — fixture deny-list"]
 
 
+def test_every_node_id_ci_deselects_is_one_collected_test(tmp_path: Path) -> None:
+    """O2, D6 (PR #319 round 9, 4689483910): a renamed test cannot leave a ``--deselect`` that matches nothing.
+
+    pytest ignores a ``--deselect`` that names no test. Every one of ``ci.yml`` is read and
+    collected: it names exactly one test, deselecting it removes that one, and the step with the
+    secret runs the same node id.
+    """
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text("utf-8"))
+    runs = [str(step.get("run", "")) for job in workflow["jobs"].values() for step in job["steps"]]
+    nodes = [node for run in runs for node in re.findall(r"--deselect[ =]+(\S+)", run)]
+    assert len(nodes) == 1 and runs.count(f"pytest -q {nodes[0]}") == 1
+
+    def collected(*arguments: str) -> tuple[list[str], str]:
+        done = _run_script(
+            child_pytest_argv(
+                "--collect-only",
+                "-q",
+                "-p",
+                "no:cacheprovider",
+                "-p",
+                "no:xdist",
+                *arguments,
+                basetemp=tmp_path / "child",
+            ),
+            tmp_path,
+        )
+        lines = done.stdout.splitlines()
+        return [line for line in lines if "::" in line], lines[-1] if lines else done.stderr
+
+    for node in nodes:
+        module, _, name = node.partition("::")
+        assert module == f"tests/unit/{Path(__file__).name}"
+        items, summary = collected(f"{__file__}::{name}")
+        assert [item.partition("::")[2] for item in items] == [name], summary
+        left, summary = collected(__file__, "--deselect", node)
+        assert len(left) > 100 and name not in [item.partition("::")[2] for item in left]
+        assert f"{len(left)}/{len(left) + 1} tests collected (1 deselected)" in summary
+        _, summary = collected(__file__, "--deselect", f"{node}_renamed")
+        assert "deselected" not in summary and f"{len(left) + 1} tests collected" in summary
+
+
 def _message_heads(source: Path, error: str) -> set[str]:
     """The literal head of every message ``raise <error>(...)`` builds in ``source``, up to its first field."""
     heads: set[str] = set()
