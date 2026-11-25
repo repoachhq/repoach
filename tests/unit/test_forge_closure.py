@@ -20,6 +20,7 @@ from types import ModuleType
 
 import pytest
 
+from repoach.core import text_forms
 from repoach.forge import closure, closure_tables, fixture_pipeline, recording
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -95,19 +96,26 @@ def test_the_oracle_shares_no_code_object_with_the_redactor() -> None:
         "dataclasses",
         "unicodedata",
     }
-    for name, allowed in (("closure", stdlib | {"closure_tables"}), ("closure_tables", stdlib)):
-        tree = ast.parse((ROOT / "src" / "repoach" / "forge" / f"{name}.py").read_text())
+    for path, allowed in (
+        ("forge/closure.py", stdlib | {"closure_tables", "repoach.core:text_forms"}),
+        ("forge/closure_tables.py", stdlib),
+        ("core/text_forms.py", stdlib),
+    ):
+        tree = ast.parse((ROOT / "src" / "repoach" / path).read_text())
         imported = {
             alias.name.split(".")[0]
             for node in ast.walk(tree)
             if isinstance(node, ast.Import)
             for alias in node.names
         } | {
-            (node.module or "").split(".")[0]
+            f"{node.module}:{alias.name}"
+            if (node.module or "").startswith("repoach")
+            else (node.module or "").split(".")[0]
             for node in ast.walk(tree)
             if isinstance(node, ast.ImportFrom)
+            for alias in node.names
         }
-        assert imported <= allowed, name
+        assert imported <= allowed, path
     relative = [
         (node.module, node.level)
         for node in ast.walk(ast.parse((ROOT / "src/repoach/forge/closure.py").read_text()))
@@ -895,65 +903,70 @@ def test_residual_judges_known_values_in_decoded_forms_and_embedded_node_ids() -
             assert closure.residual(f"feat/{node}", ids) == ("id", 1)
             assert closure.residual(f"abc{node}", ids) == ("id", 1)
             assert closure.residual(f"{node}suffix", ids) == ("id", 1)
-    assert closure.node_id_numbers("MDQ6VXNlcjc0OTI4MTYzsuffix") == ["74928163"]
-    assert closure.node_id_numbers("abcdefgU_kgDOBHdQIw") == ["74928163"]
-    assert closure.node_id_numbers("U_1001") == ["1001"]
-    assert closure.node_id_numbers("MDQ6VXNl") == []
-    assert closure.node_id_numbers("U_a") == []
-    assert closure.node_id_numbers("U_abcde") == []
-    assert closure.node_id_numbers(_node_new(5)) == ["5"]
-    assert closure.node_id_numbers(
+    assert text_forms.node_id_numbers("MDQ6VXNlcjc0OTI4MTYzsuffix") == ["74928163"]
+    assert text_forms.node_id_numbers("abcdefgU_kgDOBHdQIw") == ["74928163"]
+    assert text_forms.node_id_numbers("U_1001") == ["1001"]
+    assert text_forms.node_id_numbers("MDQ6VXNl") == []
+    assert text_forms.node_id_numbers("U_a") == []
+    assert text_forms.node_id_numbers("U_abcde") == []
+    assert text_forms.node_id_numbers(_node_new(5)) == ["5"]
+    assert text_forms.node_id_numbers(
         "U_" + base64.urlsafe_b64encode(b"\x92\x00\x05").decode().rstrip("=")
     ) == ["5"]
-    assert closure.node_id_numbers(
+    assert text_forms.node_id_numbers(
         "U_" + base64.urlsafe_b64encode(b"\x92\x00\xcc\x80").decode().rstrip("=")
     ) == ["128"]
-    assert closure.node_id_numbers(
+    assert text_forms.node_id_numbers(
         "U_" + base64.urlsafe_b64encode(b"\x92\x00\xcd\x01\x00").decode().rstrip("=")
     ) == ["256"]
-    assert closure.node_id_numbers(
+    assert text_forms.node_id_numbers(
         "U_"
         + base64.urlsafe_b64encode(b"\x92\x00\xcf" + (2**40).to_bytes(8, "big"))
         .decode()
         .rstrip("=")
     ) == [str(2**40)]
     assert (
-        closure.node_id_numbers(
+        text_forms.node_id_numbers(
             "U_" + base64.urlsafe_b64encode(b"\x93\x00\x05").decode().rstrip("=")
         )
         == []
     )
     assert (
-        closure.node_id_numbers(
+        text_forms.node_id_numbers(
             "U_" + base64.urlsafe_b64encode(b"\x92\x00\xd0\x05").decode().rstrip("=")
         )
         == []
     )
     assert (
-        closure.node_id_numbers(
+        text_forms.node_id_numbers(
             "U_" + base64.urlsafe_b64encode(b"\x92\x00\xcd\x01").decode().rstrip("=")
         )
         == []
     )
     assert (
-        closure.node_id_numbers("U_" + base64.urlsafe_b64encode(b"\x92\x00").decode().rstrip("="))
+        text_forms.node_id_numbers(
+            "U_" + base64.urlsafe_b64encode(b"\x92\x00").decode().rstrip("=")
+        )
         == []
     )
-    assert closure.node_id_numbers("MDQ6VXNlcjEyMw==") == ["123"]
-    assert closure.node_id_numbers("MDQ6VXNlcjEyMw") == ["123"]
-    assert closure.node_id_numbers("MDQ6VXNlcjEyM") == ["12"]
-    assert closure.node_id_numbers("MDQ6VXNlcg==") == []
-    assert closure.node_id_numbers("MDQ6VXNlcjEyMw==" + "A" * 80) == ["123"]
-    assert closure.node_id_numbers("MDQ6VXNl" + "!" * 3) == []
-    assert closure.node_id_numbers(base64.b64encode(b"04:Repo123").decode()) == []
-    assert closure.node_id_numbers("MDQ6VXNlcjEyMw==" + "x" + "MDQ6VXNlcjQ1Ng==") == ["123", "456"]
-    decoded = closure.decoded_forms("a%2520b")
+    assert text_forms.node_id_numbers("MDQ6VXNlcjEyMw==") == ["123"]
+    assert text_forms.node_id_numbers("MDQ6VXNlcjEyMw") == ["123"]
+    assert text_forms.node_id_numbers("MDQ6VXNlcjEyM") == ["12"]
+    assert text_forms.node_id_numbers("MDQ6VXNlcg==") == []
+    assert text_forms.node_id_numbers("MDQ6VXNlcjEyMw==" + "A" * 80) == ["123"]
+    assert text_forms.node_id_numbers("MDQ6VXNl" + "!" * 3) == []
+    assert text_forms.node_id_numbers(base64.b64encode(b"04:Repo123").decode()) == []
+    assert text_forms.node_id_numbers("MDQ6VXNlcjEyMw==" + "x" + "MDQ6VXNlcjQ1Ng==") == [
+        "123",
+        "456",
+    ]
+    decoded = text_forms.decoded_forms("a%2520b")
     assert decoded == ["a%2520b", "a%20b", "a b"]
-    assert closure.decoded_forms("plain") == ["plain"]
-    assert len(closure.decoded_forms("%" + "25" * 5 + "41")) == 5
-    assert closure.decoded_forms("%" + "25" * 5 + "41")[-1] == "%2541"
-    assert closure.decoded_forms(r"A")[-1] == "A"
-    assert closure.decoded_forms("&amp;lt;")[-1] == "<"
+    assert text_forms.decoded_forms("plain") == ["plain"]
+    assert len(text_forms.decoded_forms("%" + "25" * 5 + "41")) == 5
+    assert text_forms.decoded_forms("%" + "25" * 5 + "41")[-1] == "%2541"
+    assert text_forms.decoded_forms(r"A")[-1] == "A"
+    assert text_forms.decoded_forms("&amp;lt;")[-1] == "<"
     literal = closure.Known((("login", "github"),), literals=("github-actions[bot]", "github"))
     assert closure.residual("by github-actions[bot] now", literal) is None
     assert closure.residual("by github now", literal) is None
@@ -967,18 +980,20 @@ def test_residual_judges_known_values_in_decoded_forms_and_embedded_node_ids() -
     assert closure.residual("by github-actionsx", literal) == ("login", 1)
     assert closure.residual("xgithub", literal) is None
     assert closure.residual("github.com", literal) is None
-    pattern = closure.token_pattern("a.b")
+    pattern = text_forms.token_pattern("a.b")
     assert pattern.search("x a.b y") and not pattern.search("xa.b") and not pattern.search("a.bx")
     assert pattern.search("A.B")
-    assert closure.token_pattern("a").search("1-a-1") and not closure.token_pattern("a").search(
-        "ba"
+    assert text_forms.token_pattern("a").search("1-a-1") and not text_forms.token_pattern(
+        "a"
+    ).search("ba")
+    assert text_forms.token_pattern("a").search("%2Fa") and text_forms.token_pattern("a").search(
+        "%2fa"
     )
-    assert closure.token_pattern("a").search("%2Fa") and closure.token_pattern("a").search("%2fa")
-    assert not closure.token_pattern("a").search("%2Fxa")
-    assert not closure.token_pattern("a").search("%3Fa") or True
-    assert closure.token_pattern("a").search("%3Fa") is None
-    assert closure.token_pattern("a").search("%2a") is None
-    assert closure.token_pattern("a").search("2Fa") is None
+    assert not text_forms.token_pattern("a").search("%2Fxa")
+    assert not text_forms.token_pattern("a").search("%3Fa") or True
+    assert text_forms.token_pattern("a").search("%3Fa") is None
+    assert text_forms.token_pattern("a").search("%2a") is None
+    assert text_forms.token_pattern("a").search("2Fa") is None
 
 
 def test_judge_orders_its_reasons_and_blanks_literals() -> None:
@@ -1150,35 +1165,35 @@ def test_reader_positions_flags_and_edges_by_enumeration() -> None:
     assert closure.is_public_host("pypi.com") is False
     assert closure.is_doc_mailbox_host("example.com") is True
     assert closure.is_doc_mailbox_host("example.io") is False
-    assert closure.node_id_numbers("U_kgAF") == ["5"]
-    assert closure.node_id_numbers("xU_kgAF") == ["5"]
-    assert closure.node_id_numbers("U_kgA") == []
-    assert closure.node_id_numbers("U_kgB_") == ["127"] if False else True
-    assert closure.node_id_numbers(
+    assert text_forms.node_id_numbers("U_kgAF") == ["5"]
+    assert text_forms.node_id_numbers("xU_kgAF") == ["5"]
+    assert text_forms.node_id_numbers("U_kgA") == []
+    assert text_forms.node_id_numbers("U_kgB_") == ["127"] if False else True
+    assert text_forms.node_id_numbers(
         "U_" + base64.urlsafe_b64encode(b"\x92\x00\x7f").decode().rstrip("=")
     ) == ["127"]
     assert (
-        closure.node_id_numbers(
+        text_forms.node_id_numbers(
             "U_" + base64.urlsafe_b64encode(b"\x92\x00\x80").decode().rstrip("=")
         )
         == []
     )
     assert (
-        closure.node_id_numbers(
+        text_forms.node_id_numbers(
             "U_" + base64.urlsafe_b64encode(b"\x92\x00\xcb\x00").decode().rstrip("=")
         )
         == []
     )
     twenty = 2**64 - 1
-    assert closure.node_id_numbers(base64.b64encode(f"04:User{twenty}".encode()).decode()) == [
+    assert text_forms.node_id_numbers(base64.b64encode(f"04:User{twenty}".encode()).decode()) == [
         str(twenty)
     ]
-    assert closure.node_id_numbers(base64.b64encode(f"04:User{twenty}x".encode()).decode()) == [
+    assert text_forms.node_id_numbers(base64.b64encode(f"04:User{twenty}x".encode()).decode()) == [
         str(twenty)
     ]
     one = base64.b64encode(b"04:User1").decode()
-    assert closure.node_id_numbers(one) == ["1"]
-    assert closure.node_id_numbers(one.rstrip("=")) == ["1"]
+    assert text_forms.node_id_numbers(one) == ["1"]
+    assert text_forms.node_id_numbers(one.rstrip("=")) == ["1"]
 
 
 def test_case_is_folded_by_every_reader_and_a_blanked_literal_separates_its_neighbours() -> None:
@@ -1272,7 +1287,7 @@ def test_a_percent_escape_is_never_part_of_a_label_run() -> None:
     assert [h.host for h in closure.hosts("a%2Gcode.acme.io/x")] == ["2Gcode.acme.io"]
     assert [h.host for h in closure.hosts("%2Fcode.acme.io/x")] == ["code.acme.io"]
     assert closure.hosts("https%3A%2F%2Fcode.acme.io%2Fx") == []
-    decoded = closure.decoded_forms("https%3A%2F%2Fcode.acme.io%2Fx")
+    decoded = text_forms.decoded_forms("https%3A%2F%2Fcode.acme.io%2Fx")
     assert [h.host for h in closure.hosts(decoded[-1])] == ["code.acme.io"]
 
 
@@ -1312,13 +1327,13 @@ def test_the_legacy_node_reader_never_raises_on_a_malformed_run() -> None:
     for length in range(8, 60):
         for pad in ("", "=", "==", "==="):
             text = f"x {body[:length]}{pad} y"
-            assert isinstance(closure.node_id_numbers(text), list), (length, pad)
-    assert closure.node_id_numbers("see MDQ6VXNlcjc0O= here") == ["74"]
-    assert closure.node_id_numbers("see MDQ6VXNlcjc0OTI4MTYz= here") == ["74928163"]
-    assert closure.node_id_numbers("see MDQ6VXNlcjc0OTI4MTY= here") == ["7492816"]
-    assert closure.node_id_numbers("see MDQ6VXNlcjc0OTI4MTYz== here") == ["74928163"]
-    assert closure.node_id_numbers("see MDQ6VXNlcjc0OTI4MTYzA here") == ["74928163"]
-    assert closure.node_id_numbers("MDQ6VXNlcjc0O" + "=" * 2) == ["74"]
+            assert isinstance(text_forms.node_id_numbers(text), list), (length, pad)
+    assert text_forms.node_id_numbers("see MDQ6VXNlcjc0O= here") == ["74"]
+    assert text_forms.node_id_numbers("see MDQ6VXNlcjc0OTI4MTYz= here") == ["74928163"]
+    assert text_forms.node_id_numbers("see MDQ6VXNlcjc0OTI4MTY= here") == ["7492816"]
+    assert text_forms.node_id_numbers("see MDQ6VXNlcjc0OTI4MTYz== here") == ["74928163"]
+    assert text_forms.node_id_numbers("see MDQ6VXNlcjc0OTI4MTYzA here") == ["74928163"]
+    assert text_forms.node_id_numbers("MDQ6VXNlcjc0O" + "=" * 2) == ["74"]
 
 
 def test_a_bracketed_ipv6_literal_is_judged_like_an_ipv4_address() -> None:
@@ -1517,14 +1532,16 @@ def test_a_mailbox_on_a_placeholder_address_names_no_one() -> None:
 def test_json_and_hex_string_escapes_are_a_decoded_layer() -> None:
     r"""D3, D2 (0.20, C7): ``\/`` and ``\xHH`` are peeled like ``\uXXXX``, so an escaped URL is judged as its plain form."""
     none = closure.Known(())
-    assert closure.decoded_forms("http:\\/\\/a.b.c\\/d") == [
+    assert text_forms.decoded_forms("http:\\/\\/a.b.c\\/d") == [
         "http:\\/\\/a.b.c\\/d",
         "http://a.b.c/d",
     ]
-    assert closure.decoded_forms("\\x2f\\x2Fa\\x3a8") == ["\\x2f\\x2Fa\\x3a8", "//a:8"]
-    assert closure.decoded_forms("\\u002f\\x2f\\/") == ["\\u002f\\x2f\\/", "///"]
-    assert closure.decoded_forms("a\\\\/b") == ["a\\\\/b", "a\\/b", "a/b"]
-    assert closure.decoded_forms('\\xzz \\x2 \\u12 \\n \\t \\"') == ['\\xzz \\x2 \\u12 \\n \\t \\"']
+    assert text_forms.decoded_forms("\\x2f\\x2Fa\\x3a8") == ["\\x2f\\x2Fa\\x3a8", "//a:8"]
+    assert text_forms.decoded_forms("\\u002f\\x2f\\/") == ["\\u002f\\x2f\\/", "///"]
+    assert text_forms.decoded_forms("a\\\\/b") == ["a\\\\/b", "a\\/b", "a/b"]
+    assert text_forms.decoded_forms('\\xzz \\x2 \\u12 \\n \\t \\"') == [
+        '\\xzz \\x2 \\u12 \\n \\t \\"'
+    ]
     for text in ("see 104.16.0.1\\/kvnteam", "see 104.16.0.1\\x3a8080"):
         assert closure.judge(text, none) == closure.Refusal("public address"), text
     for text in (
@@ -1573,10 +1590,10 @@ def test_the_oracle_never_raises_on_a_mapped_tail_or_a_long_digit_run() -> None:
     )
     assert closure.judge("see [::ffff:01.2.3.4]:8080", none) == closure.Refusal("public address")
     assert closure.judge("see [::ffff:010.0.0.1]:8080", none) is None
-    assert closure.node_id_numbers("U_" + "9" * 5000) == []
-    assert closure.node_id_numbers("U_" + "9" * 21) == []
-    assert closure.node_id_numbers("U_" + "9" * 20) == ["9" * 20]
-    assert closure.node_id_numbers("U_18446744073709551615") == ["18446744073709551615"]
+    assert text_forms.node_id_numbers("U_" + "9" * 5000) == []
+    assert text_forms.node_id_numbers("U_" + "9" * 21) == []
+    assert text_forms.node_id_numbers("U_" + "9" * 20) == ["9" * 20]
+    assert text_forms.node_id_numbers("U_18446744073709551615") == ["18446744073709551615"]
     assert closure.judge("U_" + "7" * 10000 + " MDQ6VXNl" + "A" * 4000, none) is None
     assert closure.residual("U_" + "1" * 5000, closure.Known((("id", "1111"),))) is None
 
@@ -1956,7 +1973,7 @@ def test_a_tenant_route_is_refused_whatever_leads_its_host() -> None:
         "see https%3A%2F%2Fstackoverflow.com%2Fc%2Fkvnteam77 x",
     ):
         assert closure.judge(text, none) == closure.Refusal("tenant path"), text
-        assert any(closure.has_tenant_path(form) for form in closure.decoded_forms(text)), text
+        assert any(closure.has_tenant_path(form) for form in text_forms.decoded_forms(text)), text
     for text in (
         "see https://stackoverflow.com/questions/12/how",
         "see https://stackoverflow.com/collectives/x",
@@ -1975,24 +1992,25 @@ def test_a_host_on_an_internationalised_domain_is_read_by_the_ascii_grammar() ->
 
     ``hans@müller.de`` and ``https://éclair.fr/…`` were passed: the ASCII reader stopped at the
     first non-ASCII letter. Every decoded form is now also read in NFC and NFKC and with its
-    Unicode label runs in IDNA A-labels (:func:`repoach.forge.closure.ascii_labels`), so the one
+    Unicode label runs in IDNA A-labels (:func:`repoach.core.text_forms.ascii_labels`), so the one
     grammar of :func:`repoach.forge.closure.hosts` and :func:`repoach.forge.closure.mailboxes`
     reads them; ordinary non-ASCII prose keeps no host it did not have.
     """
     none = closure.Known(())
-    assert closure.ascii_labels("hans@m\u00fcller.de") == "hans@xn--mller-kva.de"
-    assert closure.ascii_labels("https://\u00e9clair.fr/x") == "https://xn--clair-9ra.fr/x"
+    assert text_forms.ascii_labels("hans@m\u00fcller.de") == "hans@xn--mller-kva.de"
+    assert text_forms.ascii_labels("https://\u00e9clair.fr/x") == "https://xn--clair-9ra.fr/x"
     assert (
-        closure.ascii_labels("a@\u4f8b\u3048\u3002\u30c6\u30b9\u30c8") == "a@xn--r8jz45g.xn--zckzah"
+        text_forms.ascii_labels("a@\u4f8b\u3048\u3002\u30c6\u30b9\u30c8")
+        == "a@xn--r8jz45g.xn--zckzah"
     )
-    assert closure.ascii_labels("M\u00dcLLER.de") == "xn--mller-kva.de"
-    assert closure.ascii_labels("plain ascii.text") == "plain ascii.text"
-    assert closure.ascii_labels("\u212a.example.com") == "k.example.com"
-    assert closure.decoded_forms("plain") == ["plain"]
+    assert text_forms.ascii_labels("M\u00dcLLER.de") == "xn--mller-kva.de"
+    assert text_forms.ascii_labels("plain ascii.text") == "plain ascii.text"
+    assert text_forms.ascii_labels("\u212a.example.com") == "k.example.com"
+    assert text_forms.decoded_forms("plain") == ["plain"]
     nfd = "hans@mu\u0308ller.de"
-    forms = closure.decoded_forms(nfd)
+    forms = text_forms.decoded_forms(nfd)
     assert forms[0] == nfd and "hans@xn--mller-kva.de" in forms
-    assert "https://zqcorp.io/x" in closure.decoded_forms(
+    assert "https://zqcorp.io/x" in text_forms.decoded_forms(
         "\uff48\uff54\uff54\uff50\uff53\uff1a\uff0f\uff0f\uff5a\uff51\uff43\uff4f\uff52\uff50\uff0e\uff49\uff4f\uff0fx"
     )
     refused = {

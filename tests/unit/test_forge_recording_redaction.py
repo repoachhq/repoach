@@ -33,6 +33,7 @@ import pytest
 import yaml
 from structlog.testing import capture_logs
 
+from repoach.core import text_forms
 from repoach.forge import (
     closure,
     closure_tables,
@@ -1312,7 +1313,7 @@ def test_one_token_boundary_for_replacer_mention_and_denylist() -> None:
         for pattern in (
             recording._login_pattern(word),
             deny_list.denylist_patterns([word])[0],
-            closure.token_pattern(word),
+            text_forms.token_pattern(word),
         ):
             assert pattern.flags & re.I
             assert [m.span() for m in pattern.finditer(battery)] == [
@@ -1767,18 +1768,8 @@ ALLOWED_CASE_SENSITIVE: dict[str, frozenset[str]] = {
     "denylist": frozenset(),
     "redact_forge_fixtures": frozenset(),
     "fixture_pipeline": frozenset(),
-    "closure": frozenset(
-        {
-            "_RUN",
-            "_LABEL",
-            "_STRING_ESCAPE",
-            "_NEW_NODE",
-            "_LEGACY_NODE",
-            "_LEGACY_DECODED",
-            "_CLASS_WORD_LOCAL",
-            "_DOC_MAILBOX_HOST",
-        }
-    ),
+    "closure": frozenset({"_RUN", "_LABEL", "_CLASS_WORD_LOCAL", "_DOC_MAILBOX_HOST"}),
+    "text_forms": frozenset({"_STRING_ESCAPE", "_NEW_NODE", "_LEGACY_NODE", "_LEGACY_DECODED"}),
 }
 """Module patterns case-sensitive by nature: encodings, the placeholders the redaction writes, the tools' literals, and the gate's copied regexes."""
 
@@ -1795,6 +1786,7 @@ def test_case_insensitive_patterns_are_flagged() -> None:
         closure,
         fixture_judge,
         deny_list,
+        text_forms,
     ):
         name = module.__name__.rsplit(".", 1)[-1]
         imported = {id(v) for owner in owners if owner is not module for v in vars(owner).values()}
@@ -2105,13 +2097,13 @@ def test_node_ids_inside_longer_strings_are_judged_by_their_number() -> None:
     ):
         left = residual(_placed(text, "prose"), unpadded_found)
         assert left is not None and left[0] == "id", text
-    assert str(unpadded_id) in closure.node_id_numbers(f"{legacy_unpadded}x")
-    assert str(unpadded_id) in closure.node_id_numbers(f"{legacy_unpadded}suffix")
-    assert str(_ID) in closure.node_id_numbers(f"U_foo{_new_node(_ID)}")
+    assert str(unpadded_id) in text_forms.node_id_numbers(f"{legacy_unpadded}x")
+    assert str(unpadded_id) in text_forms.node_id_numbers(f"{legacy_unpadded}suffix")
+    assert str(_ID) in text_forms.node_id_numbers(f"U_foo{_new_node(_ID)}")
     big_found = needles([_one_call({"user": {"login": "q-handle", "id": big_id}})], roles={})
     assert residual(_placed(f"see {big_node} here", "prose"), big_found) is not None
-    assert closure.node_id_numbers(f"a {_new_node(_ID + 1)} b") == [str(_ID + 1)]
-    assert closure.node_id_numbers("U_1001 and plainwords1234") == ["1001"]
+    assert text_forms.node_id_numbers(f"a {_new_node(_ID + 1)} b") == [str(_ID + 1)]
+    assert text_forms.node_id_numbers("U_1001 and plainwords1234") == ["1001"]
     deny = deny_list.Denylist((str(_ID),))
     assert deny.hit(f"https://example.com/users/{legacy}/profile") == 1
     assert deny.hit(f"https://example.com/users/{_new_node(_ID)}/profile") == 1
@@ -4327,7 +4319,7 @@ def test_id_encodings_cover_every_width_a_node_id_can_have() -> None:
         assert set(forms) == _independent_node_forms(number), number
         assert forms[0] == str(number)
         for form in forms[1:]:
-            assert closure.node_id_numbers(form) == [str(number)], (number, form)
+            assert text_forms.node_id_numbers(form) == [str(number)], (number, form)
 
 
 def test_known_values_reads_every_structured_source_with_its_role_and_case() -> None:
@@ -7413,6 +7405,7 @@ def test_the_recorders_public_functions_document_their_arguments_and_value() -> 
         recording_tables,
         deny_list,
         fixture_judge,
+        text_forms,
     ):
         rel = module.__name__
         for node in _public_functions(ast.parse(inspect.getsource(module))):
@@ -7433,7 +7426,7 @@ def test_the_recorders_public_functions_document_their_arguments_and_value() -> 
 def test_a_token_is_refused_in_every_decoded_form(tmp_path: Path) -> None:
     """D3 (PR #319 round 5, 4683464687): the token shapes are judged on the one decoder's forms.
 
-    The home-path rule and the deny-list already read :func:`repoach.forge.closure.decoded_forms`;
+    The home-path rule and the deny-list already read :func:`repoach.core.text_forms.decoded_forms`;
     the token scan reads the same forms, so a percent-, entity- or string-escaped delimiter or
     prefix hides no token, and no second decoder exists.
     """
@@ -7455,7 +7448,7 @@ def test_a_token_is_refused_in_every_decoded_form(tmp_path: Path) -> None:
             fixture_judge.refuse_unclassified(fixture, NO_DENYLIST)
     assert not fixture_judge.has_secret_token("use a ghp_ token from settings")
     source = inspect.getsource(fixture_judge.has_secret_token)
-    assert "closure.decoded_forms(text)" in source and "unquote" not in source
+    assert "text_forms.decoded_forms(text)" in source and "unquote" not in source
 
 
 def test_an_unreadable_denylist_file_is_a_named_refusal_never_an_empty_list(tmp_path: Path) -> None:
@@ -7899,7 +7892,7 @@ def test_a_forge_module_takes_each_name_from_the_module_that_defines_it() -> Non
 def test_a_denylist_entry_and_the_text_are_compared_in_their_full_casefolds() -> None:
     """D3 (PR #319 round 7, 4687852996): ``ß``, a decomposed entry and a fullwidth one all match.
 
-    Both sides go through :func:`repoach.forge.closure.folds` (NFC, then NFKC, each normalised,
+    Both sides go through :func:`repoach.core.text_forms.folds` (NFC, then NFKC, each normalised,
     casefolded and normalised again): the deny-list's patterns and the oracle's values on one
     side, every decoded form of the judged text on the other, so an entry matches whatever case,
     normalisation or width either side was typed in, and never a longer token.
@@ -7925,9 +7918,49 @@ def test_a_denylist_entry_and_the_text_are_compared_in_their_full_casefolds() ->
             )
         for other in (f"{spellings[0]}x today", f"x{spellings[0]}", "signed off by someone"):
             assert deny.hit(other) is None, (ascii(entry), ascii(other))
-    assert closure.folds("Straße") == ("strasse",)
-    assert closure.folds(f"m{nfd_umlaut}") == ("mü",)
-    assert closure.folds("Ｍ") == ("ｍ", "m")
+    assert text_forms.folds("Straße") == ("strasse",)
+    assert text_forms.folds(f"m{nfd_umlaut}") == ("mü",)
+    assert text_forms.folds("Ｍ") == ("ｍ", "m")
+
+
+def test_the_text_forms_are_read_outside_the_forge_package() -> None:
+    """D3 (PR #319 round 8, 4688673733): the deny-list reader depends on no forge module.
+
+    The decoded forms, the full casefolds, the A-labels, the node-id numbers and the token
+    pattern live in :mod:`repoach.core.text_forms`, which imports the standard library only;
+    :mod:`repoach.forge.denylist` imports nothing from :mod:`repoach.forge`, and the oracle, the
+    judge and the recorder read the forms there, never through a second copy. The deny-list still
+    hands its entries to the oracle's :class:`repoach.forge.closure.Known`, and only there.
+    """
+
+    def imports(module: ModuleType) -> set[str]:
+        tree = ast.parse(inspect.getsource(module))
+        return {
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        } | {
+            ("." * node.level) + (node.module or "")
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+        }
+
+    assert [m for m in imports(deny_list) if m.startswith(("repoach.forge", "."))] == []
+    assert [m for m in imports(text_forms) if m.startswith(("repoach", "."))] == []
+    for module in (closure, deny_list, fixture_judge, recording):
+        assert "text_forms" in inspect.getsource(module), module.__name__
+    moved = ("decoded_forms", "ascii_labels", "folds", "folded_forms", "node_id_numbers")
+    for name in (*moved, "token_pattern"):
+        assert callable(getattr(text_forms, name)), name
+        assert not hasattr(closure, name), name
+        assert not hasattr(deny_list, name), name
+    entry = "zqtextforms" + "4713"
+    judged = deny_list.Denylist((entry.upper(),)).judged_with(closure.Known((("login", "x"),)))
+    assert type(judged) is closure.Known
+    assert judged.values("deny-list") == (entry,) and judged.values("login") == ("x",)
+    assert closure.residual(f"by {entry} today", judged) == ("deny-list", 1)
+    assert closure.forms_of("A%2541") == text_forms.folded_forms("A%2541")
 
 
 def test_a_mention_handle_is_read_on_the_letters_of_every_script() -> None:

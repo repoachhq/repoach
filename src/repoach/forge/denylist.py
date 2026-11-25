@@ -8,12 +8,14 @@ of SP-NO-PERSONAL-DATA-GATE, when it lands, reads it from here too.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import re
 from pathlib import Path
+from typing import Protocol, TypeVar
 
+from repoach.core import text_forms
 from repoach.core.paths import user_config_dir
-from repoach.forge import closure
 
 DENYLIST_ENV = "REPOACH_PERSONAL_DENYLIST"
 """SP-NO-PERSONAL-DATA-GATE D3: the deny-list in CI, one entry per line; a comma is refused.
@@ -42,6 +44,21 @@ class DenylistError(Exception):
     - ``deny-list entry <n>: too short``: an entry shorter than :data:`DENYLIST_MIN_LENGTH`,
       named by its ordinal.
     """
+
+
+class KnownValues(Protocol):
+    """What :meth:`Denylist.judged_with` reads of the oracle's known values: their entries.
+
+    :class:`repoach.forge.closure.Known` is one; naming it here would import the oracle.
+    """
+
+    @property
+    def entries(self) -> tuple[tuple[str, str], ...]:
+        """``(kind, casefolded value)`` in order."""
+        ...
+
+
+_KnownT = TypeVar("_KnownT", bound=KnownValues)
 
 
 def denylist_file(config_dir: Path | None = None) -> Path:
@@ -89,11 +106,13 @@ class Denylist:
                 return n
         return None
 
-    def judged_with(self, known: closure.Known) -> closure.Known:
+    def judged_with(self, known: _KnownT) -> _KnownT:
         """``known`` with every entry added as a ``deny-list`` value, folded (:func:`entry_fold`), once each.
 
         The entries never leave the two opaque holders: this class hands them to the oracle's
         :class:`repoach.forge.closure.Known`, whose ``repr`` is a count too, and to no caller.
+        This module never imports the oracle (PR #319 round 8, 4688673733): ``known`` is copied
+        as the dataclass it is, so the reader depends on no forge module.
 
         Args:
             known: The recording's known values (:func:`repoach.forge.recording.known_values`).
@@ -103,7 +122,7 @@ class Denylist:
         """
         folded = dict.fromkeys(entry_fold(entry) for entry in self._entries)
         added = tuple(("deny-list", value) for value in folded)
-        return closure.Known(known.entries + added, known.literals, known.tokens)
+        return dataclasses.replace(known, entries=known.entries + added)
 
 
 def read_denylist(config_dir: Path | None = None) -> Denylist:
@@ -182,14 +201,14 @@ def denylist_patterns(entries: list[str]) -> list[re.Pattern[str]]:
     Returns:
         One compiled pattern per entry, in the same order.
     """
-    return [closure.token_pattern(entry_fold(e)) for e in entries]
+    return [text_forms.token_pattern(entry_fold(e)) for e in entries]
 
 
 def entry_fold(entry: str) -> str:
-    """The one form an entry is compared in: its last full casefold (:func:`repoach.forge.closure.folds`).
+    """The one form an entry is compared in: its last full casefold (:func:`repoach.core.text_forms.folds`).
 
     ``NFKC(casefold(NFKC(entry)))``: every decoded form of the judged text is folded the same way
-    (:func:`repoach.forge.closure.forms_of`), so ``Straße`` matches ``STRASSE``, an entry typed
+    (:func:`repoach.core.text_forms.folded_forms`), so ``Straße`` matches ``STRASSE``, an entry typed
     decomposed (NFD) matches composed text and a fullwidth entry matches its ASCII form, each
     still one value with its own ordinal (PR #319 round 7, 4687852996).
 
@@ -199,14 +218,14 @@ def entry_fold(entry: str) -> str:
     Returns:
         The folded entry.
     """
-    return closure.folds(entry)[-1]
+    return text_forms.folds(entry)[-1]
 
 
 def denylist_hit(text: str, patterns: list[re.Pattern[str]]) -> int | None:
     """The ordinal of the first deny-list entry ``text`` holds, or ``None``.
 
     ``text`` is judged in every form the closure oracle judges it in
-    (:func:`repoach.forge.closure.forms_of`), literals kept: decoded, fully casefolded
+    (:func:`repoach.core.text_forms.folded_forms`), literals kept: decoded, fully casefolded
     and with the account number of every node id it holds, wherever the
     node id stands, so an entry holding a numeric user id catches its node ids.
 
@@ -217,7 +236,7 @@ def denylist_hit(text: str, patterns: list[re.Pattern[str]]) -> int | None:
     Returns:
         The 1-based ordinal of the first entry found, or ``None``.
     """
-    forms = closure.forms_of(text)
+    forms = text_forms.folded_forms(text)
     for n, pattern in enumerate(patterns, 1):
         if any(pattern.search(form) for form in forms):
             return n

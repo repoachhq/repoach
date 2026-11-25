@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from repoach.core import text_forms
 from repoach.core.redaction import SECRET_VALUE_PATTERNS
 from repoach.forge import closure
 from repoach.forge.denylist import Denylist, read_denylist
@@ -70,7 +71,7 @@ class UnclassifiedValueError(Exception):
 def generic_class(text: str) -> str | None:
     r"""``home_path`` when ``text`` holds a home directory path, else ``None``.
 
-    Judged in every decoded form of ``text`` (:func:`repoach.forge.closure.decoded_forms`), as the
+    Judged in every decoded form of ``text`` (:func:`repoach.core.text_forms.decoded_forms`), as the
     deny-list and the closure oracle judge it, so ``%2Fhome%2F<x>`` and ``\/home\/<x>`` count.
 
     Args:
@@ -79,14 +80,14 @@ def generic_class(text: str) -> str | None:
     Returns:
         The rule's name, or ``None``.
     """
-    forms = closure.decoded_forms(text)
+    forms = text_forms.decoded_forms(text)
     return "home_path" if any(HOME_PATH_RE.search(form) for form in forms) else None
 
 
 def has_secret_token(text: str) -> bool:
     r"""Whether a forge token shape (:data:`SECRET_TOKEN_PATTERNS`) is in ``text``.
 
-    Judged in every decoded form of ``text`` (:func:`repoach.forge.closure.decoded_forms`, the one
+    Judged in every decoded form of ``text`` (:func:`repoach.core.text_forms.decoded_forms`, the one
     decoder the home-path rule and the deny-list read), so a token whose prefix or delimiter is
     percent-, entity- or string-escaped (``ghp%5F…``, ``ghp&#95;…``, ``ghp_…``) counts.
 
@@ -98,7 +99,7 @@ def has_secret_token(text: str) -> bool:
     """
     return any(
         pattern.search(form)
-        for form in closure.decoded_forms(text)
+        for form in text_forms.decoded_forms(text)
         for pattern in SECRET_TOKEN_PATTERNS
     )
 

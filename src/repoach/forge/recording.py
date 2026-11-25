@@ -29,6 +29,7 @@ from urllib.parse import SplitResult, quote, unquote, urlsplit, urlunsplit
 
 from pydantic import BaseModel
 
+from ..core import text_forms
 from ..core.logging import get_logger
 from ..core.redaction import SECRET_VALUE_PATTERNS
 from . import closure, protocol
@@ -863,7 +864,7 @@ def _identity_survives(host: str, path: str, rewritten: str) -> bool:
     folded = rewritten.casefold()
     return any(
         identity.casefold() in folded
-        for form in closure.decoded_forms(path)
+        for form in text_forms.decoded_forms(path)
         for identity in closure.tenant_identities(f"{host.casefold()}/{form.lstrip('/')}")
     )
 
@@ -2352,7 +2353,7 @@ def known_values(
     def _text(text: str) -> None:
         for found in _ENCODED_PROJECT_RE.finditer(text):
             _segments(unquote(found.group("path")).split("/"), hard=False)
-        for form in closure.decoded_forms(text):
+        for form in text_forms.decoded_forms(text):
             for place in closure.hosts(form):
                 allowed = closure.is_placeholder_host(place.host) or closure.is_public_host(
                     place.host
@@ -2372,7 +2373,7 @@ def known_values(
                     _segments(follow, hard=False)
 
     def _api_path(text: str) -> None:
-        for form in closure.decoded_forms(text):
+        for form in text_forms.decoded_forms(text):
             for owner, repository in _api_path_projects(form):
                 _add("segment", owner, PLACEHOLDER_NAMESPACE, hard=False)
                 _add("segment", repository, PLACEHOLDER_PROJECT, hard=False)
