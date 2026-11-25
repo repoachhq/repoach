@@ -195,10 +195,24 @@ npm's `~<user>`; `docker.io/library`, the official images, holds none), and so i
 the segment after an account route of a listed registry (`TENANT_ROUTES`: PyPI
 `user`/`org`, crates.io `users`/`teams`, NuGet `profiles`, npm `org`/`settings`,
 jsDelivr `gh`): both are refused as a `tenant path` whatever leads the host, and a
-URL on one is rewritten to the placeholder. The deny-list reader and the last judge before a write
+URL on one is rewritten to the placeholder. Every allowlisted host is audited for
+such a route, including one that embeds another forge's path: a Go host's
+`pkg.go.dev/github.com/<owner>/…` (the module proxy and checksum database too),
+the npm, yarn and npmmirror registries' `-/user/org.couchdb.user:<login>`, `-/org`
+and `-/team`, docs.rs owners, Discourse, Mozilla, Apache, Read the Docs and Stack
+Overflow profiles and Wikipedia's user namespaces, in any language; a URL whose
+identity the rewrite cannot place is left for the judge to refuse, never written.
+A host name is read by DNS label grammar, so a private name whose last label holds
+a digit (`gitlab.dc1`, `ci.node1`) is a host, while a version (`v1.2.3`,
+`7.1.0.rc1`) or an address is not. The deny-list and the judge compare full
+casefolds on both sides (NFC and NFKC, each normalised, casefolded and normalised
+again), so `ß`, a decomposed entry and a fullwidth one match however either side
+was typed, and a mention's handle is read on the letters of every script, so
+`@müller` is one handle replaced whole. The deny-list reader and the last judge before a write
 live in `repoach.forge.denylist` and `repoach.forge.fixture_judge`, shared by
 the live recorder and the offline transform, as is the one role builder,
-`repoach.forge.recording.assign_roles`. The deny-list fails closed: an entry point
+`repoach.forge.recording.assign_roles`; the judge reads a fixture through
+`repoach.forge.fixture_reading`, never the recorder's internals. The deny-list fails closed: an entry point
 called without one reads the maintainer's, and only an explicit empty
 `Denylist()` is empty. A deny-list file that exists but cannot be read is a refusal naming the reason, never an
 empty list, and no caller is handed an entry. The token shapes are judged on every decoded
