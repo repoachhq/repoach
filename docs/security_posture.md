@@ -178,10 +178,15 @@ scope (SP-RECORDER-REDACTS-BY-CLASS Threat model & NG4).
 A `<user>@` lead is a local part of ASCII mailbox characters or any Unicode
 letter or digit (`josé@<host>`), or a URL's userinfo from `<scheme>://` to the
 `@` whatever it ends with (`https://u:p=@<host>`). When the authority read to its
-first `/` names no `<host>[:<port>]`, a `/` stood in the password
-(`redis://:<pw>/<pw>@<host>`): the userinfo then runs to the last `@` of the token,
-whatever it crosses, and is refused, and the redactor leaves such a URL as it
-stands for the judge, never rewritten; a path holding an `@` after a host
+first `/`, `<`, `>`, `"` or encoded space names no `<host>[:<port>]`, that delimiter
+stood in the password: the userinfo then runs to the last `@` of the whitespace-free
+run, whatever it crosses. A userinfo that is none by RFC 3986 grammar is refused on
+every host. The redactor never rewrites a URL that a delimiter may have cut inside a
+userinfo (an `@` follows in the run, in any encoding, and the authority is not
+whole): it leaves it, and what it leaves is refused before any login, id or known
+value is replaced, live and offline. An authority RFC 3986 reads whole is a host and
+a path (`redis://localhost:12/<x>@redis`, a residual), and so is one without a
+`<scheme>://` (`//<user>:<pw>@<host>`); a path holding an `@` after a host
 (`https://www.npmjs.com/package/@scope/name`) stays a path, and a one-label host
 other than a placeholder followed by a path `@` is refused, since it reads as a
 user and a password as well. A fixture is refused when
@@ -189,12 +194,14 @@ any string it writes, the method's arguments and argv included, carries a
 token-shaped value, or a home path in any decoded form (`/home/<x>`,
 `/Users/<x>`, `/var/home/<x>`, `C:\Users\<x>`, `C:/Users/<x>`, and the Windows
 profile as a POSIX layer mounts it: WSL `/mnt/<drive>/Users/<x>`, Git-Bash
-`/<drive>/Users/<x>`, Cygwin `/cygdrive/<drive>/Users/<x>`), live or offline; a host
+`/<drive>/Users/<x>`, Cygwin `/cygdrive/<drive>/Users/<x>`, Docker Desktop
+`/host_mnt/<drive>/Users/<x>`, `users` in any case and a separator doubled or not), live or offline; a host
 is also a one-label authority after `<scheme>://` (`https://gitlab/…`) or a name
 whose last label is an IDNA `xn--` label. Every decoded form is read in NFC and
 NFKC as well and with its Unicode labels in IDNA A-labels, so a host or a mailbox
 on an internationalised domain (`<x>@müller.de`, `https://éclair.fr/…`, a
-fullwidth URL, an ideographic full stop) is read by the same grammar as an ASCII
+fullwidth URL, an ideographic full stop, a script that writes vowels as combining
+marks) is read by the same grammar as an ASCII
 one and refused, while non-ASCII prose keeps no host it did not have. The first
 path segment of a container registry is an account, as `github.com/<owner>` is
 (`ACCOUNT_NAMESPACES`: `ghcr.io/<owner>`, `docker.io/<namespace>` after an OCI `v2/`,
@@ -202,18 +209,22 @@ npm's `~<user>`; `docker.io/library`, the official images, holds none), and so i
 the segment after an account route of a listed registry (`TENANT_ROUTES`: PyPI
 `user`/`org`, crates.io `users`/`teams`, NuGet `profiles`, npm `org`/`settings`,
 jsDelivr `gh`): both are refused as a `tenant path` whatever leads the host, and a
-URL on one is rewritten to the placeholder. Every allowlisted host is audited for
-such a route, including one that embeds another forge's path: a Go host's
-`pkg.go.dev/github.com/<owner>/…` (the module proxy and checksum database too),
+URL on one is rewritten to the placeholder. The tables hold the routes found on the
+allowlisted hosts and read from a vendor's page, including one that embeds another
+forge's path: a Go host's `pkg.go.dev/github.com/<owner>/…` (its badge, module and
+API routes, the module proxy and checksum database too),
 the npm, yarn and npmmirror registries' `-/user/org.couchdb.user:<login>`, `-/org`
 and `-/team`, docs.rs owners, Discourse, Mozilla, Apache, Read the Docs and Stack
 Overflow profiles (by id alone too), Mozilla's support and wiki users, Apache's
 Confluence personal spaces (`display/~<id>`) and Wikipedia's user namespaces, in any
 language. An account a query names is read as one in a path (`TENANT_QUERIES`:
-`index.php?title=User:<name>`, `viewspace.action?key=~<id>`). A URL whose
+`index.php?title=User:<name>`, `viewspace.action?key=~<id>`, a registry search's
+`owner:<account>`). A Stack Overflow share link (`/a/<id>/<user id>`) is not read, a
+residual. A URL whose
 identity the rewrite cannot place is left for the judge to refuse, never written.
 A host name is read by DNS label grammar, so a private name whose last label holds
-a digit (`gitlab.dc1`, `ci.node1`) is a host, while a version (`v1.2.3`,
+a digit (`gitlab.dc1`, `ci.node1`, led `ci.1node`) is a host, one whose last label is
+one character is one in a URL only (`u@ci.x` is a residual), while a version (`v1.2.3`,
 `7.1.0.rc1`) or an address is not. A name whose labels before the last are all
 digits (`163.com`, `360.cn`) is a host wherever a scheme, a `<user>@`, an scp user or
 `//` and a path lead it, whatever its labels hold, the version of a
@@ -228,7 +239,7 @@ again), so `ß`, a decomposed entry and a fullwidth one match however either sid
 was typed, and a mention's handle is read on the letters of every script, so
 `@müller` is one handle replaced whole. The deny-list reader, the one source of its names and
 contract, and the last judge before a write
-live in `repoach.forge.denylist` and `repoach.forge.fixture_judge`, shared by
+live in `repoach.core.denylist` and `repoach.forge.fixture_judge`, shared by
 the live recorder and the offline transform, as is the one role builder,
 `repoach.forge.recording.assign_roles`; the judge reads a fixture through
 `repoach.forge.fixture_reading`, never the recorder's internals. The forms a text
@@ -241,10 +252,11 @@ empty list, and no caller is handed an entry. The token shapes are judged on eve
 form of a string, as the home path and the deny-list are. The recorder's own `git` child (`origin_url`) runs with
 `PATH`, `HOME`, `XDG_CONFIG_HOME`, `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`,
 `GIT_CONFIG_NOSYSTEM` and `SYSTEMROOT` only (`GIT_ENV_KEYS`), never a token or the deny-list.
-Reading the remote fails closed: a missing `git`, a timeout, an unreadable answer and any exit
+The remote is read before the forge is selected, whose own `git` keeps the whole
+environment. Reading the remote fails closed: a missing `git`, a directory that is missing or no repository, a timeout, an unreadable answer and any exit
 but git's own report of no such remote (`git remote` succeeds and lists no `origin`, whatever
 the locale) refuse the recording (exit 2, `origin remote: unreadable (<reason>)`), naming
-neither the path nor the remote. The live recorder is
+neither the path nor the remote; a fixture that cannot be written is exit 2 too. The live recorder is
 `repoach.forge.fixture_pipeline.record_live`; `scripts/record_forge_fixture.py` is its command
 line.
 
