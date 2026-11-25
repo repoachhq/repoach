@@ -910,19 +910,40 @@ def _blank(text: str, literals: tuple[str, ...]) -> str:
     return _literal_pattern(literals).sub(" ", text)
 
 
+def folds(text: str) -> tuple[str, ...]:
+    """The full casefolds of ``text`` (PR #319 round 7, 4687852996): NFC, then NFKC, each once.
+
+    Each is normalised, casefolded and normalised again, since a casefold may leave a string
+    unnormalised: ``Straße`` folds to ``strasse``, ``Müller`` typed decomposed (NFD) folds to the
+    composed form, and a fullwidth ``Ｍüller`` folds, by NFKC, to the ASCII one. Both sides of a
+    comparison are folded by this one function: the judged text (:func:`forms_of`) and every
+    value it is compared with (a deny-list entry, :mod:`repoach.forge.denylist`).
+
+    Args:
+        text: Any string.
+
+    Returns:
+        ``NFC(casefold(NFC(text)))``, then ``NFKC(casefold(NFKC(text)))`` when it differs.
+    """
+    canonical = unicodedata.normalize("NFC", unicodedata.normalize("NFC", text).casefold())
+    compatible = unicodedata.normalize("NFKC", unicodedata.normalize("NFKC", text).casefold())
+    return (canonical,) if compatible == canonical else (canonical, compatible)
+
+
 def forms_of(text: str, *, literals: tuple[str, ...] = ()) -> list[str]:
-    """Every form ``text`` is judged in, casefolded: decoded layers and node-id account numbers.
+    """Every form ``text`` is judged in, fully casefolded: decoded layers and node-id account numbers.
 
     Args:
         text: One string of the built fixture.
         literals: Tool and project literals, blanked before decoding.
 
     Returns:
-        Each decoded layer casefolded, then each user node id's account number, each once.
+        Each decoded layer casefolded, then its :func:`folds`, then each user node id's account
+        number, each once.
     """
     forms: list[str] = []
     for layer in decoded_forms(_blank(text, literals)):
-        for form in (layer.casefold(), *node_id_numbers(layer)):
+        for form in (layer.casefold(), *folds(layer), *node_id_numbers(layer)):
             if form not in forms:
                 forms.append(form)
     return forms

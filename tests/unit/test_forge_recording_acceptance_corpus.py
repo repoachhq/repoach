@@ -11049,6 +11049,32 @@ ROWS: tuple[Row, ...] = (
             text="see https://pkg.go.dev/golang.org/x/net/http2, https://registry.npmjs.org/lodash, https://docs.rs/releases/recent, https://en.wikipedia.org/wiki/Help:Contents and https://en.wikipedia.org/wiki/Mission:_Impossible"
         ),
     ),
+    Row(
+        id="r7_denylist_entry_with_a_sharp_s_matches_its_casefold",
+        source="PR #319 review round 7 (4687852996)",
+        inp=Sample(body="signed off by ZQKVNSTRASSE today", deny=("Zqkvnstraße",)),
+        outcome=Refused("deny-list entry 1 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r7_denylist_entry_typed_decomposed_matches_composed_text",
+        source="PR #319 review round 7 (4687852996)",
+        inp=Sample(body="signed off by Zqkvnmüller today", deny=("Zqkvnmüller",)),
+        outcome=Refused("deny-list entry 1 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r7_denylist_entry_typed_fullwidth_matches_ascii_text",
+        source="PR #319 review round 7 (4687852996)",
+        inp=Sample(body="signed off by zqkvnfw today", deny=("ｚｑｋｖｎｆｗ",)),
+        outcome=Refused("deny-list entry 1 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r7_denylist_entry_folds_never_match_a_longer_token",
+        source="PR #319 review round 7 (4687852996)",
+        inp=Sample(
+            body="the Zqkvnstrassenbahn and xzqkvnmüller stay", deny=("Zqkvnstraße", "zqkvnmüller")
+        ),
+        outcome=Written(text="the Zqkvnstrassenbahn and xzqkvnmüller stay"),
+    ),
 )
 
 
@@ -11501,10 +11527,10 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
     refused = [row for row in ROWS if isinstance(row.outcome, Refused)]
     bounded = [row for row in ROWS if isinstance(row.outcome, Bounded)]
     assert (len(ROWS), len(planted), len(ordinary), len(refused), len(bounded)) == (
-        968,
-        672,
-        296,
-        115,
+        972,
+        675,
+        297,
+        118,
         2,
     )
     assert len(residual) == 25

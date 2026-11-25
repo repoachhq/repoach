@@ -7894,3 +7894,37 @@ def test_a_forge_module_takes_each_name_from_the_module_that_defines_it() -> Non
                 assert not alias.name.startswith("_"), (path.name, module, alias.name)
                 assert alias.name in defined[module], (path.name, module, alias.name)
     assert checked > 100
+
+
+def test_a_denylist_entry_and_the_text_are_compared_in_their_full_casefolds() -> None:
+    """D3 (PR #319 round 7, 4687852996): ``ß``, a decomposed entry and a fullwidth one all match.
+
+    Both sides go through :func:`repoach.forge.closure.folds` (NFC, then NFKC, each normalised,
+    casefolded and normalised again): the deny-list's patterns and the oracle's values on one
+    side, every decoded form of the judged text on the other, so an entry matches whatever case,
+    normalisation or width either side was typed in, and never a longer token.
+    """
+    nfd_umlaut = "ü"
+    cases = (
+        ("Zqstraße", ("zqstrasse", "ZQSTRASSE", "Zqstraße", "ZQSTRAẞE")),
+        ("ZQSTRASSE", ("zqstraße", "Zqstraße")),
+        (f"Zqm{nfd_umlaut}ller", ("zqmüller", "ZQMÜLLER", f"zqm{nfd_umlaut}ller")),
+        ("zqmüller", (f"ZQM{nfd_umlaut.upper()}LLER", "zqm%C3%BCller")),
+        ("Ｚｑｋｖｎ", ("zqkvn", "ZQKVN", "ＺＱＫＶＮ")),
+        ("zqkvn", ("ＺＱＫＶＮ",)),
+    )
+    for entry, spellings in cases:
+        deny = deny_list.Denylist((entry,))
+        judged = deny.judged_with(closure.Known(()))
+        for spelling in spellings:
+            text = f"signed off by {spelling} today"
+            assert deny.hit(text) == 1, (ascii(entry), ascii(spelling))
+            assert closure.residual(text, judged) == ("deny-list", 1), (
+                ascii(entry),
+                ascii(spelling),
+            )
+        for other in (f"{spellings[0]}x today", f"x{spellings[0]}", "signed off by someone"):
+            assert deny.hit(other) is None, (ascii(entry), ascii(other))
+    assert closure.folds("Straße") == ("strasse",)
+    assert closure.folds(f"m{nfd_umlaut}") == ("mü",)
+    assert closure.folds("Ｍ") == ("ｍ", "m")

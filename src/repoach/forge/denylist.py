@@ -90,7 +90,7 @@ class Denylist:
         return None
 
     def judged_with(self, known: closure.Known) -> closure.Known:
-        """``known`` with every entry added as a ``deny-list`` value, casefolded and once each.
+        """``known`` with every entry added as a ``deny-list`` value, folded (:func:`entry_fold`), once each.
 
         The entries never leave the two opaque holders: this class hands them to the oracle's
         :class:`repoach.forge.closure.Known`, whose ``repr`` is a count too, and to no caller.
@@ -101,7 +101,7 @@ class Denylist:
         Returns:
             A new :class:`repoach.forge.closure.Known`, its literals and tokens unchanged.
         """
-        folded = dict.fromkeys(entry.casefold() for entry in self._entries)
+        folded = dict.fromkeys(entry_fold(entry) for entry in self._entries)
         added = tuple(("deny-list", value) for value in folded)
         return closure.Known(known.entries + added, known.literals, known.tokens)
 
@@ -174,7 +174,7 @@ def _read_entries(config_dir: Path | None) -> tuple[Denylist, bool, str]:
 
 
 def denylist_patterns(entries: list[str]) -> list[re.Pattern[str]]:
-    """SP-NO-PERSONAL-DATA-GATE D1 ``denylist``: each entry a whole token (:func:`repoach.forge.closure.token_pattern`).
+    """SP-NO-PERSONAL-DATA-GATE D1 ``denylist``: each entry, folded (:func:`entry_fold`), a whole token.
 
     Args:
         entries: The deny-list entries, in order.
@@ -182,14 +182,31 @@ def denylist_patterns(entries: list[str]) -> list[re.Pattern[str]]:
     Returns:
         One compiled pattern per entry, in the same order.
     """
-    return [closure.token_pattern(e) for e in entries]
+    return [closure.token_pattern(entry_fold(e)) for e in entries]
+
+
+def entry_fold(entry: str) -> str:
+    """The one form an entry is compared in: its last full casefold (:func:`repoach.forge.closure.folds`).
+
+    ``NFKC(casefold(NFKC(entry)))``: every decoded form of the judged text is folded the same way
+    (:func:`repoach.forge.closure.forms_of`), so ``Straße`` matches ``STRASSE``, an entry typed
+    decomposed (NFD) matches composed text and a fullwidth entry matches its ASCII form, each
+    still one value with its own ordinal (PR #319 round 7, 4687852996).
+
+    Args:
+        entry: One deny-list entry.
+
+    Returns:
+        The folded entry.
+    """
+    return closure.folds(entry)[-1]
 
 
 def denylist_hit(text: str, patterns: list[re.Pattern[str]]) -> int | None:
     """The ordinal of the first deny-list entry ``text`` holds, or ``None``.
 
     ``text`` is judged in every form the closure oracle judges it in
-    (:func:`repoach.forge.closure.forms_of`), literals kept: decoded, casefolded
+    (:func:`repoach.forge.closure.forms_of`), literals kept: decoded, fully casefolded
     and with the account number of every node id it holds, wherever the
     node id stands, so an entry holding a numeric user id catches its node ids.
 
