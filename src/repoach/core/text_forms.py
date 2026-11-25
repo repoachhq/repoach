@@ -2,7 +2,7 @@
 
 SP-RECORDER-REDACTS-BY-CLASS (PR #319 round 8, 4688673733). Every reader that judges text for a
 private value reads it here, the forge's closure oracle (:mod:`repoach.forge.closure`) and the
-maintainer's deny-list (:mod:`repoach.forge.denylist`) alike, and the gate of
+maintainer's deny-list (:mod:`repoach.core.denylist`) alike, and the gate of
 SP-NO-PERSONAL-DATA-GATE will too. The module imports the standard library only, so a lint
 outside the forge package reads text the way the oracle does without depending on it.
 """
@@ -73,12 +73,51 @@ def _unescape_once(text: str) -> str:
     return unquote(html.unescape(_STRING_ESCAPE.sub(_escaped_char, text)))
 
 
-_LABEL_RUN_UNICODE = re.compile(r"(?:[^\W_]|[-.。．｡])+", re.I)
-"""A run of Unicode letters, digits, ``-`` and dots: the grammar of a host name before IDNA (RFC 5890).
+_LABEL_RUN_UNICODE = re.compile(r"(?:[^\W_]|[-.。．｡]|[^\x00-\x7f])+", re.I)
+"""A run a host name may stand in before IDNA (RFC 5890): letters, digits, ``-``, dots and any non-ASCII character.
 
 ``。``, ``．`` and ``｡`` are the ideographic, fullwidth and halfwidth full stops,
-which IDNA reads as label separators (RFC 3490 3.1).
+which IDNA reads as label separators (RFC 3490 3.1). What the run's other characters are is
+:func:`_label_char`'s to say.
 """
+
+
+_LABEL_EXTRAS = frozenset(
+    chr(n) for n in (0xB7, 0x375, 0x5F3, 0x5F4, 0x6FD, 0x6FE, 0xF0B, 0x200C, 0x200D, 0x3007, 0x30FB)
+)
+"""The characters IDNA admits in a label that are no letter, digit or combining mark (RFC 5892 2.6, A.1 to A.7)."""
+
+
+def _label_char(char: str, before: str) -> bool:
+    """Whether ``char`` stands in a label after ``before``, the character right before it (``""`` for none).
+
+    A letter, a digit, ``-`` or a dot does. A combining mark (``Mn``, ``Mc``: a Devanagari or a
+    Thai vowel sign, an Arabic haraka) and an :data:`_LABEL_EXTRAS` character do after a letter, a
+    digit or another of them, never first (RFC 5891 4.2.3.2). A variation selector, which no label
+    holds (RFC 5892 2.6: ignorable), does not, so an emoji right before an address joins no label.
+    """
+    if char.isalnum() or char in "-.。．｡":
+        return True
+    if not before or before in "-.。．｡":
+        return False
+    if unicodedata.category(char) in ("Mn", "Mc"):
+        return not unicodedata.name(char, "").startswith("VARIATION SELECTOR")
+    return char in _LABEL_EXTRAS
+
+
+def _label_runs(run: str) -> list[str]:
+    """``run`` cut into the stretches whose characters stand in labels and those whose do not, in order."""
+    pieces: list[str] = []
+    inside = False
+    before = ""
+    for char in run:
+        held = _label_char(char, before)
+        if pieces and held == inside:
+            pieces[-1] += char
+        else:
+            pieces.append(char)
+        inside, before = held, char if held else ""
+    return pieces
 
 
 _IDNA_DOTS = str.maketrans({"。": ".", "．": ".", "｡": "."})
@@ -97,7 +136,8 @@ def _a_label(label: str) -> str:
 def ascii_labels(text: str) -> str:
     """``text`` with every Unicode label run written in IDNA A-labels, so the ASCII readers read its hosts.
 
-    A run of Unicode letters, digits, ``-`` and dots (:data:`_LABEL_RUN_UNICODE`) that holds a
+    A run of Unicode letters, digits, combining marks, ``-`` and dots (:data:`_LABEL_RUN_UNICODE`,
+    :func:`_label_char`) that holds a
     non-ASCII character is split on its dots, each non-ASCII label becoming ``xn--<punycode>``:
     ``hans@müller.de`` is ``hans@xn--mller-kva.de`` and ``https://éclair.fr/x`` is
     ``https://xn--clair-9ra.fr/x``, a mailbox and a host like any other. ASCII text is returned
@@ -118,7 +158,12 @@ def ascii_labels(text: str) -> str:
         run = match.group(0)
         if run.isascii():
             return run
-        return ".".join(_a_label(label) for label in run.translate(_IDNA_DOTS).split("."))
+        return "".join(
+            ".".join(_a_label(label) for label in piece.translate(_IDNA_DOTS).split("."))
+            if _label_char(piece[0], "")
+            else piece
+            for piece in _label_runs(run)
+        )
 
     return _LABEL_RUN_UNICODE.sub(_run, text)
 
@@ -136,7 +181,13 @@ def _peeled(text: str) -> list[str]:
     return forms
 
 
-def decoded_forms(text: str) -> list[str]:
+ENCODED_SPACE = chr(0x2420)
+"""``SYMBOL FOR SPACE``: what :func:`decoded_forms` writes for a decoded space when asked to keep it visible."""
+
+_SPACE_SHIELD = chr(0xE000)
+
+
+def decoded_forms(text: str, *, keep_encoded_spaces: bool = False) -> list[str]:
     r"""Every form ``text`` is read in: each encoding layer peeled off, its Unicode normal forms, its A-labels.
 
     The layers are string-escape, HTML-entity and percent encoding, up to four. The
@@ -150,12 +201,23 @@ def decoded_forms(text: str) -> list[str]:
 
     Args:
         text: The text read, as it was written.
+        keep_encoded_spaces: Write :data:`ENCODED_SPACE` for every whitespace character a decoding
+            produced and for every non-ASCII one, so an encoded or a no-break space (``%20``,
+            ``&#32;``, ``&nbsp;``) never ends a token the text itself does not end.
 
     Returns:
         The forms, each once, ``text`` itself first: its layers in the order they are peeled,
         then those of its NFC and NFKC forms, then the NFC and NFKC form of each, then the
         A-label form of each. Callers rely on the layers coming first. Never empty; never raises.
     """
+    if keep_encoded_spaces:
+        if text.isascii() and not any(mark in text for mark in "%&\\"):
+            return [text]
+        shielded = "".join(_SPACE_SHIELD if c.isspace() and c.isascii() else c for c in text)
+        return [
+            "".join(ENCODED_SPACE if c.isspace() else c for c in form).replace(_SPACE_SHIELD, " ")
+            for form in decoded_forms(shielded)
+        ]
     seeds = [text]
     for normal in ("NFC", "NFKC"):
         seed = unicodedata.normalize(normal, text)
@@ -243,7 +305,7 @@ def folds(text: str) -> tuple[str, ...]:
     unnormalised: ``Straße`` folds to ``strasse``, ``Müller`` typed decomposed (NFD) folds to the
     composed form, and a fullwidth ``Ｍüller`` folds, by NFKC, to the ASCII one. Both sides of a
     comparison are folded by this one function: the judged text (:func:`folded_forms`) and every
-    value it is compared with (a deny-list entry, :mod:`repoach.forge.denylist`).
+    value it is compared with (a deny-list entry, :mod:`repoach.core.denylist`).
 
     Args:
         text: Any string.

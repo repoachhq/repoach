@@ -33,6 +33,7 @@ import pytest
 import yaml
 from structlog.testing import capture_logs
 
+from repoach.core import denylist as deny_list
 from repoach.core import text_forms
 from repoach.forge import (
     closure,
@@ -43,7 +44,6 @@ from repoach.forge import (
     recording,
     recording_tables,
 )
-from repoach.forge import denylist as deny_list
 from repoach.forge.fixture_reading import (
     NON_PERSON_LOGINS,
     SYNTHETIC_IDS_KEY,
@@ -452,6 +452,17 @@ def _no_denylist(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     return config / "repoach"
 
 
+def _checkout(path: Path) -> Path:
+    """Make ``path`` a real git checkout with no remote, wherever the test's scratch directory stands.
+
+    The recorder reads the ``origin`` remote of its ``--cwd`` and refuses a directory that is no
+    checkout, so a test that records from a bare scratch directory passed only where that
+    directory happened to stand inside a repository.
+    """
+    subprocess.run(["git", "init", "-q", str(path)], check=True, env=fixture_pipeline.git_env())
+    return path
+
+
 def _run_main(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -461,6 +472,7 @@ def _run_main(
 ) -> int:
     """Run the recorder's CLI against a fake forge, optionally with fixed roles and a deny-list."""
     _no_denylist(monkeypatch, tmp_path)
+    _checkout(tmp_path)
     if denylist is not None:
         monkeypatch.setenv(deny_list.DENYLIST_ENV, denylist)
     monkeypatch.setattr(
@@ -595,6 +607,43 @@ def test_a_windows_profile_is_a_home_path_under_every_posix_mount() -> None:
         "x/mnt/c/Users/someone-x",
         "abc/cygdrive/c/Users/someone-x",
         "/mnt/c/Windows/System32",
+    ):
+        assert fixture_judge.generic_class(text) is None, text
+
+
+def test_a_windows_profile_is_a_home_path_in_any_case_and_with_a_doubled_separator() -> None:
+    """D3 (PR #319 round 10, 4684965373): ``USERS``, ``//`` and Docker Desktop's mounts; the POSIX API route is not.
+
+    Windows ignores the case of ``Users`` and every POSIX layer collapses a doubled separator.
+    """
+    mounts = ("/mnt/c", "/c", "/cygdrive/c", "/host_mnt/c", "/run/desktop/mnt/host/c", "C:")
+    for prefix in mounts:
+        for users in ("USERS", "uSeRs", "Users", "users"):
+            for text in (
+                f"at {prefix}/{users}/someone-x",
+                f"at {prefix}//{users}//someone-x/y",
+                f"at {prefix}/{users}//someone-x",
+            ):
+                assert fixture_judge.generic_class(text) == "home_path", text
+                encoded = text.replace("/", "%2F")
+                assert fixture_judge.generic_class(encoded) == "home_path", encoded
+    for text in (
+        "/home//someone-x",
+        "//home/someone-x",
+        "/Users//someone-x",
+        "/var//home//someone-x",
+    ):
+        assert fixture_judge.generic_class(f"at {text}") == "home_path", text
+    for text in (
+        "/users/octo",
+        "/USERS/x",
+        "/api/v3/users//x",
+        "/mnt/c/USERS/",
+        "/host_mnt/c/Windows",
+        "/host_mnt/cd/Users/someone-x",
+        "x/host_mnt/c/Users/someone-x",
+        "/HOME/someone-x",
+        "a//home",
     ):
         assert fixture_judge.generic_class(text) is None, text
 
@@ -1847,7 +1896,7 @@ sys.exit(rec.main(argv))
 
 def test_scripts_print_one_line_and_log_to_stderr(tmp_path: Path) -> None:
     """K8 (0.10): each script's stdout is its one result line, or empty on a refusal; logs go to stderr."""
-    driver = tmp_path / "driver.py"
+    driver = _checkout(tmp_path) / "driver.py"
     driver.write_text(_DRIVER)
     script = str(ROOT / "scripts" / "record_forge_fixture.py")
     review = {"id": 9, "user": {"login": "q-handle"}, "state": "APPROVED", "body": "ok"}
@@ -5204,7 +5253,7 @@ def test_offline_roles_by_enumeration_of_orders_numbering_and_mention_text() -> 
     }
     upper_mention = _roles_data({"user": {"login": "zqbot[bot]"}}, {"body": "cc @ZQBOT"})
     assert fixture_pipeline.fixture_roles(upper_mention) == {"zqbot[bot]": "bot", "ZQBOT": "bot"}
-    mention_text = recording.rename_logins_in_text
+    mention_text = recording.classify_text
     assert mention_text("zqname-x and zqname", {"zqname": "author", "zqname-x": "author-2"}) == (
         "author-2 and author"
     )
@@ -5327,9 +5376,7 @@ def test_offline_words_skip_the_ones_the_fixture_already_holds_and_the_head_is_n
     }
     assert fixture_pipeline.fixture_roles(padded) == {"zqpadded": "author-2"}
     assert (
-        recording.rename_logins_in_text(
-            "zqname-x and zqname", {"zqname": "author-10", "zqname-x": "bot"}
-        )
+        recording.classify_text("zqname-x and zqname", {"zqname": "author-10", "zqname-x": "bot"})
         == "bot and author-10"
     )
     head = "recorded 2026-11-22 from a live github change request"
@@ -7343,11 +7390,14 @@ def test_every_exception_main_catches_is_one_the_entry_point_documents() -> None
         "UnclassifiedValueError",
         "DenylistError",
         "OriginRemoteError",
+        "FixtureWriteError",
         "SyntheticIdsExhaustedError",
         "NeedleError",
         "ForgeError",
         "ConfigError",
         "TypeError",
+        "ValueError",
+        "OSError",
     } == _raises_names(fixture_pipeline.record_live)
     for function in (
         fixture_pipeline.redact_fixture,
@@ -7395,6 +7445,7 @@ def test_record_refuses_an_unknown_method_and_a_replay_that_issues_another_call(
         raise ForgeError("forge 'github' (from flag) needs the 'gh' CLI on PATH")
 
     monkeypatch.setattr(fixture_pipeline, "select_forge", _unavailable)
+    _checkout(tmp_path)
     assert (
         rec.main(
             ["--forge", "github", "--cwd", str(tmp_path), "--case", "c", "--method", "pull_request"]
@@ -7529,7 +7580,7 @@ def test_an_unreadable_denylist_file_is_a_named_refusal_never_an_empty_list(tmp_
     """D3 (PR #319 round 5): a deny-list file that exists but cannot be read fails closed.
 
     A dangling symlink, a directory, an unreadable file and a file that is no UTF-8 each raise
-    :class:`repoach.forge.denylist.DenylistError` naming the reason and the file name, never an
+    :class:`repoach.core.denylist.DenylistError` naming the reason and the file name, never an
     entry; an absent file is no entry.
     """
     entry = "zqunreadable" + "4713"
@@ -7572,7 +7623,7 @@ def test_an_unreadable_denylist_file_is_a_named_refusal_never_an_empty_list(tmp_
 def test_the_denylist_hands_its_entries_to_no_caller() -> None:
     """K8 (PR #319 round 5, 4683464056): the opaque reader gives the oracle its entries, a caller none.
 
-    :meth:`repoach.forge.denylist.Denylist.judged_with` adds them to an opaque
+    :meth:`repoach.core.denylist.Denylist.judged_with` adds them to an opaque
     :class:`repoach.forge.closure.Known`; no public member returns an entry, and
     :func:`repoach.forge.recording.known_values` takes the opaque reader only.
     """
@@ -7737,6 +7788,105 @@ def test_a_git_error_reading_the_origin_is_a_refusal_whatever_the_locale(
         fixture_pipeline.origin_url(repo)
 
 
+def _run_recorder(argv: list[str], cwd: Path, path: Path) -> subprocess.CompletedProcess[str]:
+    """Run the recorder's script in a real child whose PATH holds what ``path`` holds and nothing else."""
+    env = {
+        "PATH": str(path),
+        "HOME": str(cwd),
+        "XDG_CONFIG_HOME": str(cwd / "xdg"),
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "PYTHONPATH": str(ROOT / "src"),
+    }
+    script = str(ROOT / "scripts" / "record_forge_fixture.py")
+    return subprocess.run(
+        [sys.executable, script, "--forge", "github", "--case", "c", *argv],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=cwd,
+        check=False,
+    )
+
+
+def test_the_recorder_names_why_it_cannot_read_a_checkout_on_its_real_path(tmp_path: Path) -> None:
+    """PR #319 round 10 (4681868948): no git, no repository, no directory: exit 2, the reason, no path.
+
+    A real child runs the script with a real PATH and no test double. The origin remote is read
+    before the forge is selected, whose own ``git`` would fail with a traceback that prints the
+    checkout's path; nothing is recorded and nothing written.
+    """
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed")
+    repo = _checkout(tmp_path / "zqcheckout")
+    bare = tmp_path / "zqbare"
+    bare.mkdir()
+    empty = tmp_path / "bin-empty"
+    empty.mkdir()
+    with_git = tmp_path / "bin-git"
+    with_git.mkdir()
+    (with_git / "git").symlink_to(cast(str, shutil.which("git")))
+    out = tmp_path / "out"
+    call = ["--method", "conversation_comments", "--args", "[7]", "--out", str(out)]
+    for cwd, path, reason in (
+        (repo, empty, "git missing"),
+        (bare, empty, "git missing"),
+        (tmp_path / "zqmissing", empty, "git missing"),
+        (bare, with_git, "exit 128"),
+        (tmp_path / "zqmissing", with_git, "exit 128"),
+    ):
+        done = _run_recorder(["--cwd", str(cwd), *call], tmp_path, path)
+        assert (done.returncode, done.stdout) == (2, ""), done.stderr
+        assert done.stderr.splitlines()[-1] == f"origin remote: unreadable ({reason})"
+        assert "Traceback" not in done.stderr
+        assert cwd.name not in done.stderr and str(tmp_path) not in done.stderr
+        assert not out.exists()
+    done = _run_recorder(["--cwd", str(repo), *call], tmp_path, with_git)
+    assert done.returncode == 2 and "needs the 'gh' CLI on PATH" in done.stderr.splitlines()[-1]
+
+
+def test_a_forge_selected_without_git_is_the_same_named_refusal(tmp_path: Path) -> None:
+    """PR #319 round 10: a checkout that goes while the recording runs is refused by name, its path unprinted."""
+    with pytest.raises(fixture_pipeline.OriginRemoteError) as refused:
+        fixture_pipeline._forge_of("github", tmp_path / "zqgone")
+    assert str(refused.value) == "origin remote: unreadable (cannot run (NotARepositoryError))"
+    assert refused.value.__cause__ is None and refused.value.__context__ is None
+
+
+def test_a_fixture_that_cannot_be_written_is_a_named_refusal(tmp_path: Path) -> None:
+    """PR #319 round 10 (4681868948): a file where the output directory goes is exit 2, never a traceback.
+
+    A real child runs the script on a real PATH whose ``gh`` is a program that answers one empty
+    listing and fails every other call; the same call writes the fixture where the output
+    directory is free.
+    """
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed")
+    repo = _checkout(tmp_path / "zqcheckout")
+    programs = tmp_path / "bin"
+    programs.mkdir()
+    (programs / "git").symlink_to(cast(str, shutil.which("git")))
+    (programs / "gh").write_text(
+        "#!/bin/sh\ncase $1 in api) printf '[[]]';; *) exit 1;; esac\n", encoding="utf-8"
+    )
+    (programs / "gh").chmod(0o755)
+    call = ["--cwd", str(repo), "--method", "conversation_comments", "--args", "[7]", "--out"]
+    free = tmp_path / "free"
+    done = _run_recorder([*call, str(free)], tmp_path, programs)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.splitlines() == [str(free / "github" / "c.json")]
+    taken = tmp_path / "taken"
+    taken.mkdir()
+    (taken / "github").write_text("", encoding="utf-8")
+    done = _run_recorder([*call, str(taken)], tmp_path, programs)
+    assert (done.returncode, done.stdout) == (2, "")
+    assert done.stderr.splitlines()[-1] == "fixture not written (FileExistsError)"
+    assert "Traceback" not in done.stderr and str(taken) not in done.stderr
+    with pytest.raises(fixture_pipeline.FixtureWriteError) as refused:
+        fixture_pipeline._write(taken / "github" / "c.json", {})
+    assert refused.value.__cause__ is None and refused.value.__context__ is None
+
+
 def test_live_and_offline_finish_through_the_one_shared_pipeline() -> None:
     """D4 (PR #319 round 5, 4683464072, 4683464045): one pipeline module, a narrow API for the scripts.
 
@@ -7744,9 +7894,8 @@ def test_live_and_offline_finish_through_the_one_shared_pipeline() -> None:
     scripts declare the synthetic ids and judge through
     :func:`repoach.forge.fixture_pipeline.seal_fixture`, so neither writes a fixture the other
     would judge differently. The offline transform (in the pipeline module since round 6)
-    reaches the text rewriting through the public facade (``rename_logins_in_text``,
-    ``rename_logins_in_argument``, ``rewrite_recorded_source``, ``replace_known_in_source``),
-    never its patterns.
+    reaches the text rewriting through the public facade (``classify_logins``, the live rule
+    since round 10, ``rewrite_recorded_source``, ``replace_known_in_source``), never its patterns.
     """
     live = inspect.getsource(fixture_pipeline._record)
     command = inspect.getsource(rec.main)
@@ -7777,14 +7926,16 @@ def test_live_and_offline_finish_through_the_one_shared_pipeline() -> None:
     assert imported and not imported & internals
     assert not any(name.startswith("_") for name in imported)
     assert {
-        "rename_logins_in_text",
-        "rename_logins_in_argument",
+        "classify_logins",
         "rewrite_recorded_source",
         "replace_known_in_source",
     } <= imported
     known = recording.known_values([], roles={}, denylist=NO_DENYLIST)
     fixture = {"calls": [], "source": "recorded 2026-11-24 from a live github change request"}
-    assert fixture_pipeline.seal_fixture(fixture, denylist=NO_DENYLIST, known=known) == fixture
+    assert (
+        fixture_pipeline.seal_fixture(fixture, denylist=NO_DENYLIST, known=known, cut_userinfo="")
+        == fixture
+    )
     assert recording.rewrite_recorded_source("recorded 2026-11-24 from zqfolder x", "github") == (
         "recorded 2026-11-24 from a live github change request, x"
     )
@@ -7826,6 +7977,80 @@ def test_a_script_exports_its_own_names_only() -> None:
         rec.__all__
     )
     assert "refuse_unclassified" not in rec.__all__
+
+
+def test_live_and_offline_rename_a_login_by_the_same_rule() -> None:
+    """D4 (PR #319 round 10, 4683464072): one raw recording, one set of written strings, live and offline.
+
+    Two drifts stood between the two renaming rules: a login spelt in two cases was unclassified
+    offline, and a login inside an argument was replaced live and left for the judge offline. Both
+    paths apply :func:`repoach.forge.recording.classify_logins` now; the offline walk is kept
+    apart because a committed fixture is more than its exchanges (``bot_username``, ``result``,
+    a ``gate/`` capture).
+    """
+    items = [
+        {"user": {"login": "zqjdoe7", "id": 70707}, "body": "by zqjdoe7, cc @zqonly and ZQJDOE7"},
+        {"user": {"login": "ZQJDOE7", "id": 70707}, "body": "by zqci"},
+        {"user": {"login": "zqci[bot]", "id": 70708}, "body": "@zqci said"},
+    ]
+    call = {
+        "program": "gh",
+        "args": ["api", "x", "-f", "q=author:zqjdoe7+x", "zqjdoe7-patch", "x/zqjdoe7/y"],
+        "stdin": None,
+        "returncode": 0,
+        "stdout": json.dumps(items),
+        "stderr": "error for ZQJDOE7",
+    }
+    raw = {
+        "forge": "github",
+        "case": "c",
+        "method": "conversation_comments",
+        "args": [42],
+        "kwargs": {},
+        "bot_username": "bot",
+        "source": "recorded 2026-11-24 from a live github change request",
+        "trimmed": None,
+        "calls": [call],
+        "result": None,
+        "raises": None,
+    }
+    calls = fixture_pipeline._redact_by_field([call], None)
+    live = fixture_pipeline.redact_recording(
+        calls,
+        [42],
+        {},
+        raw=[[call], [42], {}],
+        roles=fixture_pipeline.build_roles(calls, bot="bot", maintainer=None, author=None),
+        remote="",
+        denylist=NO_DENYLIST,
+        forge="github",
+        method="conversation_comments",
+    ).calls[0]
+    offline = fixture_pipeline.redact_fixture(raw, forge="github", denylist=NO_DENYLIST)["calls"][0]
+    words = r"\b(?:author|bot)(?:-[0-9]+)?"
+    for key in ("args", "stdout", "stderr"):
+        written = [re.sub(words, "word", json.dumps(side[key])) for side in (live, offline)]
+        assert written[0] == written[1], key
+        assert "zqjdoe7" not in written[0].casefold() and "zqonly" not in written[0], key
+    printed = {**call, "stdout": "plain text for @zqonly"}
+    text = fixture_pipeline.redact_fixture(
+        {**raw, "calls": [call, printed]}, forge="github", denylist=NO_DENYLIST
+    )["calls"][1]["stdout"]
+    assert re.fullmatch(r"plain text for @author-[0-9]+", text), text
+    source = inspect.getsource(fixture_pipeline._rename)
+    assert "classify_logins(" in source and "classify_logins(" in inspect.getsource(
+        fixture_pipeline.classify_calls
+    )
+    assert not hasattr(recording, "rename_logins_in_text")
+
+
+def test_a_cut_userinfo_is_named_by_its_path() -> None:
+    """D8 (PR #319 round 10): what the redactor leaves is refused by the path it stands at, whatever the judge reads."""
+    path = fixture_pipeline.cut_userinfo_path
+    left = "see https://pypi.org%3A6379/zqhead[zqtail%40localhost/db"
+    assert path({"calls": [], "args": ["x", left], "kwargs": {}}) == "args[1]"
+    assert path({"calls": [{"stderr": "dsn redis://u:p]w@localhost"}]}) == "exchanges[0].stderr"
+    assert path({"calls": [], "args": ["see https://u:pw@gitlab.zqcorp.io/ns/r"]}) == ""
 
 
 def test_the_offline_script_is_the_command_line_of_the_pipeline(tmp_path: Path) -> None:
@@ -7898,7 +8123,8 @@ def test_the_live_script_is_the_command_line_of_the_pipeline() -> None:
     taken = {
         alias.name
         for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("repoach.forge")
+        if isinstance(node, ast.ImportFrom)
+        and (node.module or "").startswith(("repoach.forge", "repoach.core.denylist"))
         for alias in node.names
     }
     assert taken == {"record_live", *_caught_by_main(rec)}
@@ -7966,7 +8192,7 @@ def test_the_denylist_has_one_source() -> None:
         for path in [*(ROOT / "src").rglob("*.py"), *(ROOT / "scripts").rglob("*.py")]
         for literal in _string_literals(path)
     ]
-    source = ROOT / "src" / "repoach" / "forge" / "denylist.py"
+    source = ROOT / "src" / "repoach" / "core" / "denylist.py"
     for name in names:
         assert {path for path, text in written if name in text} == {source}, name
     doc = " ".join((inspect.getdoc(deny_list) or "").split())
@@ -8079,7 +8305,8 @@ def test_a_refusal_class_names_every_reason_it_is_raised_for() -> None:
     closure refusal; ``ResidualValueError`` names the judge's and ``nesting too deep``.
     """
     forge = ROOT / "src" / "repoach" / "forge"
-    deny_heads = _message_heads(forge / "denylist.py", "DenylistError")
+    core = ROOT / "src" / "repoach" / "core"
+    deny_heads = _message_heads(core / "denylist.py", "DenylistError")
     assert len(deny_heads) == 3
     doc = inspect.getdoc(deny_list.DenylistError) or ""
     for phrase in (
@@ -8092,7 +8319,7 @@ def test_a_refusal_class_names_every_reason_it_is_raised_for() -> None:
     ):
         assert phrase in doc, phrase
     unreadable: list[str] = []
-    for node in ast.walk(ast.parse((forge / "denylist.py").read_text(encoding="utf-8"))):
+    for node in ast.walk(ast.parse((core / "denylist.py").read_text(encoding="utf-8"))):
         if isinstance(node, ast.Return) and isinstance(node.value, ast.Tuple):
             why = node.value.elts[2]
             first = why.values[0] if isinstance(why, ast.JoinedStr) else why
@@ -8223,7 +8450,8 @@ def test_the_text_forms_are_read_outside_the_forge_package() -> None:
 
     The decoded forms, the full casefolds, the A-labels, the node-id numbers and the token
     pattern live in :mod:`repoach.core.text_forms`, which imports the standard library only;
-    :mod:`repoach.forge.denylist` imports nothing from :mod:`repoach.forge`, and the oracle, the
+    :mod:`repoach.core.denylist`, the reader and its names in one module (round 10), imports
+    nothing from :mod:`repoach.forge`, and importing it loads no forge module; the oracle, the
     judge and the recorder read the forms there, never through a second copy. The deny-list still
     hands its entries to the oracle's :class:`repoach.forge.closure.Known`, and only there.
     """
@@ -8243,6 +8471,20 @@ def test_the_text_forms_are_read_outside_the_forge_package() -> None:
 
     assert [m for m in imports(deny_list) if m.startswith(("repoach.forge", "."))] == []
     assert [m for m in imports(text_forms) if m.startswith(("repoach", "."))] == []
+    assert not (ROOT / "src" / "repoach" / "forge" / "denylist.py").exists()
+    loaded = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys, repoach.core.denylist; print(*sorted(m for m in sys.modules if m.startswith('repoach.')))",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        env={**os.environ, "PYTHONPATH": str(ROOT / "src")},
+    ).stdout.split()
+    assert "repoach.core.denylist" in loaded
+    assert [m for m in loaded if m.startswith("repoach.forge")] == []
     for module in (closure, deny_list, fixture_judge, recording):
         assert "text_forms" in inspect.getsource(module), module.__name__
     moved = ("decoded_forms", "ascii_labels", "folds", "folded_forms", "node_id_numbers")

@@ -502,11 +502,13 @@ hosts and their apex and ``www`` sites (the vendor pages a bot footer links,
 FORGE_PATH_HOSTS: tuple[str, ...] = (
     "bitbucket.org",
     "codeberg.org",
+    "framagit.org",
     "git.sr.ht",
     "gitea.com",
     "gitee.com",
     "github.com",
     "gitlab.com",
+    "gopkg.in",
     "launchpad.net",
 )
 """Code forges whose ``<host>/<owner>/…`` path another public host embeds (PR #319 round 7, 4687852992).
@@ -515,7 +517,9 @@ A Go module path is its repository's address: ``pkg.go.dev/github.com/<owner>/<r
 ``proxy.golang.org/github.com/<owner>/<repo>/@v/list`` and
 ``sum.golang.org/lookup/github.com/<owner>/<repo>@<v>`` name the owner as ``github.com/<owner>``
 does. Each forge here is a route of the Go hosts (:data:`TENANT_ROUTES`), its next segment the
-identity.
+identity. ``framagit.org`` is a GitLab instance (its front page: https://framagit.org/), and
+``gopkg.in/<user>/<pkg>.v<N>`` is ``github.com/<user>/<pkg>`` while ``gopkg.in/<pkg>.v<N>`` names
+no account (https://labix.org/gopkg.in; :data:`TENANT_ROUTE_PUBLIC_SHAPES`).
 """
 
 GO_MODULE_HOSTS: tuple[str, ...] = (*FORGE_PATH_HOSTS, "forge.example.com")
@@ -527,15 +531,41 @@ The recorder writes a known forge host as ``forge.example.com`` wherever it stan
 spelling.
 """
 
+GO_PATH_PREFIXES: tuple[str, ...] = (
+    "badge",
+    "files",
+    "mod",
+    "v1/imported-by",
+    "v1/module",
+    "v1/package",
+    "v1/packages",
+    "v1/symbols",
+    "v1/versions",
+)
+"""What stands before a module path on pkg.go.dev (PR #319 round 10, 4687852992): its badge, module, file and API routes.
+
+The vendor's own route table:
+https://raw.githubusercontent.com/golang/pkgsite/master/internal/frontend/server.go (``GET /badge/``,
+``GET /mod/``, ``GET /files/``, ``GET /v1/package/`` and the rest).
+"""
+
 _MOZILLA_WIKI_NAMESPACES = ("special:", "user:", "user_talk:")
 """The namespaces of the Mozilla wiki that name an account; its other ``<word>:<title>`` pages are projects'."""
 
 TENANT_ROUTES: dict[str, frozenset[str]] = {
     "apache.org": frozenset({"confluence/*/~", "confluence/~", "roster/committer"}),
+    "bugs.python.org": frozenset({"user#"}),
     "crates.io": frozenset({"api/v1/teams", "api/v1/users", "teams", "users"}),
     "docs.rs": frozenset({"releases"}),
-    "go.dev": frozenset(GO_MODULE_HOSTS),
-    "golang.org": frozenset({*GO_MODULE_HOSTS, *(f"lookup/{h}" for h in GO_MODULE_HOSTS)}),
+    "go.dev": frozenset(
+        {*GO_MODULE_HOSTS, *(f"{p}/{h}" for p in GO_PATH_PREFIXES for h in GO_MODULE_HOSTS)}
+    ),
+    "golang.org": frozenset(
+        {
+            *GO_MODULE_HOSTS,
+            *(f"{p}/{h}" for p in ("cached-only", "lookup") for h in GO_MODULE_HOSTS),
+        }
+    ),
     "hg.mozilla.org": frozenset({"users"}),
     "jsdelivr.net": frozenset({"combine", "gh"}),
     "mozilla.org": frozenset(
@@ -545,6 +575,7 @@ TENANT_ROUTES: dict[str, frozenset[str]] = {
     "npmjs.org": frozenset({"-/org", "-/team", "-/user"}),
     "npmmirror.com": frozenset({"-/org", "-/team", "-/user"}),
     "nuget.org": frozenset({"profiles"}),
+    "pontoon.mozilla.org": frozenset({"contributor", "contributors"}),
     "pypi.org": frozenset({"manage/organization", "org", "user"}),
     "python.org": frozenset({"u"}),
     "readthedocs.org": frozenset({"organizations", "profiles"}),
@@ -582,7 +613,12 @@ account in a segment led by it: a personal space of Apache Confluence
 Mozilla's Mercurial host and Apache's Review Board name one after ``users``. A
 Stack Overflow profile names its user in the segment after the id (``users/<id>/<name>``), or,
 with none, by the id alone (``users/<id>``, PR #319 round 9, 4689483333), and a developer story
-in the segment after ``story`` or ``cv``. The same accounts named in a query are
+in the segment after ``story`` or ``cv``. A route whose last segment ends in ``#`` names an account
+by its number in that segment (round 10): ``bugs.python.org/user<id>``, an item designator of
+Roundup (https://www.roundup-tracker.org/docs/reference.html, "Roundup URL design"). A Pontoon
+profile is ``contributors/<username>`` or ``contributor/<email>``
+(https://raw.githubusercontent.com/mozilla/pontoon/main/pontoon/contributors/urls.py), and the
+Go module mirror serves a module path after ``cached-only`` too (https://proxy.golang.org/). The same accounts named in a query are
 :data:`TENANT_QUERIES`. The redactor rewrites a tenant URL through the forge route grammar and keeps it only when no
 identity survives the rewrite; one the grammar cannot place (a CouchDB user, a profile name) is
 left as it stands, and the oracle refuses it.
@@ -608,7 +644,10 @@ _WIKIPEDIA_PUBLIC_NAMESPACES = frozenset(
 
 TENANT_ROUTE_PUBLIC: dict[str, frozenset[str]] = {
     "go.dev forge.example.com": frozenset({"org"}),
+    **{f"go.dev {p}/forge.example.com": frozenset({"org"}) for p in GO_PATH_PREFIXES},
+    "go.dev ?forge.example.com/": frozenset({"org"}),
     "golang.org forge.example.com": frozenset({"org"}),
+    "golang.org cached-only/forge.example.com": frozenset({"org"}),
     "golang.org lookup/forge.example.com": frozenset({"org"}),
     "docs.rs releases": frozenset(
         {"activity", "failures", "feed", "queue", "recent", "recent-failures", "search", "stars"}
@@ -629,8 +668,20 @@ every other namespace (``User``, ``User_talk``, ``Special``, a localised user na
 refused, in a path and, under the key ``?*:``, in a query.
 """
 
+TENANT_ROUTE_PUBLIC_SHAPES: dict[str, str] = {"gopkg.in": r"[^/\s?#\"'<>]*\.v[0-9]"}
+"""The shape of a segment that names no account after a route, by the route's last segment (PR #319 round 10).
+
+``gopkg.in/yaml.v3`` is the package ``go-yaml/yaml``'s own address, ``gopkg.in/<user>/pkg.v3`` a
+user's (https://labix.org/gopkg.in).
+"""
+
 _PAGE_PARAMETERS = ("page", "title", "titles")
 """The query parameters of MediaWiki that name a page (``index.php?title=``, ``api.php?titles=``, ``page=``)."""
+
+_WIKI_API_USERS = ("ucuser", "ucuserids", "ucuserprefix", "ususerids", "ususers")
+"""The parameters of MediaWiki's ``usercontribs`` and ``users`` modules that name an account."""
+
+_URL_LEADS = ("", "http://", "https://")
 
 TENANT_QUERIES: dict[str, frozenset[tuple[str, str, str]]] = {
     "apache.org": frozenset(
@@ -638,16 +689,34 @@ TENANT_QUERIES: dict[str, frozenset[tuple[str, str, str]]] = {
             ("", "key", "~"),
             ("", "spacekey", "~"),
             ("", "username", ""),
+            ("phonebook.html", "uid", ""),
+            ("phonebook.html", "user", ""),
             ("viewprofile.jspa", "name", ""),
         }
     ),
     "bugzilla.mozilla.org": frozenset(
         {("user_profile", "login", ""), ("user_profile", "user_id", "")}
     ),
+    "go.dev": frozenset(
+        {
+            *(("search", "q", f"{h}/") for h in GO_MODULE_HOSTS),
+            *(("badge/", "path", f"{lead}{h}/") for lead in _URL_LEADS for h in GO_MODULE_HOSTS),
+        }
+    ),
+    "npmjs.org": frozenset(
+        {("-/v1/search", "text", "+author:"), ("-/v1/search", "text", "+maintainer:")}
+    ),
+    "nuget.org": frozenset({("", "q", "+author:"), ("", "q", "+owner:")}),
+    "prow.k8s.io": frozenset({("", "author", ""), ("pr", "query", "+author:")}),
     "wiki.mozilla.org": frozenset(
         {("", name, ns) for name in _PAGE_PARAMETERS for ns in _MOZILLA_WIKI_NAMESPACES}
     ),
-    "wikipedia.org": frozenset({("", name, "*:") for name in _PAGE_PARAMETERS}),
+    "wikipedia.org": frozenset(
+        {
+            *(("", name, "*:") for name in _PAGE_PARAMETERS),
+            *(("api.php", name, "") for name in _WIKI_API_USERS),
+        }
+    ),
 }
 """Query parameters that name an account on a public host, by suffix (PR #319 round 9, 4689483333).
 
@@ -656,7 +725,23 @@ for any. The value is an account whatever it is (``""``: Confluence's
 ``viewuserprofile.action?username=<id>``, Jira's ``ViewProfile.jspa?name=<id>``, Bugzilla's
 ``user_profile?login=<login>``), one led by ``~``
 (a personal space, ``viewspace.action?key=~<id>``), or ``<namespace>:<title>`` read as the path
-form of :data:`TENANT_ROUTES` is (``w/index.php?title=User:<name>``).
+form of :data:`TENANT_ROUTES` is (``w/index.php?title=User:<name>``). One led by ``+`` is a
+qualifier that may follow other words of a search (``q=json+owner:<account>``). Round 10
+(4687852992), each with the vendor page it is read from:
+
+- Apache's phonebook, ``?uid=`` and ``?user=``: https://home.apache.org/phonebook-about.html
+- MediaWiki's API: https://www.mediawiki.org/wiki/API:Usercontribs and
+  https://www.mediawiki.org/wiki/API:Users
+- an npm registry's ``text=author:`` and ``maintainer:``:
+  https://raw.githubusercontent.com/npm/registry/main/docs/REGISTRY-API.md
+- NuGet's ``q=owner:`` and ``author:``:
+  https://learn.microsoft.com/en-us/nuget/consume-packages/finding-and-choosing-packages
+- Prow's ``?author=`` and ``pr?query=…author:``:
+  https://raw.githubusercontent.com/kubernetes-sigs/prow/main/cmd/deck/static/prow/prow.ts and
+  https://raw.githubusercontent.com/kubernetes-sigs/prow/main/cmd/deck/static/pr/pr.ts
+- a module path searched on pkg.go.dev, which redirects to its page, or handed to its badge tool:
+  https://raw.githubusercontent.com/golang/pkgsite/master/internal/frontend/search.go and
+  https://raw.githubusercontent.com/golang/pkgsite/master/internal/frontend/badge.go
 """
 
 

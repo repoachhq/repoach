@@ -1834,23 +1834,39 @@ def test_a_vendor_with_tenant_consoles_is_public_by_its_documentation_hosts_only
     forges = {
         "bitbucket.org",
         "codeberg.org",
+        "framagit.org",
         "git.sr.ht",
         "gitea.com",
         "gitee.com",
         "github.com",
         "gitlab.com",
+        "gopkg.in",
         "launchpad.net",
     }
     assert set(closure_tables.FORGE_PATH_HOSTS) == forges
     go = forges | {"forge.example.com"}
     assert set(closure_tables.GO_MODULE_HOSTS) == go
     npm = frozenset({"-/org", "-/team", "-/user"})
+    prefixes = {
+        "badge",
+        "files",
+        "mod",
+        "v1/imported-by",
+        "v1/module",
+        "v1/package",
+        "v1/packages",
+        "v1/symbols",
+        "v1/versions",
+    }
+    assert set(closure_tables.GO_PATH_PREFIXES) == prefixes
+    assert set(closure_tables.TENANT_ROUTE_PUBLIC_SHAPES) == {"gopkg.in"}
     assert {
         "apache.org": frozenset({"confluence/*/~", "confluence/~", "roster/committer"}),
         "crates.io": frozenset({"api/v1/teams", "api/v1/users", "teams", "users"}),
         "docs.rs": frozenset({"releases"}),
-        "go.dev": frozenset(go),
-        "golang.org": frozenset(go | {f"lookup/{h}" for h in go}),
+        "bugs.python.org": frozenset({"user#"}),
+        "go.dev": frozenset(go | {f"{p}/{h}" for p in prefixes for h in go}),
+        "golang.org": frozenset(go | {f"{p}/{h}" for p in ("cached-only", "lookup") for h in go}),
         "hg.mozilla.org": frozenset({"users"}),
         "jsdelivr.net": frozenset({"combine", "gh"}),
         "mozilla.org": frozenset(
@@ -1860,6 +1876,7 @@ def test_a_vendor_with_tenant_consoles_is_public_by_its_documentation_hosts_only
         "npmjs.org": npm,
         "npmmirror.com": npm,
         "nuget.org": frozenset({"profiles"}),
+        "pontoon.mozilla.org": frozenset({"contributor", "contributors"}),
         "pypi.org": frozenset({"manage/organization", "org", "user"}),
         "python.org": frozenset({"u"}),
         "readthedocs.org": frozenset({"organizations", "profiles"}),
@@ -1881,7 +1898,10 @@ def test_a_vendor_with_tenant_consoles_is_public_by_its_documentation_hosts_only
     } == closure_tables.TENANT_ROUTES
     assert set(closure_tables.TENANT_ROUTE_PUBLIC) == {
         "docs.rs releases",
+        "go.dev ?forge.example.com/",
         "go.dev forge.example.com",
+        *(f"go.dev {p}/forge.example.com" for p in prefixes),
+        "golang.org cached-only/forge.example.com",
         "golang.org forge.example.com",
         "golang.org lookup/forge.example.com",
         "stackoverflow.com users",
@@ -1897,14 +1917,40 @@ def test_a_vendor_with_tenant_consoles_is_public_by_its_documentation_hosts_only
                 ("", "key", "~"),
                 ("", "spacekey", "~"),
                 ("", "username", ""),
+                ("phonebook.html", "uid", ""),
+                ("phonebook.html", "user", ""),
                 ("viewprofile.jspa", "name", ""),
             }
         ),
         "bugzilla.mozilla.org": frozenset(
             {("user_profile", "login", ""), ("user_profile", "user_id", "")}
         ),
+        "go.dev": frozenset(
+            {
+                *(("search", "q", f"{h}/") for h in closure_tables.GO_MODULE_HOSTS),
+                *(
+                    ("badge/", "path", f"{lead}{h}/")
+                    for lead in ("", "http://", "https://")
+                    for h in closure_tables.GO_MODULE_HOSTS
+                ),
+            }
+        ),
+        "npmjs.org": frozenset(
+            {("-/v1/search", "text", "+author:"), ("-/v1/search", "text", "+maintainer:")}
+        ),
+        "nuget.org": frozenset({("", "q", "+author:"), ("", "q", "+owner:")}),
+        "prow.k8s.io": frozenset({("", "author", ""), ("pr", "query", "+author:")}),
         "wiki.mozilla.org": frozenset({("", name, ns) for name in pages for ns in namespaces}),
-        "wikipedia.org": frozenset({("", name, "*:") for name in pages}),
+        "wikipedia.org": frozenset(
+            {
+                *(("", name, "*:") for name in pages),
+                ("api.php", "ucuser", ""),
+                ("api.php", "ucuserids", ""),
+                ("api.php", "ucuserprefix", ""),
+                ("api.php", "ususerids", ""),
+                ("api.php", "ususers", ""),
+            }
+        ),
     } == closure_tables.TENANT_QUERIES
     assert {
         "apache.org": ("~", frozenset()),
@@ -2046,6 +2092,301 @@ def test_a_url_userinfo_that_crosses_a_slash_is_read_by_grammar_and_refused() ->
     assert [b.local for b in closure.userinfos("https://u:p@github.com/o/r/@x")] == ["u:p"]
     assert not recording.userinfo_crosses_path("https://u:p@github.com/o/r/@x")
     assert not recording.userinfo_crosses_path("https://github.com/o/r")
+
+
+CUTS = "]|[\\`'\"<>(),*{}/^#?;&+=~$!"
+"""Every delimiter a reader of running text ends a URL at, and the other characters a password may hold."""
+
+
+def test_no_delimiter_leaves_the_rest_of_a_userinfo_in_the_text() -> None:
+    """D8 (PR #319 round 10, 4683464677, 4688674758): a URL cut inside its userinfo is never rewritten.
+
+    For every scheme, host and delimiter, plain, percent- or entity-encoded, with the ``@`` plain
+    or encoded, the text the redactor writes holds no part of the password, or the oracle refuses
+    it: the redactor cannot hide the userinfo from the judge.
+    """
+    none = closure.Known(())
+    schemes = ("https", "http", "ssh", "git", "ftp", "postgres", "redis", "jdbc:mysql", "smtp")
+    hosts = (
+        "localhost",
+        "localhost:8443",
+        "127.0.0.1",
+        "example.com",
+        "pypi.org",
+        "[::1]",
+        "redis:1",
+    )
+    for cut in (*CUTS, "%20", "%5D", "&#32;", "&quot;", "\\u0020", " "):
+        for scheme in schemes:
+            for host in hosts:
+                for lead in ("deploy:zqhead", ":zqhead", "deploy:zq/x", "deploy:zq]x", "ci.bot:12"):
+                    for at in ("@", "%40"):
+                        text = f"see {scheme}://{lead}{cut}zqtail{at}{host}/db end"
+                        out = recording.redact_urls_in_text(text)
+                        refused = closure.judge(out, none) or closure.has_cut_userinfo(out)
+                        assert refused or "zqtail" not in out, (text, out)
+
+
+def test_a_userinfo_is_refused_when_it_is_none_by_grammar() -> None:
+    """D8 (PR #319 round 10): a user with a delimiter in it is refused on a documentation host too."""
+    none = closure.Known(())
+    for ch in ']|[\\`"<>/^#?':
+        text = f"dsn postgres://zqus{ch}er@localhost/db"
+        assert closure.judge(text, none) is not None, text
+        assert closure.is_cut_userinfo(f"zqus{ch}er")
+    assert closure.judge("dsn postgres://app@localhost/db", none) is None
+    for userinfo in ("", "app", "josé:p", "a:b'(),*{}$!", "${DB}"):
+        assert not closure.is_cut_userinfo(userinfo), userinfo
+    for text in (
+        "<https://pypi.org><a@example.com>",
+        '{"homepage":"https://pypi.org","by":"a@example.com"}',
+        'url = "https://"+host+"/@x"',
+        "see <https://>a@example.com",
+        "dsn postgres://<user>:<password>@db.example.com:5432/x",
+        "dsn postgres://<token>@localhost",
+        "see http://<host>:<port>/@scope and http://localhost:4873/@scope/pkg",
+        "see https://[::1]:8080/a@b and redis://localhost:6379/0@x",
+        "open http://localhost:PORT/x then a@example.com",
+        "open http://localhost:PORT/x then a@example.com %41",
+        "new?body=see%20https%3A%2F%2Fpypi.org%20cc%20a%40example.com",
+        "code ://:6379 and ://:] and redis://:6379/0",
+    ):
+        assert closure.judge(text, none) is None, text
+    for text in (
+        'dsn https://"zq:pw@localhost/x',
+        "dsn postgres://<zq1>:<pw>@localhost",
+        'see https://john.doe"pw@localhost',
+        'dsn redis://localhost:"pw@redis',
+        "dsn redis://:zqpw tail@localhost",
+        "dsn redis://:zqpw of two tail@localhost",
+        "dsn redis://localhost:zqpw%20of%20tail%40redis",
+        "dsn redis://localhost:zqpw of tail@redis",
+        "dsn https://localhost:zqpw tail@localhost/db",
+        "dsn redis://:zqpw&#32;tail&#64;localhost",
+        "dsn redis://10.0.0.1:12/cd]x@localhost",
+    ):
+        assert closure.judge(text, none) is not None, text
+    for text in (
+        "http://ci.bot:12/@scope",
+        "http://ci.bot/a@b",
+        "http://localhost:12/a@b",
+        "http://cache.x/a@b",
+    ):
+        assert not closure.has_cut_userinfo(text), text
+    for text in ("http://ci.bot:12/a@b", "http://ci.bot:/a@b", "redis://zqdeploy:12/a@localhost"):
+        assert closure.has_cut_userinfo(text), text
+
+
+def test_the_redactor_never_rewrites_a_url_that_may_stop_inside_a_userinfo() -> None:
+    """D8 (PR #319 round 10): the redactor reads the authority, not the delimiter; ordinary URLs are still rewritten."""
+    for text in (
+        "https://deploy:S3cr]t@localhost/db",
+        "https://deploy:Ab/c]d@redis:6379/x",
+        "https://deploy:S3cr,t%40localhost/db",
+        "https://deploy:S3cr,t&#64;localhost/db",
+        "https://deploy:S3cr,t\\u0026#64;localhost/db",
+        "@s/x:https://deploy:S3cr]t@localhost/db",
+        "https://deploy/c@x",
+        "https://deploy:S3cr,t\\u0040localhost/db",
+        "https://deploy:S3cr,t＠localhost/db",
+        "https://deploy:S3cr,t%252540localhost/db",
+        "https://a@corp.zqi:12]t@localhost/db",
+        "https://ci.bot:12/c]d@localhost",
+        'https://ci.bot"d@localhost',
+        "https://deploy:S3cr t",
+        "https://deploy/c,d@x",
+    ):
+        assert recording.redact_urls_in_text(f"see {text} now") == f"see {text} now", text
+        assert recording.holds_cut_url(f"see {text} now") is (
+            "@" in text or "t%" in text or "t&" in text or "t\\u" in text or "\uff20" in text
+        ), text
+    assert recording.holds_cut_url("see https://pypi.org%3A6379/zqhead[zqtail%40localhost/db")
+    for text in (
+        "https://pypi.org/x|@y",
+        '"https://pypi.org","@y"',
+        "https://zqcorp:80/x]y",
+        "https://localhost:8080/a,b@c",
+        "no url @x",
+    ):
+        assert not recording.holds_cut_url(text), text
+    for text, out in (
+        ("https://gitlab.zqcorp.io/ns/r|@octo|", "https://forge.example.com/org/project|@octo|"),
+        ("x%40y:https://gitlab.zqcorp.io|z", "x%40y:https://forge.example.com|z"),
+        ("[a](https://zqcorp.io/n/r)[b](https://npmjs.com/@s/x)", None),
+        ("https://u:pw@gitlab.zqcorp.io/ns/r now", "https://forge.example.com/org/project now"),
+        ("https://zqcorp.io:8443/ns/r now", "https://forge.example.com/org/project now"),
+        ("https://zqcorp.io:8443/@scope/r now", "https://forge.example.com/org/project now"),
+        ("https://zqcorp:8443/ns/r, then a@b", "https://forge.example.com/org/project, then a@b"),
+        ("ssh://git@[2001:db8::7]:22/ns/r now", "ssh://git@forge.example.com/org/project now"),
+    ):
+        done = recording.redact_urls_in_text(text)
+        assert done == out if out is not None else "zqcorp" not in done, done
+
+
+def test_the_readers_of_a_userinfo_stay_linear_in_a_run_without_whitespace() -> None:
+    """D8 (PR #319 round 10): many URLs in one run, an ``@`` at its end, encoded or not, are read once each."""
+    for tail in ("@x", "%40x", "&#x40;x", "＠x"):
+        text = ",".join(f"https://zq{n}]" for n in range(3000)) + tail
+        begun = time.monotonic()
+        assert recording.redact_urls_in_text(text) == text
+        closure.has_cut_userinfo(text)
+        assert time.monotonic() - begun < 20, tail
+
+
+def test_a_led_host_takes_a_last_label_led_by_a_digit() -> None:
+    """D8 (PR #319 round 10, 4687852986): led, ``ci.1node`` is a host; one character is one in a URL only.
+
+    A version, a range and a one-character last label after a mailbox's ``@`` (``a@b.c``,
+    ``A@B.T``) stay ordinary text, the last one the residual NG4-17.
+    """
+    none = closure.Known(())
+    for text in (
+        "mail zqkvn@ci.1node now",
+        "dsn redis://cache.1dc:6379/0",
+        "scp root@gitlab.1dc:/etc",
+        "see https://gitlab.1dc/ns/r",
+        "see https://gitlab.x/ns/r",
+        "dsn redis://cache.x:6379/0",
+        "see https://u:p@cache.x/",
+    ):
+        assert closure.judge(text, none) is not None, text
+    for text in (
+        "mail a@b.c and c = A@B.T",
+        "mail zqu@ci.x now",
+        "uses actions/checkout@v4.x, node@18.x, pkg@1.0.0-rc1 and pkg@v1.2b3",
+        "dir//a.1b/x, //10.5x/y, //100.5x/y and a.1node/x",
+        "see https://v1.x/ for it and 1.2x",
+    ):
+        assert closure.judge(text, none) is None, text
+    assert [h.host for h in closure.hosts("redis://app@cache.x/0")] == ["cache.x"]
+    for run, authority, host in (
+        ("x.1a", False, True),
+        ("x.a", False, False),
+        ("x.a", True, True),
+        ("v1.x", True, False),
+        ("18.x", True, False),
+        ("x.1", True, False),
+    ):
+        assert (closure._label_run(run, led=True, authority=authority) is not None) is host, run
+        assert closure._label_run(run, led=False) is None, run
+    assert recording._names_host_and_port("ci.1node:80") and recording._names_host_and_port("a.x")
+    assert not recording._names_host_and_port("a.12") and not recording._names_host_and_port(
+        "a.1:x"
+    )
+
+
+def test_a_label_holds_the_combining_marks_idna_admits() -> None:
+    """D8 (PR #319 round 10, 4684965361): a mark (``Mn``, ``Mc``) or an IDNA exception after a letter is in its label.
+
+    Read from the Unicode categories, not from a list of scripts. A mark never opens a label and a
+    variation selector is in none, so an emoji before an address joins no label.
+    """
+    none = closure.Known(())
+    domains = (
+        "उदाहरण.भारत",
+        "สำนัก.th",
+        "தமிழ்.com",
+        "مَثال.com",
+        "שָׁלוֹם.co.il",
+        "বাংলা.ভারত",
+        "ខ្មែរ.com",
+        "မြန်မာ.com",
+        "ಕನ್ನಡ.com",
+        "తెలుగు.com",
+        "മലയാളം.com",
+        "සිංහල.com",
+        "ગુજરાતી.com",
+        "ਪੰਜਾਬੀ.com",
+        "བོད་.com",
+        "क्‍ष.com",
+        "نامه‌ای.com",
+        "l·l.cat",
+    )
+    for domain in domains:
+        labels = text_forms.ascii_labels(domain).split(".")
+        assert all(label.isascii() for label in labels), domain
+        assert labels[0].startswith("xn--"), domain
+        decoded = [x[4:].encode().decode("punycode") if x.startswith("xn--") else x for x in labels]
+        assert ".".join(decoded) == domain, domain
+        for text in (f"mail hans@{domain}", f"By: Hans <hans@{domain}>", f"git@{domain}:zq/r.git"):
+            assert closure.judge(text, none) == closure.Refusal("unknown host"), text
+    for text in ("src=//git.தமிழ்.com/ns/r", "at git.สำนัก.th/ns/r"):
+        assert closure.judge(text, none) == closure.Refusal("unknown host"), text
+    for text in (
+        "हिन्दी में एक वाक्य। फिर: a/b",
+        "ราคา 1.000 บาท และ a/b, ก.พ./มี.ค.",
+        "⚠️docs.python.org/3 1️⃣www.example.com 👍️pypi.org/x",
+        "नमूना.भारत खुला है",
+        "→docs.python.org/3/library",
+        "x́.y/z and a​b.c/d",
+    ):
+        assert closure.judge(text, none) is None, text
+    assert text_forms.ascii_labels("́abc.de") == "́abc.de"
+    assert text_forms.ascii_labels("️abc.de") == "️abc.de"
+    assert text_forms.ascii_labels("a️b.de") == "a️b.de"
+    assert text_forms.ascii_labels("⚠́é.de") == "⚠́xn--9ca.de"
+
+
+def test_the_account_pages_read_from_a_vendor_source_are_refused() -> None:
+    """D8 (PR #319 round 10, 4687852992): each form of the tables, its public siblings kept.
+
+    The vendor page each is read from stands in :mod:`repoach.forge.closure_tables`.
+    """
+    none = closure.Known(())
+    go = [f"pkg.go.dev/{p}/github.com/zqo/r" for p in closure_tables.GO_PATH_PREFIXES]
+    for page in (
+        *go,
+        "pkg.go.dev/badge/github.com/zqo/r.svg",
+        "pkg.go.dev/search?q=github.com/zqo",
+        "pkg.go.dev/v1/search?q=github.com%2Fzqo",
+        "pkg.go.dev/badge/?path=https%3A%2F%2Fgithub.com%2Fzqo%2Fr",
+        "proxy.golang.org/cached-only/github.com/zqo/r/@v/list",
+        "proxy.golang.org/gopkg.in/zqo/pkg.v2/@v/list",
+        "pkg.go.dev/framagit.org/zqo/r",
+        "bugs.python.org/user91827",
+        "home.apache.org/phonebook.html?uid=zqo",
+        "home.apache.org/phonebook.html?x=1&user=zqo",
+        "pontoon.mozilla.org/contributors/zqo/",
+        "pontoon.mozilla.org/contributor/zqo@x/",
+        "www.nuget.org/packages?q=owner%3Azqo",
+        "www.nuget.org/packages?q=json+author:zqo",
+        "registry.npmjs.org/-/v1/search?text=maintainer:zqo",
+        "registry.npmjs.org/-/v1/search?text=react%20author%3Azqo",
+        "prow.k8s.io/?job=x&author=zqo",
+        "prow.k8s.io/pr?query=is%3Apr%20state%3Aopen%20author%3Azqo",
+        "en.wikipedia.org/w/api.php?action=query&ucuser=Zqo",
+        "en.wikipedia.org/w/api.php?ususers=Zqo",
+        "en.wikipedia.org/w/api.php?ususerids=91827",
+    ):
+        for lead in ("", "https://", "//", "[x](https://"):
+            assert closure.judge(f"see {lead}{page} now", none) == closure.Refusal("tenant path"), (
+                page
+            )
+        out = recording.redact_urls_in_text(f"see https://{page} now")
+        assert "zqo" not in out or closure.judge(out, none) is not None, page
+    for page in (
+        "pkg.go.dev/gopkg.in/yaml.v3",
+        "pkg.go.dev/badge/gopkg.in/yaml.v3.svg",
+        "pkg.go.dev/gopkg.in/yaml.v3/internal",
+        "pkg.go.dev/mod/golang.org/x/tools",
+        "pkg.go.dev/badge/forge.example.com/org/r.svg",
+        "pkg.go.dev/search?q=forge.example.com/org/project",
+        "pkg.go.dev/search?q=json",
+        "proxy.golang.org/cached-only/golang.org/x/mod/@v/list",
+        "bugs.python.org/issue12",
+        "bugs.python.org/user?@template=x",
+        "home.apache.org/phonebook.html?pmc=kafka",
+        "pontoon.mozilla.org/contributors/",
+        "www.nuget.org/packages?q=json",
+        "www.nuget.org/packages?q=coauthor:x",
+        "registry.npmjs.org/-/v1/search?text=keywords:react",
+        "prow.k8s.io/?state=failure",
+        "prow.k8s.io/pr?query=is%3Apr%20state%3Aopen",
+        "en.wikipedia.org/w/api.php?action=query&srsearch=x",
+    ):
+        text = f"see https://{page} now"
+        assert closure.judge(text, none) is None, page
+        assert recording.redact_urls_in_text(text) == text, page
 
 
 def test_a_tenant_route_is_refused_whatever_leads_its_host() -> None:
@@ -2321,7 +2662,7 @@ def test_a_host_is_read_by_dns_label_grammar_in_every_label() -> None:
         "pinned image@sha256:abc and node@18.19.1",
     ):
         assert closure.judge(text, none) is None, text
-    for run in ("1.2.3", "1.0.0-rc1", "x.y", "x.1a", "x.-a", "x.a"):
+    for run in ("1.2.3", "1.0.0-rc1", "v1.x", "18.x", "x.y", "x.-a", "x.a"):
         assert closure._label_run(run, led=True) is None, run
         assert closure._label_run(run, led=False) is None, run
     for run in ("gitlab.dc1", "ci.node1", "a.b.c9", "zq.xn--p1ai", "1.example.com"):

@@ -37,6 +37,7 @@ from .closure_tables import (
     RFC5737_NETWORKS,
     TENANT_QUERIES,
     TENANT_ROUTE_PUBLIC,
+    TENANT_ROUTE_PUBLIC_SHAPES,
     TENANT_ROUTES,
     UNSPECIFIED_BROADCAST,
 )
@@ -76,22 +77,32 @@ _SCHEME_CHARS = frozenset(
 )
 """The characters of a URL scheme (RFC 3986 ``ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )``)."""
 
-_AUTHORITY_END = frozenset('/<>"')
-"""What ends a URL authority read for its userinfo, with any whitespace: ``/`` and the prose delimiters.
+_PROSE_END = frozenset('<>"' + text_forms.ENCODED_SPACE)
+"""The prose delimiters no URL carries unescaped: ``<``, ``>``, a double quote and an encoded space."""
+
+_AUTHORITY_END = _PROSE_END | {"/"}
+"""What may end a URL authority read for its userinfo, with any whitespace: ``/`` and the prose delimiters.
 
 The userinfo is read by grammar, not by an allowlist of characters: everything between
 ``<scheme>://`` and the last ``@`` before the authority ends is the userinfo, whatever it holds
-(``^ | # ? [ ] \\`` and the rest), so a character outside RFC 3986 fails closed. Only a ``<``, a
-``>``, a double quote or a space, which no recorded URL carries unescaped, ends it, so
-``<https://<host>><a@<host>>`` is prose.
+(``^ | # ? [ ] \\`` and the rest), so a character outside RFC 3986 fails closed. A delimiter ends
+it only when what stands before is a whole authority, ``<host>[:<port>]``
+(:func:`_past_authority`): when it is not, the delimiter stood inside a userinfo
+(``redis://:Ab/cd@<host>``, PR #319 round 8, 4688674758; ``postgres://u:Ab"cd@<host>``, round 10,
+4683464677), which runs to the last ``@`` of the token, up to whitespace, whatever it crosses.
 """
 
-_TOKEN_END = frozenset('<>"')
-"""What ends the token a URL stands in, with any whitespace: the prose delimiters of :data:`_AUTHORITY_END`.
+_ANGLE_NAME = re.compile(r"<[a-z][a-z_-]*>", re.I)
+"""A placeholder in angle brackets (``<user>``, ``<password>``, ``<host>``), letters, ``_`` and ``-`` only."""
 
-When the authority read to its first ``/`` is no ``<host>[:<port>]`` (:func:`_host_port`), a
-``/`` stood in a userinfo (``redis://:Ab/cd@<host>``, PR #319 round 8, 4688674758): the userinfo
-then runs to the last ``@`` of the token, whatever it crosses (``/``, ``:``, ``?``, ``#``).
+_ANGLE_USERINFO = re.compile(rf"{_ANGLE_NAME.pattern}(?::{_ANGLE_NAME.pattern})?", re.I)
+"""A userinfo that is placeholders only (``<user>:<password>``, ``<token>``): it names no one."""
+
+_USERINFO_GRAMMAR = re.compile(r"[\w.~%!$&'()*+,;=:{}-]*", re.I)
+"""A userinfo by RFC 3986 3.2.1, the letters and digits of every script and a template's braces added.
+
+One that holds anything else, a ``/`` included, is read by no URL reader as one run: it is
+refused on every host (:func:`is_cut_userinfo`).
 """
 
 
@@ -250,10 +261,23 @@ def is_tenant_path(host: str, path: str) -> bool:
         ``ghcr.io/<owner>/…``, ``pkg.go.dev/github.com/<owner>/…``).
     """
     folded = _canonical_host(host)
-    return any(
-        has_tenant_path(f"{folded}/{form.lstrip('/')}")
-        for form in text_forms.decoded_forms(path or "")
-    )
+    return any(has_tenant_path(f"{folded}/{form.lstrip('/')}") for form in tenant_forms(path or ""))
+
+
+def tenant_forms(text: str) -> list[str]:
+    """The forms a tenant route is read in: the decoded ones, then each with its encoded spaces kept visible.
+
+    A search qualifier may follow an encoded space (``query=is%3Apr%20author%3A<login>``), which
+    decoded ends the token its host leads.
+
+    Args:
+        text: The text read.
+
+    Returns:
+        :func:`repoach.core.text_forms.decoded_forms`, both ways, each form once.
+    """
+    plain = text_forms.decoded_forms(text)
+    return list(dict.fromkeys((*plain, *text_forms.decoded_forms(text, keep_encoded_spaces=True))))
 
 
 _SEGMENT_END = "/\\s?#\"'<>"
@@ -296,25 +320,32 @@ def _route_pattern(suffix: str, route: str) -> str:
     """The pattern of one :data:`TENANT_ROUTES` route after its host: its segments, then its identity.
 
     ``*`` is any one segment. The identity is the segment after the route, unless it is one of
-    the route's public words (:data:`TENANT_ROUTE_PUBLIC`); a route ending in ``~`` reads a
-    segment led by ``~`` and no other, and a route ending in ``<namespace>:`` or ``*:`` reads it
+    the route's public words (:data:`TENANT_ROUTE_PUBLIC`) or has its public shape
+    (:data:`TENANT_ROUTE_PUBLIC_SHAPES`); a route ending in ``~`` reads a
+    segment led by ``~`` and no other, one ending in ``#`` a number in the same segment
+    (``user#``: ``user123``), and a route ending in ``<namespace>:`` or ``*:`` reads it
     in the same segment instead (:func:`_namespace_pattern`).
     """
     parts = route.split("/")
     public = TENANT_ROUTE_PUBLIC.get(f"{suffix} {route}", frozenset())
     last = parts[-1]
-    marked = last == "~" or last.endswith(":")
+    marked = last == "~" or last.endswith((":", "#"))
     lead = "".join(
         (rf"[^{_SEGMENT_END}]+" if p == "*" else re.escape(p)) + "/+"
         for p in (parts[:-1] if marked else parts)
     )
     if last == "~":
         return rf"{lead}~[^{_SEGMENT_END}]"
+    if last.endswith("#"):
+        return rf"{lead}{re.escape(last[:-1])}[0-9]"
     if marked:
         return lead + _namespace_pattern(last, public, _SEGMENT_END)
     exempt = "".join(
         rf"(?!{re.escape(word)}[.,;:!)\]`*]*(?:[{_SEGMENT_END}]|$))" for word in sorted(public)
     )
+    shape = TENANT_ROUTE_PUBLIC_SHAPES.get(last)
+    if shape is not None:
+        exempt += f"(?!{shape})"
     return rf"{lead}{exempt}[^{_SEGMENT_END}]"
 
 
@@ -356,13 +387,20 @@ _QUERY_TOKEN = re.compile(r"[^\s\"'<>]+")
 
 
 def _query_pattern(suffix: str, parameter: str, value: str) -> re.Pattern[str]:
-    """The pattern of one :data:`TENANT_QUERIES` parameter, its whole value in group 1."""
-    if value.endswith(":"):
-        public = TENANT_ROUTE_PUBLIC.get(f"{suffix} ?{value}", frozenset())
+    """The pattern of one :data:`TENANT_QUERIES` parameter, its whole value (or its qualifier) in group 1."""
+    public = TENANT_ROUTE_PUBLIC.get(f"{suffix} ?{value}", frozenset())
+    before = ""
+    if value.startswith("+"):
+        before = rf"(?:[^{_QUERY_END}]*(?:[+{text_forms.ENCODED_SPACE}]|%20))?"
+        named = rf"{re.escape(value[1:])}[^{_QUERY_END}]"
+    elif value.endswith(":"):
         named = _namespace_pattern(value, public, _QUERY_END, space=r"\+|%20")
     else:
-        named = rf"{re.escape(value)}[^{_QUERY_END}]"
-    return re.compile(rf"[?&;]{re.escape(parameter)}=({named}[^{_QUERY_END}]*)", re.IGNORECASE)
+        exempt = "".join(rf"(?!{re.escape(word)}(?:[/{_QUERY_END}]|$))" for word in sorted(public))
+        named = rf"{re.escape(value)}{exempt}[^{_QUERY_END}]"
+    return re.compile(
+        rf"[?&;]{re.escape(parameter)}={before}({named}[^{_QUERY_END}]*)", re.IGNORECASE
+    )
 
 
 _QUERY_HOST_RE = re.compile(
@@ -515,19 +553,28 @@ digit (``xn--`` aside); none of the second is one either, so no public host ends
 """
 
 
+_VERSION_HEAD = re.compile(r"v?[0-9]+", re.I)
+"""The first label of a version or a version range (``v1.x``, ``18.x``, ``1.0.0-rc1``)."""
+
+
 def _numeric_labels(labels: list[str]) -> bool:
     """Whether every label before the last is all digits (``163.com``, ``7.1.0.rc1``)."""
     return all(label.isdigit() for label in labels[:-1])
 
 
-def _label_run(run: str, *, led: bool) -> list[str] | None:
+def _label_run(run: str, *, led: bool, authority: bool = False) -> list[str] | None:
     """The labels of a dotted host name read by DNS label grammar, else ``None``.
 
     Every label is letters, digits and hyphens (RFC 1123 2.1), neither led nor ended by a hyphen.
     The last label is an IDNA ``xn--`` label or two characters or more led by a letter, so a
     private name whose last label holds a digit is a host (``gitlab.dc1``, ``ci.node1``, PR #319
     round 7, 4687852986), while an all-numeric last label is not (RFC 3696 2: ``v1.2.3``,
-    ``1.2.3.4``, read as an address elsewhere). A run whose labels before the last are all
+    ``1.2.3.4``, read as an address elsewhere). Led, it may be led by a digit too
+    (``u@ci.1node``, ``redis://cache.1dc``, round 10), and in a URL's authority it may be one
+    character (``https://gitlab.x/``), but for a version (``18.x``, ``1.0.0-rc1``, ``v1.2b``:
+    the first label is digits, a ``v`` before them or not). After a mailbox's ``@`` a
+    one-character last label is no host (``a@b.c``, ``A@B.T``; NG4-17). A run whose labels
+    before the last are all
     digits (PR #319 round 9, 4689483320) is a host wherever it is led, whatever its labels hold
     (``zq@163.com``, ``https://10.node1/x``); un-led, it is a host on a last label of
     :data:`HOST_TLDS` only (``360.cn/<ns>/<repo>``), and otherwise a version or a file name
@@ -537,6 +584,8 @@ def _label_run(run: str, *, led: bool) -> list[str] | None:
         run: A run of letters, digits, dots and hyphens.
         led: Whether a scheme ``://`` (its userinfo included), a ``<local>@`` or ``//`` stands
             right before it. A caller that cannot say passes ``True``, which reads more hosts.
+        authority: Whether it is the host of a URL: a scheme ``://``, its userinfo included,
+            stands right before it.
 
     Returns:
         The labels, or ``None`` when the run names no host.
@@ -548,8 +597,10 @@ def _label_run(run: str, *, led: bool) -> list[str] | None:
     last = labels[-1]
     if _PUNYCODE_LABEL.fullmatch(last):
         return labels
-    if len(last) < 2 or not (last[0].isascii() and last[0].isalpha()):
-        return None
+    if len(last) < 2 or not last[0].isalpha():
+        short = len(last) < 2 and not authority
+        version = last.isdigit() or _VERSION_HEAD.fullmatch(labels[0])
+        return labels if led and not short and not version else None
     if not led and _numeric_labels(labels) and last.casefold() not in HOST_TLDS:
         return None
     return labels
@@ -641,7 +692,7 @@ def _dotless_authority(text: str, start: int, host: str) -> bool:
     """
     if "." in host or not _LABEL.fullmatch(host):
         return False
-    if not (text.endswith("://", 0, start) and _scheme_before(text, start - 3)):
+    if not _scheme_led(text, start):
         return False
     return start not in _userinfo_begins(text)
 
@@ -666,13 +717,82 @@ def _scheme_before(text: str, end: int) -> bool:
     return any(c.isalpha() for c in text[begin:end])
 
 
+def is_cut_userinfo(userinfo: str) -> bool:
+    """Whether ``userinfo`` holds a character RFC 3986 keeps out of one, so a reader cuts it short.
+
+    A URL reader that stops at ``]``, ``|``, a quote, a ``/`` or an encoded space sees a host in
+    what is a user or a password and leaves the rest of it in the text (PR #319 round 10,
+    4683464677). Such a userinfo is refused on every host, whatever it spells.
+
+    Args:
+        userinfo: What stands between ``<scheme>://`` and the ``@``, in the form read.
+
+    Returns:
+        ``True`` when it is no userinfo by grammar (:data:`_USERINFO_GRAMMAR`).
+    """
+    return _USERINFO_GRAMMAR.fullmatch(userinfo) is None
+
+
+def has_cut_userinfo(text: str) -> bool:
+    """Whether ``text`` holds a URL userinfo no URL reader reads whole, or a credential, in any decoded form.
+
+    The recorder asks it of every string right after the URL redaction, before a known value is
+    replaced in it (:func:`repoach.forge.fixture_pipeline.cut_userinfo_path`): a replacement may
+    turn a user into a host, or take an encoded ``@`` with the host after it, and hide the
+    userinfo from :func:`judge`, which refuses each of these as well.
+
+    Args:
+        text: One string of the recording, its URLs redacted.
+
+    Returns:
+        ``True`` when a decoded form holds one (:func:`userinfos`) that is no userinfo by grammar
+        (:func:`is_cut_userinfo`) or holds a ``:``, or a password cut before its ``@``
+        (:data:`_CUT_PASSWORD`).
+    """
+    return any(_refused_userinfo(form, early=True) for form in _userinfo_forms(text))
+
+
+_CUT_PASSWORD = re.compile(
+    r"(?<=://):(?![0-9]*(?:[/?#\\\"'<>()\[\]{}.,;|`*_~!]|\s|$))[^\s/?#]", re.ASCII | re.I
+)
+"""An authority that opens with ``:`` and no port: an empty user's password, cut by a space before its ``@``."""
+
+
+_SPACE_CUT = re.compile(
+    r"://[^\s/?#@\"<>:\[\]]*:(?![0-9]*[\s/?#])[^\s/?#@\"<>]+[ \t]+[^\s@/]+@[a-z0-9\[]", re.I
+)
+"""A ``<user>:<password>`` with no port in it, cut by a space: the next word ends in ``@<host>``."""
+
+
+def _userinfo_forms(text: str) -> list[str]:
+    """The forms a userinfo is read in: the decoded ones, an encoded space kept visible in each."""
+    return text_forms.decoded_forms(text, keep_encoded_spaces=True)
+
+
+def _refused_userinfo(form: str, *, early: bool = False) -> bool:
+    """Whether one decoded form holds a userinfo :func:`judge` refuses, or, ``early``, one refused whatever its host."""
+    if "://" not in form:
+        return False
+    if _CUT_PASSWORD.search(form) is not None or _SPACE_CUT.search(form) is not None:
+        return True
+    return any(
+        is_cut_userinfo(u.local) or (":" in u.local if early else not is_literal_mailbox(u))
+        for u in userinfos(form)
+    )
+
+
+def _scheme_led(text: str, start: int) -> bool:
+    """Whether ``<scheme>://`` stands right before offset ``start``."""
+    return text.endswith("://", 0, start) and _scheme_before(text, start - 3)
+
+
 def _led(text: str, start: int) -> bool:
     """Whether ``<scheme>://``, ``<local>@`` or a URL's userinfo stands right before offset ``start``.
 
     A userinfo is read by URL grammar (:func:`_url_userinfo_spans`), so ``https://u:abc=@<host>``
     and ``postgres://u:p^w@<host>`` lead their host whatever the password holds.
     """
-    if text.endswith("://", 0, start) and _scheme_before(text, start - 3):
+    if _scheme_led(text, start):
         return True
     if not text.endswith("@", 0, start):
         return False
@@ -684,14 +804,16 @@ def _url_userinfo_spans(text: str) -> dict[int, int]:
     """The offset of the ``@`` that ends each URL userinfo of ``text``, mapped to where it begins.
 
     Read by URL grammar: after each ``<scheme>://`` the authority runs to the first whitespace or
-    :data:`_AUTHORITY_END` character, and its LAST ``@`` ends the userinfo, whatever characters
-    stand before it (an unescaped ``@`` in a password included). What follows that ``@``, or the
-    whole authority when it holds none, must be a ``<host>[:<port>]`` (:func:`_host_port`). When
-    it is not, a ``/`` stood inside a userinfo (``redis://:Ab/cd@<host>``: ``:Ab`` names no host,
-    PR #319 round 8, 4688674758), and the userinfo runs to the last ``@`` before the token ends
-    (:data:`_TOKEN_END`), whatever it crosses. A path holding an ``@`` after a host stays a path
-    (``https://www.npmjs.com/package/@scope/name``). The spans of a text are disjoint, so each
-    character is read once and the reader stays linear.
+    :data:`_AUTHORITY_END` character, a placeholder in angle brackets aside (:data:`_ANGLE_NAME`),
+    and its LAST ``@`` ends the userinfo, whatever characters stand before it (an unescaped ``@``
+    in a password included). What follows that ``@``, or the whole authority when it holds none,
+    must end the authority (:func:`_past_authority`). When it does not, the delimiter stood
+    inside a userinfo (``redis://:Ab/cd@<host>``: ``:Ab`` names no host, PR #319 round 8,
+    4688674758), and the userinfo runs to the last ``@`` before the token ends at whitespace,
+    whatever it crosses. A path holding an ``@`` after a host stays a path
+    (``https://www.npmjs.com/package/@scope/name``). A userinfo that is placeholders only
+    (:data:`_ANGLE_USERINFO`) is none. The spans of a text are disjoint, so each character is
+    read once and the reader stays linear.
 
     Args:
         text: The text read.
@@ -705,27 +827,74 @@ def _url_userinfo_spans(text: str) -> dict[int, int]:
         begin = end = colon + 3
         if _scheme_before(text, colon):
             last = -1
-            while end < len(text) and not text[end].isspace() and text[end] not in _AUTHORITY_END:
+            while end < len(text) and not text[end].isspace():
+                angle = _ANGLE_NAME.match(text, end) if text[end] == "<" else None
+                if angle is None and text[end] in _AUTHORITY_END:
+                    break
                 if text[end] == "@":
                     last = end
+                end = angle.end() if angle is not None else end + 1
+            reach = _past_authority(text, colon, last + 1 if last != -1 else begin, end)
+            while reach and end < len(text) and not text[end].isspace():
+                if text[end] == "@" and (reach == _ANY_AT or text[end - 1] != "/"):
+                    last = end
                 end += 1
-            if not _host_port(text[last + 1 if last != -1 else begin : end], begin == end):
-                while end < len(text) and not text[end].isspace() and text[end] not in _TOKEN_END:
-                    if text[end] == "@":
-                        last = end
-                    end += 1
-            if last != -1:
+            if last != -1 and not _ANGLE_USERINFO.fullmatch(text, begin, last):
                 spans[last] = begin
         colon = text.find("://", end)
     return spans
+
+
+_ANY_AT = 2
+
+_INNER_AT = 1
+
+
+def _past_authority(text: str, colon: int, host: int, end: int) -> int:
+    """Which later ``@`` of the token may still end a userinfo, the authority being read to ``end``.
+
+    Whitespace and the end of the text end a ``<host>[:<port>]`` (:func:`_host_port`), and so does
+    a ``/``: what follows is a path. A prose delimiter (:data:`_PROSE_END`) ends one too on a host
+    that names no one (a placeholder or a public host, an address in brackets), but not after a
+    ``:`` that no port follows (``redis://localhost:"cd@<host>``), where it opens a password. Any
+    other name may be a user: before a prose delimiter (``https://john.doe"cd@<host>``), and
+    before a ``/`` when digits stand in the place of a port (``redis://ci.bot:12/cd@<host>``),
+    where an ``@`` that opens a path segment (``/@scope``) is none. An empty authority ends at a
+    prose delimiter only when that one closes the delimiter the scheme opens with
+    (``"https://"``, ``<https://>``).
+
+    Args:
+        text: The text read.
+        colon: The offset of the ``://``.
+        host: Where the host begins, after the authority's last ``@`` when it holds one.
+        end: Where the authority ends.
+
+    Returns:
+        :data:`_ANY_AT`, :data:`_INNER_AT` (one that opens no path segment), or ``0`` for none.
+    """
+    prose = text[end : end + 1] in _PROSE_END
+    if colon + 3 == end:
+        begin = colon
+        while begin > 0 and text[begin - 1] in _SCHEME_CHARS:
+            begin -= 1
+        return _ANY_AT if prose and text[begin - 1 : begin] + text[end] not in ('""', "<>") else 0
+    authority = text[host:end]
+    if not _host_port(authority, False):
+        return _ANY_AT
+    name = authority.partition(":")[0]
+    known = name.startswith(("<", "[")) or is_placeholder_host(name) or is_public_host(name)
+    if prose:
+        return 0 if known and not authority.endswith(":") else _ANY_AT
+    return _INNER_AT if ":" in authority and not known else 0
 
 
 def _host_port(authority: str, empty: bool) -> bool:
     """Whether ``authority`` reads as ``<host>[:<port>]`` by URL grammar (RFC 3986 3.2.2, 3.2.3).
 
     The host is a dotted name by DNS label grammar (:func:`_label_run`), an IPv4 address, a
-    bracketed IPv6 literal or a placeholder-class host (``localhost``); the port, when a ``:``
-    stands, is ASCII digits only. A one-label name other than a placeholder is no host here: after
+    bracketed IPv6 literal, a placeholder-class host (``localhost``) or a placeholder in angle
+    brackets (``<host>``, its port ``<port>`` too); the port, when a ``:`` stands, is ASCII digits
+    only. A one-label name other than a placeholder is no host here: after
     it a ``/`` and an ``@`` read as ``<user>/<password>@<host>`` as well as a path, so the reader
     fails closed. An empty authority (``file:///<path>``, ``empty``) is one.
 
@@ -747,10 +916,12 @@ def _host_port(authority: str, empty: bool) -> bool:
         port = rest[1:]
     else:
         host, _, port = authority.partition(":")
-        named = _label_run(host, led=True) or _ipv4(host)
+        named = (
+            _label_run(host, led=True, authority=True) or _ipv4(host) or _ANGLE_NAME.fullmatch(host)
+        )
         if not (named or (host and is_placeholder_host(host))):
             return False
-    return all(c in _DIGITS for c in port)
+    return all(c in _DIGITS for c in port) or _ANGLE_NAME.fullmatch(port) is not None
 
 
 @functools.lru_cache(maxsize=64)
@@ -886,7 +1057,8 @@ def hosts(text: str) -> list[Host]:
             and not _version_context(text, start, end)
         ):
             found.append(Host(run.rstrip("."), led or slashes, start, end))
-        labels = _label_run(run, led=led or slashes)
+        authority = led and (_scheme_led(text, start) or _userinfo_before(text, start - 1))
+        labels = _label_run(run, led=led or slashes, authority=authority)
         host = run[:-1] if run.endswith(".") else run
         if labels is None:
             if _dotless_authority(text, start, host):
@@ -1055,8 +1227,9 @@ def judge(text: str, known: Known) -> Refusal | None:
     password-less user on a documentation host (``postgres://app@localhost``) name no one; a
     credential (a ``:``) and any userinfo on a public or an unknown host are refused, whatever
     characters they hold (``^``, ``|``, ``\``, ``[``, ``#``, ``?``, an ``@`` included). A userinfo
-    that crosses a ``/`` (``redis://:Ab/cd@<host>``) is always refused: its authority named no
-    host, so the reader cannot tell a user from a host.
+    that is none by RFC 3986 (:func:`is_cut_userinfo`: a ``/`` in ``redis://:Ab/cd@<host>``, a
+    quote, a bracket, an encoded space) is always refused: its authority named no host, so the
+    reader cannot tell a user from a host.
 
     Args:
         text: One string of the built fixture.
@@ -1069,7 +1242,7 @@ def judge(text: str, known: Known) -> Refusal | None:
     if left is not None:
         return Refusal("residual", left[0], left[1])
     forms = text_forms.decoded_forms(_blank(text, known.literals))
-    if any(has_tenant_path(form) for form in forms):
+    if any(has_tenant_path(form) for form in tenant_forms(_blank(text, known.literals))):
         return Refusal("tenant path")
     for place in (h for form in forms for h in hosts(form)):
         if is_placeholder_host(place.host) or is_public_host(place.host):
@@ -1082,6 +1255,7 @@ def judge(text: str, known: Known) -> Refusal | None:
         return Refusal("public address")
     if any(not is_literal_mailbox(b) for form in forms for b in mailboxes(form)):
         return Refusal("unknown mailbox")
-    if any("/" in u.local or not is_literal_mailbox(u) for form in forms for u in userinfos(form)):
+    blanked = _blank(text, known.literals)
+    if any(_refused_userinfo(form) for form in _userinfo_forms(blanked)):
         return Refusal("url userinfo")
     return None

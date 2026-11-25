@@ -57,8 +57,8 @@ import argparse
 import sys
 from pathlib import Path
 
+from repoach.core.denylist import DenylistError
 from repoach.core.logging import route_default_logs_to_stderr
-from repoach.forge.denylist import DenylistError
 from repoach.forge.fixture_pipeline import (
     ResidualValueError,
     UnknownForgeError,

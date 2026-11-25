@@ -63,10 +63,10 @@ import json
 import sys
 from pathlib import Path
 
+from repoach.core.denylist import DenylistError
 from repoach.core.logging import route_default_logs_to_stderr
-from repoach.forge.denylist import DenylistError
 from repoach.forge.fixture_judge import UnclassifiedValueError
-from repoach.forge.fixture_pipeline import OriginRemoteError, record_live
+from repoach.forge.fixture_pipeline import FixtureWriteError, OriginRemoteError, record_live
 from repoach.forge.protocol import ForgeError
 from repoach.forge.recording import NeedleError, SyntheticIdsExhaustedError
 
@@ -110,6 +110,7 @@ def main(argv: list[str] | None = None) -> int:
         UnclassifiedValueError,
         DenylistError,
         OriginRemoteError,
+        FixtureWriteError,
         SyntheticIdsExhaustedError,
         NeedleError,
         ForgeError,

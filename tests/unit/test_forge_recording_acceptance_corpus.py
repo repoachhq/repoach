@@ -38,7 +38,7 @@ from typing import Any
 
 import pytest
 
-from repoach.forge import denylist as deny_list
+from repoach.core import denylist as deny_list
 from repoach.forge import fixture_judge, fixture_pipeline
 from repoach.forge import recording as rec_mod
 from repoach.forge.github import GitHubForge, comment_from_github
@@ -11354,6 +11354,636 @@ ROWS: tuple[Row, ...] = (
         inp=Sample(body="at 360.cn/zqkvn9@pypi.org/zqns9/zqrepo9 now"),
         outcome=Refused("unknown host at exchanges[0].stdout[0].body"),
     ),
+    Row(
+        id="r10_url_password_cut_by_a_bracket_is_refused",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see https://deploy:S3cr]tPart@localhost/db"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_url_password_cut_by_a_slash_and_a_bracket_is_refused",
+        source="PR #319 review round 10 (4688674758)",
+        inp=Sample(body="see https://deploy:Ab/c]d9tail@redis:6379/x"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_url_password_cut_in_a_stderr_is_refused",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(stderr="fatal: https://deploy:S3cr|tPart@localhost/db"),
+        outcome=Refused("url userinfo at exchanges[0].stderr"),
+    ),
+    Row(
+        id="r10_audit_fuzz_01",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ssh://u:zqsec]zqsec@localhost/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_02",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ssh://u:zqsec#*zqsec@example.com/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_03",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ftp://u:zqseca`\\zqsec@localhost/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_04",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ftp://u:zqsec)?zqsec@example.com/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_05",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ftp://u:zqsec[,zqsec@localhost/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_06",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see https://u:zqsec;*[zqsec@localhost/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_07",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ftp://u:zqsec'#}zqsec@127.0.0.1/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_08",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see https://u:zqsec||zqsec@127.0.0.1/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_09",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ftp://u:zqsec)^!zqsec@localhost/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_10",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ssh://u:zqsec|(zqsec@127.0.0.1/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_11",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ssh://u:zqsec[$]zqsec@localhost/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_12",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see https://u:zqsec`bzqsec@localhost/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_13",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ssh://u:zqsec~]zqsec@localhost/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_14",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ssh://u:zqsec`+-zqsec@example.com/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_15",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ssh://u:zqsec#}zqsec@127.0.0.1/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_16",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see https://u:zqsec=]zqsec@127.0.0.1/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_17",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ftp://u:zqsec%$`zqsec@127.0.0.1/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_18",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ssh://u:zqsec)[zqsec@example.com/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_19",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see https://u:zqsec](zqsec@example.com/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_20",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ssh://u:zqseca$[zqsec@localhost/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_21",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ssh://u:zqsec`zqsec@example.com/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_22",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see git://u:zqsec{#zqsec@localhost/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_23",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see git://u:zqsec~]zqsec@127.0.0.1/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_24",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see git://u:zqsec&[zqsec@127.0.0.1/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_25",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ssh://u:zqsec+/{zqsec@localhost/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_26",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ssh://u:zqsec|*zqsec@example.com/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_27",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see git://u:zqsec[{zqsec@127.0.0.1/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_28",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ssh://u:zqsec/'bzqsec@127.0.0.1/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_29",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ftp://u:zqsec)#zqsec@localhost/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_30",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see https://u:zqsec/}zqsec@127.0.0.1/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_31",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see https://u:zqsec`?zqsec@example.com/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_32",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ftp://u:zqsec|)!zqsec@localhost/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_33",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ftp://u:zqsec\\'zqsec@localhost/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_34",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see git://u:zqsec|~.zqsec@localhost/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_35",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ssh://u:zqsecb]'zqsec@127.0.0.1/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_36",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ftp://u:zqsec`)|zqsec@example.com/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_37",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see https://u:zqsec#[bzqsec@127.0.0.1/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_38",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ftp://u:zqsec\\~}zqsec@example.com/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_39",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ssh://u:zqsec.&|zqsec@127.0.0.1/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_40",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ftp://u:zqsec`bzqsec@localhost/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_41",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ssh://u:zqsec]zqsec@localhost/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_42",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ftp://u:zqsec/,!zqsec@127.0.0.1/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_43",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ssh://u:zqsec],zqsec@localhost/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_44",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see https://u:zqsec[%zqsec@127.0.0.1/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_45",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see https://u:zqsec/`1zqsec@[::1]:80/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_audit_fuzz_46",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see ftp://u:zqsec'[zqsec@127.0.0.1/db end"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_url_password_cut_by_a_double_quote_is_refused",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body='dsn postgres://:zqhead"zqtail@localhost/db'),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_url_password_cut_by_an_opening_angle_is_refused",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="dsn redis://:zqhead<zqtail@localhost:6379/0"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_url_password_cut_by_a_closing_angle_is_refused",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="dsn amqp://:zqhead>zqtail@127.0.0.1"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_url_password_cut_by_an_encoded_space_is_refused",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="dsn redis://:zqhead&#32;zqtail&#64;localhost/0"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_url_password_cut_by_a_no_break_space_is_refused",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="dsn ftp://app:zqhead\xa0zqtail@localhost/x"),
+        outcome=Refused("unknown host at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_url_password_cut_by_a_space_is_refused",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see https://deploy:zqhead zqtail@localhost/db"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_url_password_cut_by_a_comma_and_an_encoded_at_is_refused",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see https://deploy:zqhead,zqtail%40localhost/db"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_url_password_cut_by_a_bracket_after_a_user_that_is_a_mailbox_is_refused",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see https://zqj@corp.zqi:12]zqtail@localhost/db"),
+        outcome=Refused("unknown mailbox at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_url_password_cut_by_a_quote_after_a_user_that_is_a_dotted_name_is_refused",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body='see https://ci.zqbot"zqtail@localhost/db'),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_url_password_cut_by_a_brace_after_digits_in_the_place_of_a_port_is_refused",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="see https://ci.zqbot:12/zqhead{zqtail@localhost/db"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_userinfo_a_learnt_host_would_hide_is_refused",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="dsn redis://zqdeploy:12/zqtail@localhost and https://zqdeploy/ns/repo"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_userinfo_an_encoded_at_after_an_escape_is_refused",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(body="dsn rediss://deploy:*~$bzqtail\\u0040git.zqcorp.io/ns/repo"),
+        outcome=Refused("url userinfo at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_markdown_and_tables_around_urls_are_ordinary",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(
+            body="[a](https://pypi.org/x)[b](https://www.npmjs.com/package/@scope/x) |https://pypi.org/p|@types/node| (https://docs.python.org/3/),mailto:a@example.com"
+        ),
+        outcome=Written(
+            text="[a](https://pypi.org/x)[b](https://www.npmjs.com/package/@scope/x) |https://pypi.org/p|@types/node| (https://docs.python.org/3/),mailto:a@example.com"
+        ),
+    ),
+    Row(
+        id="r10_quoted_and_bracketed_urls_are_ordinary",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(
+            body='{"homepage":"https://pypi.org","by":"a@example.com"} <https://pypi.org><a@example.com> [https://pypi.org/x] `https://pypi.org/y`'
+        ),
+        outcome=Written(
+            text='{"homepage":"https://pypi.org","by":"a@example.com"} <https://pypi.org><a@example.com> [https://pypi.org/x] `https://pypi.org/y`'
+        ),
+    ),
+    Row(
+        id="r10_placeholder_userinfos_and_bare_schemes_are_ordinary",
+        source="PR #319 review round 10 (4683464677)",
+        inp=Sample(
+            body='set postgres://<user>:<password>@db.example.com:5432/db, then url = "https://"+host+"/@x"'
+        ),
+        outcome=Written(
+            text='set postgres://<user>:<password>@db.example.com:5432/db, then url = "https://"+host+"/@x"'
+        ),
+    ),
+    Row(
+        id="r10_host_whose_last_label_is_led_by_a_digit_is_refused",
+        source="PR #319 review round 10 (4687852986)",
+        inp=Sample(body="mail zqkvn@ci.1node now"),
+        outcome=Refused("unknown mailbox at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_host_whose_last_label_is_led_by_a_digit_in_a_dsn_is_refused",
+        source="PR #319 review round 10 (4687852986)",
+        inp=Sample(body="dsn redis://cache.1dc:6379/0 now"),
+        outcome=Written(text="dsn redis://forge.example.com:6379/0 now"),
+        markers=("cache.1dc",),
+    ),
+    Row(
+        id="r10_host_whose_last_label_is_led_by_a_digit_after_an_scp_user_is_refused",
+        source="PR #319 review round 10 (4687852986)",
+        inp=Sample(body="scp root@gitlab.1dc:/etc now"),
+        outcome=Refused("unknown mailbox at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_url_authority_with_a_one_character_last_label_is_rewritten",
+        source="PR #319 review round 10 (4687852986)",
+        inp=Sample(body="see https://zqgit.x/zqns1/zqrepo1 now"),
+        outcome=Written(text="see https://forge.example.com/org/project now"),
+        markers=("zqgit.x", "zqns1"),
+    ),
+    Row(
+        id="r10_dsn_authority_with_a_one_character_last_label_is_refused",
+        source="PR #319 review round 10 (4687852986)",
+        inp=Sample(body="dsn redis://zqcache.x:6379/0 now"),
+        outcome=Written(text="dsn redis://forge.example.com:6379/0 now"),
+        markers=("zqcache.x",),
+    ),
+    Row(
+        id="r10_version_ranges_after_an_at_are_ordinary",
+        source="PR #319 review round 10 (4687852986)",
+        inp=Sample(
+            body="uses: actions/checkout@v4.x, node@18.x, pkg@1.0.0-rc1, x@v1.2b3 and a@b.c"
+        ),
+        outcome=Written(
+            text="uses: actions/checkout@v4.x, node@18.x, pkg@1.0.0-rc1, x@v1.2b3 and a@b.c"
+        ),
+    ),
+    Row(
+        id="r10_one_character_last_label_after_a_mailbox_at_NG4_17",
+        source="PR #319 review round 10 (4687852986)",
+        inp=Sample(body="mail zqu@ci.x now"),
+        outcome=Written(text="mail zqu@ci.x now"),
+        residual=True,
+    ),
+    Row(
+        id="r10_idn_mailbox_with_combining_marks_devanagari_is_refused",
+        source="PR #319 review round 10 (4684965361)",
+        inp=Sample(body="mail zqhans@उदाहरण.भारत now"),
+        outcome=Refused("residual host 4 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_idn_mailbox_with_combining_marks_thai_is_refused",
+        source="PR #319 review round 10 (4684965361)",
+        inp=Sample(body="mail zqhans@สำนัก.th now"),
+        outcome=Refused("residual host 4 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_idn_mailbox_with_combining_marks_tamil_is_refused",
+        source="PR #319 review round 10 (4684965361)",
+        inp=Sample(body="mail zqhans@தமிழ்.com now"),
+        outcome=Refused("residual host 4 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_idn_mailbox_with_combining_marks_vocalised_arabic_is_refused",
+        source="PR #319 review round 10 (4684965361)",
+        inp=Sample(body="mail zqhans@مَثال.com now"),
+        outcome=Refused("residual host 4 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_idn_mailbox_with_combining_marks_joiner_is_refused",
+        source="PR #319 review round 10 (4684965361)",
+        inp=Sample(body="mail zqhans@क्\u200dष.com now"),
+        outcome=Refused("residual host 4 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_idn_scp_with_combining_marks_is_refused",
+        source="PR #319 review round 10 (4684965361)",
+        inp=Sample(body="git clone git@उदाहरण.com:zqns1/r.git"),
+        outcome=Refused("residual host 4 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_idn_network_path_with_combining_marks_is_refused",
+        source="PR #319 review round 10 (4684965361)",
+        inp=Sample(body="src=//git.தமிழ்.com/zqns1/r"),
+        outcome=Refused("residual host 4 at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_prose_with_combining_marks_is_ordinary",
+        source="PR #319 review round 10 (4684965361)",
+        inp=Sample(
+            body="हिन्दी में एक वाक्य। ราคา 1.000 บาท a/b ⚠️docs.python.org/3 1️⃣www.example.com உதாரணம் ok"
+        ),
+        outcome=Written(
+            text="हिन्दी में एक वाक्य। ราคา 1.000 บาท a/b ⚠️docs.python.org/3 1️⃣www.example.com உதாரணம் ok"
+        ),
+    ),
+    Row(
+        id="r10_account_page_go_badge",
+        source="PR #319 review round 10 (4687852992)",
+        inp=Sample(body="see https://pkg.go.dev/badge/github.com/zqowner/r.svg now"),
+        outcome=Written(text="see https://forge.example.com/org/project now"),
+        markers=("zqowner",),
+    ),
+    Row(
+        id="r10_account_page_go_mod",
+        source="PR #319 review round 10 (4687852992)",
+        inp=Sample(body="see pkg.go.dev/mod/github.com/zqowner/r now"),
+        outcome=Refused("tenant path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_account_page_go_search",
+        source="PR #319 review round 10 (4687852992)",
+        inp=Sample(body="see https://pkg.go.dev/search?q=github.com%2Fzqowner now"),
+        outcome=Written(text="see https://forge.example.com/search now"),
+        markers=("zqowner",),
+    ),
+    Row(
+        id="r10_account_page_go_cached_only",
+        source="PR #319 review round 10 (4687852992)",
+        inp=Sample(
+            body="see https://proxy.golang.org/cached-only/github.com/zqowner/r/@v/list now"
+        ),
+        outcome=Written(text="see https://forge.example.com/org/project now"),
+        markers=("zqowner",),
+    ),
+    Row(
+        id="r10_account_page_gopkg_owner",
+        source="PR #319 review round 10 (4687852992)",
+        inp=Sample(body="see pkg.go.dev/gopkg.in/zqowner/pkg.v2 now"),
+        outcome=Refused("tenant path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_account_page_roundup_user",
+        source="PR #319 review round 10 (4687852992)",
+        inp=Sample(body="see bugs.python.org/user9182736 now"),
+        outcome=Refused("tenant path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_account_page_phonebook_uid",
+        source="PR #319 review round 10 (4687852992)",
+        inp=Sample(body="see https://home.apache.org/phonebook.html?uid=zqowner now"),
+        outcome=Written(text="see https://forge.example.com/org now"),
+        markers=("zqowner",),
+    ),
+    Row(
+        id="r10_account_page_pontoon",
+        source="PR #319 review round 10 (4687852992)",
+        inp=Sample(body="see https://pontoon.mozilla.org/contributors/zqowner/ now"),
+        outcome=Written(text="see https://forge.example.com/org/project/ now"),
+        markers=("zqowner",),
+    ),
+    Row(
+        id="r10_account_page_nuget_owner",
+        source="PR #319 review round 10 (4687852992)",
+        inp=Sample(body="see https://www.nuget.org/packages?q=json+owner%3Azqowner now"),
+        outcome=Written(text="see https://forge.example.com/org now"),
+        markers=("zqowner",),
+    ),
+    Row(
+        id="r10_account_page_npm_search",
+        source="PR #319 review round 10 (4687852992)",
+        inp=Sample(
+            body="see https://registry.npmjs.org/-/v1/search?text=react%20maintainer%3Azqowner now"
+        ),
+        outcome=Written(text="see https://forge.example.com/-/v1/search now"),
+        markers=("zqowner",),
+    ),
+    Row(
+        id="r10_account_page_prow_author",
+        source="PR #319 review round 10 (4687852992)",
+        inp=Sample(body="see prow.k8s.io/?author=zqowner now"),
+        outcome=Refused("tenant path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_account_page_prow_pr_query",
+        source="PR #319 review round 10 (4687852992)",
+        inp=Sample(body="see prow.k8s.io/pr?query=is%3Apr%20author%3Azqowner now"),
+        outcome=Refused("tenant path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_account_page_wikipedia_ucuser",
+        source="PR #319 review round 10 (4687852992)",
+        inp=Sample(
+            body="see https://en.wikipedia.org/w/api.php?action=query&list=usercontribs&ucuser=zqowner now"
+        ),
+        outcome=Written(text="see https://forge.example.com/org/project now"),
+        markers=("zqowner",),
+    ),
+    Row(
+        id="r10_public_pages_of_the_same_hosts_are_ordinary",
+        source="PR #319 review round 10 (4687852992)",
+        inp=Sample(
+            body="see https://pkg.go.dev/gopkg.in/yaml.v3 https://pkg.go.dev/badge/golang.org/x/mod.svg https://pkg.go.dev/search?q=json https://bugs.python.org/issue12 https://home.apache.org/phonebook.html?pmc=kafka https://www.nuget.org/packages?q=json https://prow.k8s.io/?state=failure"
+        ),
+        outcome=Written(
+            text="see https://pkg.go.dev/gopkg.in/yaml.v3 https://pkg.go.dev/badge/golang.org/x/mod.svg https://pkg.go.dev/search?q=json https://bugs.python.org/issue12 https://home.apache.org/phonebook.html?pmc=kafka https://www.nuget.org/packages?q=json https://prow.k8s.io/?state=failure"
+        ),
+    ),
+    Row(
+        id="r10_home_path_wsl_capitals_is_refused",
+        source="PR #319 review round 10 (4684965373)",
+        inp=Sample(body="open /mnt/c/USERS/zqlogin/x now"),
+        outcome=Refused("generic class home_path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_home_path_double_slash_is_refused",
+        source="PR #319 review round 10 (4684965373)",
+        inp=Sample(body="open /mnt/c//Users//zqlogin now"),
+        outcome=Refused("generic class home_path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_home_path_docker_desktop_is_refused",
+        source="PR #319 review round 10 (4684965373)",
+        inp=Sample(body="open /host_mnt/c/Users/zqlogin/x now"),
+        outcome=Refused("generic class home_path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_home_path_windows_capitals_is_refused",
+        source="PR #319 review round 10 (4684965373)",
+        inp=Sample(body="open C:\\USERS\\zqlogin now"),
+        outcome=Refused("generic class home_path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r10_routes_named_users_are_ordinary",
+        source="PR #319 review round 10 (4684965373)",
+        inp=Sample(body="GET /users/octo, /api/v3/users/x, /mnt/c/Windows/x and /USERS/x"),
+        outcome=Written(text="GET /users/octo, /api/v3/users/x, /mnt/c/Windows/x and /USERS/x"),
+    ),
 )
 
 
@@ -11806,13 +12436,13 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
     refused = [row for row in ROWS if isinstance(row.outcome, Refused)]
     bounded = [row for row in ROWS if isinstance(row.outcome, Bounded)]
     assert (len(ROWS), len(planted), len(ordinary), len(refused), len(bounded)) == (
-        1010,
-        705,
-        305,
-        137,
+        1108,
+        796,
+        312,
+        216,
         2,
     )
-    assert len(residual) == 25
+    assert len(residual) == 26
     assert all(not row.residual for row in refused)
     prose = [row for row in ROWS if "NG4_16" in row.id]
     assert len(prose) == 7 and all(row.residual for row in prose)

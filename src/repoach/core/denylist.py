@@ -8,7 +8,9 @@ This module is the one source of the deny-list (PR #319 round 9, 4689482906): it
 (:data:`DENYLIST_ENV`, :data:`DENYLIST_FILE_NAME`, :data:`DENYLIST_MIN_LENGTH`), its contract (one
 entry per line, ``#`` comments in the file, a comma in the variable refused) and its reader
 (:func:`read_denylist`, :func:`denylist_patterns`, :func:`denylist_hit`). The gate of
-SP-NO-PERSONAL-DATA-GATE imports them from here when it lands and adds no copy. Two places
+SP-NO-PERSONAL-DATA-GATE imports them from here when it lands and adds no copy. It stands in
+``repoach.core`` (round 10, 4688673733), outside the forge package: a lint imports the reader and
+its names without loading a forge. Two places
 restate a name because they cannot import it, and neither is a source: the ``env`` of the
 deny-list step of ``.github/workflows/ci.yml``, which a test holds equal to
 :data:`DENYLIST_ENV`, and that gate's spec.

@@ -15,6 +15,7 @@ pins the exact calls each forge makes.
 from __future__ import annotations
 
 import base64
+import bisect
 import functools
 import inspect
 import ipaddress
@@ -31,10 +32,10 @@ from urllib.parse import SplitResult, quote, unquote, urlsplit, urlunsplit
 from pydantic import BaseModel
 
 from ..core import text_forms
+from ..core.denylist import Denylist, read_denylist
 from ..core.logging import get_logger
 from ..core.redaction import SECRET_VALUE_PATTERNS
 from . import closure, protocol
-from .denylist import Denylist, read_denylist
 from .fixture_reading import (
     CLASS_WORD_RE,
     LOGIN_KEYS,
@@ -759,10 +760,10 @@ def _repository_root(path: str) -> str | None:
 
 
 _URL_HOST_NAME_RE = re.compile(
-    r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:xn--[a-z0-9-]+|[a-z][a-z0-9-]*[a-z0-9])\.?",
+    r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:xn--[a-z0-9-]+|(?![0-9]+\.?\Z)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)\.?",
     re.I,
 )
-"""A dotted host name by DNS label grammar (RFC 1123 2.1): its last label an A-label or led by a letter."""
+"""A dotted host name by DNS label grammar (RFC 1123 2.1): its last label an A-label or not all digits (RFC 3696 2)."""
 
 
 def _names_host_and_port(authority: str) -> bool:
@@ -819,6 +820,122 @@ def userinfo_crosses_path(url: str) -> bool:
     if not sep or end == 0 or "@" not in rest[end:]:
         return False
     return not _names_host_and_port(rest[:end].rpartition("@")[2])
+
+
+_AT_IN_ANY_FORM_RE = re.compile(
+    r"@|＠|﹫|%(?:25)*40|\\[ux]0{0,4}40|&(?:amp;)*#(?:x0*40|0*64)(?![0-9a-f])|&(?:amp;)*commat",
+    re.I,
+)
+"""An ``@`` as it stands (fullwidth and small too) or in one encoding: percent (nested too), string escape, HTML entity."""
+
+_TOKEN_RE = re.compile(r"[^ \t\n\r\f\v]+", re.I)
+"""A run without ASCII whitespace: what a URL of running text stands in, a no-break space inside it."""
+
+_PROSE_AFTER_URL = ('"', "<", ">")
+"""The delimiters no URL carries unescaped; a non-ASCII space is one too (:func:`_cuts_userinfo`)."""
+
+
+def _last_at(text: str) -> list[tuple[int, int, int]]:
+    """Each whitespace-free run of ``text`` holding ``://``: its start, its end and where its last ``@`` stands.
+
+    An ``@`` counts in every decoded form (:func:`repoach.core.text_forms.decoded_forms`). When a
+    form holds more of them than :data:`_AT_IN_ANY_FORM_RE` places, one stands at the run's end,
+    so it follows every URL of it; a run that holds none has ``-1``. Each run is read a fixed
+    number of times, so a run of many URLs stays linear.
+    """
+    found: list[tuple[int, int, int]] = []
+    for run in _TOKEN_RE.finditer(text):
+        token = run.group(0)
+        if "://" not in token:
+            continue
+        places = [m.start() for m in _AT_IN_ANY_FORM_RE.finditer(token)]
+        at = places[-1] if places else -1
+        if any(form.count("@") > len(places) for form in text_forms.decoded_forms(token)):
+            at = len(token)
+        found.append((run.start(), run.end(), run.start() + at if at != -1 else -1))
+    return found
+
+
+def _at_after(runs: list[tuple[int, int, int]], end: int) -> bool:
+    """Whether an ``@`` stands at or after ``end`` in the whitespace-free run ``end`` ends in (:func:`_last_at`)."""
+    k = bisect.bisect_left(runs, end, key=lambda run: run[1])
+    return k < len(runs) and runs[k][0] <= end and runs[k][2] >= end
+
+
+_NOT_CUT = 0
+
+_NO_PORT = 1
+
+_CUT = 2
+
+
+def _cuts_userinfo(url: str, after: str, at_after: bool) -> int:
+    """Whether ``url``, as a reader of running text ends it, may stop inside a userinfo (PR #319 round 10, 4683464677).
+
+    A text URL ends at a delimiter (:data:`_URL_BODY_DELIMITERS`) that a password may hold:
+    ``https://deploy:S3cr]t@<host>`` is cut to ``https://deploy:S3cr``, which names no ``@`` and
+    reads as the host ``deploy``. Rewriting it would leave ``]t@<host>`` in the text and hide the
+    userinfo from the closure oracle, so such a URL is never rewritten: it is left whole for the
+    oracle, which refuses it (:func:`repoach.forge.closure.is_cut_userinfo`). Read by URL grammar
+    alone, whatever the delimiter is:
+
+    - the authority, read to its first ``/``, ``?`` or ``#`` inside ``url``, is
+      ``<host>[:<port>]`` after its last ``@`` (:func:`_names_host_and_port`): it is whole, but
+      for digits in the place of a port on a host that is not allowed, where ``url`` is cut short
+      of an ``@`` (``https://ci.bot:12/c]d@<host>``);
+    - the authority runs to the end of ``url`` and an ``@`` follows in the same run: a userinfo
+      may go on, unless a ``"``, ``<`` or ``>``, which no URL carries, ends a whole
+      ``<host>[:<port>]`` on an allowed host (``{"url":"https://pypi.org","by":"@x"}``);
+    - any other authority with a later ``@`` is cut as well, and one that holds no ``@`` and a
+      port that is no port (``https://deploy:S3cr t@<host>``).
+
+    Args:
+        url: A text URL, its trailing punctuation already split off.
+        after: The character right after ``url`` in the text, ``""`` at its end.
+        at_after: Whether an ``@`` follows ``url`` before the next whitespace, in any encoding.
+
+    Returns:
+        :data:`_NOT_CUT`, or why ``url`` must be left as it stands: :data:`_CUT` (an ``@`` may end
+        its userinfo) or :data:`_NO_PORT`.
+    """
+    rest = url.partition("://")[2]
+    end = next((i for i, c in enumerate(rest) if c in "/?#"), len(rest))
+    authority = rest[:end].rpartition("@")[2]
+    whole = _names_host_and_port(authority)
+    if whole and end < len(rest):
+        host, colon, _ = authority.partition(":")
+        ported = bool(colon) and not authority.startswith("[") and not _is_allowed_host(host)
+        return _CUT if ported and at_after and after != "" else _NOT_CUT
+    prose = after in _PROSE_AFTER_URL or after.isspace()
+    if whole and prose:
+        named = _is_allowed_host(authority.partition(":")[0])
+        return _CUT if at_after and not named else _NOT_CUT
+    if at_after or _AT_IN_ANY_FORM_RE.search(rest, end) is not None:
+        return _CUT
+    port = rest[:end].rpartition(":")[2] if "@" not in rest[:end] and ":" in rest[:end] else ""
+    ported = "]" in port or all(c in "0123456789" for c in port)
+    return _NOT_CUT if ported else _NO_PORT
+
+
+def holds_cut_url(text: str) -> bool:
+    """Whether :func:`redact_urls_in_text` leaves a URL of ``text`` whole because a userinfo may go on after it.
+
+    The recorder refuses such a recording (:func:`repoach.forge.fixture_pipeline.cut_userinfo_path`):
+    what the redactor leaves for the judge is refused, whatever the judge reads in it.
+
+    Args:
+        text: One string of a recording.
+
+    Returns:
+        ``True`` when a text URL is cut (:data:`_CUT`).
+    """
+    runs = _last_at(text)
+    for match in _URL_IN_TEXT_RE.finditer(text) if runs else ():
+        url, _tail = _split_url_tail(match.group(0))
+        end = match.start() + len(url)
+        if _cuts_userinfo(url, text[end : end + 1], _at_after(runs, end)) == _CUT:
+            return True
+    return False
 
 
 def redact_url(value: str) -> str:
@@ -934,7 +1051,7 @@ def _identity_survives(host: str, path: str, rewritten: str) -> bool:
     folded = rewritten.casefold()
     return any(
         identity.casefold() in folded
-        for form in text_forms.decoded_forms(path)
+        for form in closure.tenant_forms(path)
         for identity in closure.tenant_identities(f"{host.casefold()}/{form.lstrip('/')}")
     )
 
@@ -966,6 +1083,7 @@ def redact_urls_in_text(text: str) -> str:
     0.13 R6-D5, 0.14) becomes ``noreply@forge.example.com`` (or
     ``no-reply@forge.example.com``).
     """
+    runs = _last_at(text)
 
     def _one(match: re.Match[str]) -> str:
         start = match.start()
@@ -981,7 +1099,8 @@ def redact_urls_in_text(text: str) -> str:
         host = parts.hostname or ""
         if not host:
             return match.group(0)
-        if userinfo_crosses_path(url):
+        end = start + len(url)
+        if _cuts_userinfo(url, text[end : end + 1], _at_after(runs, end)) != _NOT_CUT:
             return match.group(0)
         if "@" in parts.netloc:
             return (redact_url(url) or url) + tail
@@ -2291,10 +2410,10 @@ def known_values(
             them and the method's arguments; never a redacted value.
         roles: The recording's login -> class word.
         remote: The checkout's ``origin`` remote, ``""`` when it has none.
-        denylist: The deny-list, opaque (:class:`repoach.forge.denylist.Denylist`); judged,
+        denylist: The deny-list, opaque (:class:`repoach.core.denylist.Denylist`); judged,
             never replaced, its entries handed to the oracle by
-            :meth:`repoach.forge.denylist.Denylist.judged_with` and to no caller. ``None`` reads
-            the maintainer's (:func:`repoach.forge.denylist.read_denylist`): only an explicit
+            :meth:`repoach.core.denylist.Denylist.judged_with` and to no caller. ``None`` reads
+            the maintainer's (:func:`repoach.core.denylist.read_denylist`): only an explicit
             empty ``Denylist()`` is empty, and a plain tuple of entries is refused.
         min_length: The shortest value a structured source may hold; the
             offline transform passes 1 for logins and segments.
@@ -2314,7 +2433,7 @@ def known_values(
             to a class word or placeholder, by kind and ordinal.
         DenylistError: ``denylist`` is ``None`` and the maintainer's deny-list cannot be read or
             is malformed.
-        TypeError: ``denylist`` is not a :class:`repoach.forge.denylist.Denylist`.
+        TypeError: ``denylist`` is not a :class:`repoach.core.denylist.Denylist`.
         SyntheticIdsExhaustedError: An id needs a synthetic number past its range.
     """
     deny = _denylist_of(denylist)
@@ -2513,10 +2632,10 @@ def _denylist_of(denylist: Denylist | None) -> Denylist:
     """The deny-list :func:`known_values` judges with; fails closed.
 
     Args:
-        denylist: An opaque :class:`repoach.forge.denylist.Denylist`, or ``None``.
+        denylist: An opaque :class:`repoach.core.denylist.Denylist`, or ``None``.
 
     Returns:
-        ``denylist``, or the maintainer's (:func:`repoach.forge.denylist.read_denylist`) when
+        ``denylist``, or the maintainer's (:func:`repoach.core.denylist.read_denylist`) when
         ``None``: only an explicit empty ``Denylist()`` is empty.
 
     Raises:
@@ -2802,57 +2921,6 @@ def dump_fixture(path: Path, data: dict[str, Any]) -> None:
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
-
-
-def rename_logins_in_text(text: str, roles: dict[str, str]) -> str:
-    """Replace every login of ``roles`` in free text by its class word, a tool literal left as it is.
-
-    The offline transform's one entry into the text rewriting: the ``@<login>`` form of every
-    login (and a ``<name>[bot]`` login's ``@<stem>``), and the bare form of every login that is
-    not mention-only (a key without :data:`MENTION_ONLY_PREFIX`).
-
-    Args:
-        text: One string of a fixture.
-        roles: Login (a mention-only one keyed ``@<login>``) -> class word.
-
-    Returns:
-        ``text`` with each login replaced, outside the tool literals (:func:`outside_literals`).
-    """
-    rules: list[tuple[re.Pattern[str], str]] = []
-    for login, word in sorted(roles.items(), key=lambda pair: len(pair[0]), reverse=True):
-        handle = login.removeprefix(MENTION_ONLY_PREFIX)
-        rules.append((mention_pattern(handle), f"@{word}"))
-        if handle == login:
-            rules.append((token_pattern(login), word))
-            mention_stem = bot_mention_stem(login)
-            if mention_stem is not None:
-                rules.append((mention_pattern(mention_stem), f"@{word}"))
-
-    def rewrite(piece: str) -> str:
-        for pattern, replacement in rules:
-            piece = pattern.sub(replacement, piece)
-        return piece
-
-    return outside_literals(text, rewrite)
-
-
-def rename_logins_in_argument(arg: str, roles: dict[str, str]) -> str:
-    """Replace a login that is a whole argument, a path segment or a ``=`` value; never a mention-only one.
-
-    Args:
-        arg: One argv string of a fixture.
-        roles: Login (a mention-only one keyed ``@<login>``) -> class word.
-
-    Returns:
-        The class word when ``arg`` is a login, else ``arg`` with each login after ``/`` or ``=``
-        and before ``/``, ``&`` or its end replaced.
-    """
-    actors = {k: v for k, v in roles.items() if not k.startswith(MENTION_ONLY_PREFIX)}
-    if arg in actors:
-        return actors[arg]
-    for login, word in actors.items():
-        arg = re.sub(rf"(?<=[/=]){re.escape(login)}(?=[/&]|$)", word, arg)
-    return arg
 
 
 def rewrite_recorded_source(source: str, forge: str) -> str:

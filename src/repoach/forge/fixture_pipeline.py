@@ -38,19 +38,20 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from repoach.core.denylist import Denylist, read_denylist
 from repoach.core.logging import get_logger
+from repoach.core.paths import NotARepositoryError
 from repoach.forge import closure
-from repoach.forge.denylist import Denylist, read_denylist
 from repoach.forge.fixture_judge import (
     UnclassifiedValueError,
     decoded_answers,
     refuse_unclassified,
 )
 from repoach.forge.fixture_reading import (
-    LOGIN_KEYS,
     SYNTHETIC_IDS_KEY,
     SYNTHETIC_PROJECT_IDS_KEY,
     decode_json_values,
+    scanned_strings,
 )
 from repoach.forge.protocol import Forge, ForgeError
 from repoach.forge.recording import (
@@ -69,6 +70,7 @@ from repoach.forge.recording import (
     declared_project_ids,
     declared_user_ids,
     dump_fixture,
+    holds_cut_url,
     known_values,
     login_sightings,
     raw_logins,
@@ -77,8 +79,6 @@ from repoach.forge.recording import (
     redact_stdout,
     redact_urls_in_text,
     redact_urls_in_value,
-    rename_logins_in_argument,
-    rename_logins_in_text,
     replace_known,
     replace_known_in_source,
     replace_known_in_stdout,
@@ -201,6 +201,27 @@ def replace_known_in_calls(
     return out
 
 
+def cut_userinfo_path(recording: dict[str, Any]) -> str:
+    """Where a recording holds a URL userinfo no URL reader reads whole (PR #319 round 10, 4683464677).
+
+    Asked of every string right after the URL redaction and before a login, an id or a known value
+    is replaced, live and offline alike, so no replacement can hide a userinfo from the last judge:
+    ``redis://deploy:12/cd@<host>`` names a user until ``deploy`` is learnt as a host and written
+    ``forge.example.com``. :func:`seal_fixture` refuses the fixture when it finds one.
+
+    Args:
+        recording: A fixture, or its ``calls``, ``args`` and ``kwargs``, the URLs of its JSON
+            answers redacted; every other string is redacted here before it is judged.
+
+    Returns:
+        The path of the first string that holds one, ``""`` when none does.
+    """
+    for path, text in scanned_strings(recording):
+        if holds_cut_url(text) or closure.has_cut_userinfo(redact_urls_in_text(text)):
+            return path
+    return ""
+
+
 @dataclass(frozen=True)
 class RedactedRecording:
     """A recording after every stage of :func:`redact_recording`.
@@ -214,6 +235,7 @@ class RedactedRecording:
         known: The recording's known values.
         ids: The user-id map, holding the synthetic numbers handed out.
         projects: The repository-id map.
+        cut_userinfo: Where the recording holds a cut userinfo (:func:`cut_userinfo_path`).
     """
 
     calls: list[dict[str, Any]]
@@ -222,6 +244,7 @@ class RedactedRecording:
     known: closure.Known
     ids: UserIdMap
     projects: UserIdMap
+    cut_userinfo: str
 
     def __repr__(self) -> str:
         """A count, never a value."""
@@ -276,6 +299,7 @@ def redact_recording(
         NeedleError: A structured value is a class word or a placeholder.
         SyntheticIdsExhaustedError: The recording needs a synthetic id past its range.
     """
+    cut_userinfo = cut_userinfo_path({"calls": calls, "args": args, "kwargs": kwargs})
     ids = UserIdMap()
     projects = UserIdMap.for_projects()
     calls = synthesize_user_ids(classify_calls(calls, roles), ids, forge=forge, projects=projects)
@@ -302,6 +326,7 @@ def redact_recording(
         known=known,
         ids=ids,
         projects=projects,
+        cut_userinfo=cut_userinfo,
     )
 
 
@@ -310,6 +335,7 @@ def seal_fixture(
     *,
     denylist: Denylist,
     known: closure.Known,
+    cut_userinfo: str,
     users_in: object = None,
     sort_keys: bool = False,
 ) -> dict[str, Any]:
@@ -319,6 +345,8 @@ def seal_fixture(
         fixture: The redacted fixture; its declaration keys are replaced, at the end.
         denylist: The deny-list, opaque.
         known: The recording's known values.
+        cut_userinfo: Where the recording holds a userinfo cut by a URL reader
+            (:func:`cut_userinfo_path`), ``""`` when nowhere.
         users_in: Where the user ids are read; the whole fixture when ``None``. The live
             recorder passes its exchanges, which every user id of its result comes from.
         sort_keys: Sort the fixture's top-level keys before judging (a committed fixture that
@@ -342,6 +370,8 @@ def seal_fixture(
     if sort_keys:
         out = dict(sorted(out.items()))
     refuse_unclassified(out, denylist, known)
+    if cut_userinfo:
+        raise UnclassifiedValueError(f"url userinfo at {cut_userinfo}")
     return out
 
 
@@ -436,12 +466,22 @@ def git_env() -> dict[str, str]:
     return env
 
 
+class FixtureWriteError(Exception):
+    """The fixture cannot be written; the message names a reason, never a path.
+
+    ``fixture not written (<OSError class>)``: a file stands where the output directory goes
+    (``FileExistsError``), a permission, a full disk or any other ``OSError``.
+    """
+
+
 class OriginRemoteError(Exception):
     """The checkout's ``origin`` remote cannot be read; the message names a reason, never a path, a remote or git's output.
 
     ``origin remote: unreadable (<reason>)``, the reason being ``git missing``, ``timeout``,
-    ``cannot run (<OSError class>)``, ``not UTF-8``, ``empty answer`` or ``exit <n>`` (a refusal
-    of git itself: no repository, a dubious owner, a broken configuration).
+    ``cannot run (<class>)`` (an ``OSError``, or ``NotARepositoryError`` when git or the checkout
+    goes while the recording runs), ``not UTF-8``, ``empty answer`` or ``exit <n>`` (a refusal
+    of git itself: a directory that is missing or no repository, a dubious owner, a broken
+    configuration).
     """
 
 
@@ -523,6 +563,24 @@ def _author_of(forge: Forge, method: str, args: list[Any]) -> str | None:
         return None
 
 
+def _forge_of(forge_name: str, cwd: Path, bot: str | None = None) -> Forge:
+    """The forge of ``cwd`` (:func:`repoach.forge.select.select_forge`), its ``git`` failures named.
+
+    Selecting a forge runs ``git`` in ``cwd`` too, and its error prints the checkout's path.
+
+    Raises:
+        OriginRemoteError: ``git`` or ``cwd`` went after the remote was read.
+        ForgeError: The forge cannot be selected.
+        repoach.project.config.ConfigError: ``repoach.toml`` or an environment value is invalid.
+    """
+    try:
+        return select_forge(override=forge_name, cwd=cwd, bot_username=bot)
+    except NotARepositoryError as exc:
+        reason = f"cannot run ({type(exc).__name__})"
+        _log.warning("recorder.origin_unreadable", reason=reason)
+    raise OriginRemoteError(f"origin remote: unreadable ({reason})")
+
+
 def _replay(
     forge_name: str,
     cwd: Path,
@@ -534,7 +592,7 @@ def _replay(
     normalize: Callable[[str], str] | None = None,
 ) -> tuple[object, str | None]:
     """Recompute the result from the redacted exchanges so the fixture stays self-consistent."""
-    forge = select_forge(override=forge_name, cwd=cwd, bot_username=bot)
+    forge = _forge_of(forge_name, cwd, bot)
     forge._spawn = ReplaySpawn([Exchange.from_json(c) for c in calls], normalize)
     try:
         return serialize_result(getattr(forge, method)(*typed_args, **typed_kwargs)), None
@@ -580,9 +638,17 @@ def record_live(
             recording does not hold); nothing is written and the message names no value.
         TypeError: ``args`` or ``kwargs`` do not fit the method's signature, raised by the
             live call before anything is recorded.
+        ValueError: The method refuses an argument or cannot read an answer (an answer that is
+            no UTF-8 or no JSON, a model the answer does not fit); nothing is written.
+        OSError: The forge's CLI is installed and cannot be started; nothing is written.
         UnclassifiedValueError: Anything the judge refuses, ``nesting too deep`` included.
-        DenylistError: The maintainer's deny-list is malformed (an entry too short, a comma).
-        OriginRemoteError: The checkout's ``origin`` remote cannot be read.
+        DenylistError: The maintainer's deny-list cannot be judged with: its file exists but
+            cannot be read (a dangling symlink, a directory, a permission, an encoding), an
+            entry is too short, or the variable holds a comma.
+        OriginRemoteError: The checkout's ``origin`` remote cannot be read: ``git`` is missing,
+            ``cwd`` is missing or no repository, or git refuses it. Read first, before the forge
+            is selected, so nothing runs against the forge.
+        FixtureWriteError: The fixture cannot be written under ``out_root``.
         SyntheticIdsExhaustedError: The recording needs a synthetic id past its range.
         NeedleError: A structured value is a class word or a placeholder.
         ForgeError: The forge cannot be selected: ``ForgeUnavailableError`` when its CLI is not
@@ -656,11 +722,31 @@ def _record(
         "raises": raises,
     }
     fixture = seal_fixture(
-        fixture, denylist=denylist, known=redacted.known, users_in=redacted.calls
+        fixture,
+        denylist=denylist,
+        known=redacted.known,
+        cut_userinfo=redacted.cut_userinfo,
+        users_in=redacted.calls,
     )
     path = out_root / forge_name / f"{case}.json"
-    dump_fixture(path, fixture)
+    _write(path, fixture)
     return path
+
+
+def _write(path: Path, fixture: dict[str, Any]) -> None:
+    """Write the sealed fixture.
+
+    Raises:
+        FixtureWriteError: Any ``OSError`` of the write, by its class.
+    """
+    try:
+        dump_fixture(path, fixture)
+    except OSError as exc:
+        reason = type(exc).__name__
+        _log.warning("recorder.not_written", error=reason)
+    else:
+        return
+    raise FixtureWriteError(f"fixture not written ({reason})")
 
 
 def _refuse_unrecordable(method: str) -> None:
@@ -694,15 +780,16 @@ class _Live:
 def _collect(
     *, forge_name: str, cwd: Path, method: str, args: list[Any], kwargs: dict[str, Any]
 ) -> _Live:
-    """Run the method once against the forge, recording every exchange; read the remote and the author.
+    """Read the remote, then run the method once against the forge, recording every exchange; read the author.
 
     Raises:
         TypeError: ``args`` or ``kwargs`` do not fit the method's signature.
+        OriginRemoteError: The ``origin`` remote cannot be read; the forge is never selected.
         ForgeError: The forge cannot be selected.
-        OriginRemoteError: The ``origin`` remote cannot be read.
     """
     typed_args, typed_kwargs = coerce_call(method, args, kwargs)
-    forge = select_forge(override=forge_name, cwd=cwd)
+    remote = origin_url(cwd)
+    forge = _forge_of(forge_name, cwd)
     author = _author_of(forge, method, args)
     recorder = RecordingSpawn(inner=forge._spawn)
     forge._spawn = recorder
@@ -713,7 +800,7 @@ def _collect(
         raises = type(exc).__name__
     calls = [e.to_json() for e in recorder.exchanges]
     raw: list[object] = [copy.deepcopy(calls), copy.deepcopy(args), copy.deepcopy(kwargs)]
-    return _Live(forge, calls, raw, raises, origin_url(cwd), author)
+    return _Live(forge, calls, raw, raises, remote, author)
 
 
 def _redact_by_field(calls: list[dict[str, Any]], trim: int | None) -> list[dict[str, Any]]:
@@ -887,29 +974,38 @@ def fixture_roles(data: dict[str, object], also: Sequence[str] = ()) -> dict[str
 
 
 def _rename(node: object, roles: dict[str, str]) -> Any:
-    """Replace ``roles`` logins under login keys and as mentions; JSON stdout is walked inside."""
+    """Apply the roles to a committed fixture: the live rule on every string, the fixture's shape kept.
+
+    :func:`repoach.forge.recording.classify_logins` is the one rule, live and offline (PR #319
+    round 10, 4683464072): a login key is looked up casefolded, any other string, an argument
+    included, has each login replaced as a token. Only the walk is the offline transform's own,
+    since a committed fixture is more than the exchanges :func:`classify_calls` reads: its
+    exchanges may stand anywhere (a ``gate/`` capture), it holds a ``result`` and a
+    ``bot_username`` to rename, and ``case`` and an ``args`` member that is no string stay as
+    they stand (the judge refuses a login there).
+    """
     if isinstance(node, dict):
         out: dict[str, object] = {}
         for key, item in node.items():
-            if (key in LOGIN_KEYS or key == "bot_username") and isinstance(item, str):
-                out[key] = roles.get(item, item)
-            elif key == "stdout" and isinstance(item, str):
+            if key == "stdout" and isinstance(item, str):
                 values = decode_json_values(item)
-                renamed = [_rename(v, roles) for v in (values or [])]
-                out[key] = item if values is None or renamed == values else _dumps(renamed)
+                renamed = classify_logins(item if values is None else values, roles)
+                out[key] = renamed if values is None else _dumps(renamed)
             elif key == "args" and isinstance(item, list):
-                out[key] = [
-                    rename_logins_in_argument(a, roles) if isinstance(a, str) else a for a in item
-                ]
+                out[key] = [classify_logins(a, roles) if isinstance(a, str) else a for a in item]
             elif key == "case" and isinstance(item, str):
                 out[key] = item
+            elif key == "bot_username":
+                out[key] = classify_logins({"login": item}, roles)["login"]
             elif isinstance(item, str):
-                out[key] = rename_logins_in_text(item, roles)
+                out[key] = classify_logins({key: item}, roles)[key]
             else:
                 out[key] = _rename(item, roles)
         return out
     if isinstance(node, list):
         return [_rename(v, roles) for v in node]
+    if isinstance(node, str):
+        return classify_logins(node, roles)
     return node
 
 
@@ -990,7 +1086,7 @@ def fixture_known(
         roles: The fixture's login -> class word.
         remote: The checkout's ``origin`` remote, when the caller has one.
         denylist: The deny-list; the maintainer's
-            (:func:`repoach.forge.denylist.read_denylist`) when ``None``, never an empty one.
+            (:func:`repoach.core.denylist.read_denylist`) when ``None``, never an empty one.
         ids: The corpus's user-id map; a fresh one when ``None``.
         projects: The corpus's repository-id map; a fresh one when ``None``.
         forge: ``github`` or ``gitlab``.
@@ -1060,7 +1156,7 @@ def redact_fixture(
     recorder refuses it (0.21, B3), never crashed on. The deny-list fails
     closed: omitted, it is the maintainer's, as in :func:`redact_corpus` and
     :func:`repoach.forge.fixture_judge.refuse_unclassified`; a caller that
-    means no deny-list passes an empty :class:`repoach.forge.denylist.Denylist`.
+    means no deny-list passes an empty :class:`repoach.core.denylist.Denylist`.
 
     Args:
         data: The fixture as committed.
@@ -1068,7 +1164,7 @@ def redact_fixture(
         forge: ``github`` or ``gitlab``.
         projects: The corpus's repository-id map; a fresh one when ``None``.
         remote: The checkout's ``origin`` remote, when the caller has one.
-        denylist: The deny-list; :func:`repoach.forge.denylist.read_denylist` when ``None``.
+        denylist: The deny-list; :func:`repoach.core.denylist.read_denylist` when ``None``.
 
     Returns:
         The redacted fixture, judged by the closure oracle.
@@ -1116,6 +1212,7 @@ def _redact_fixture(
     for key in ("args", "kwargs", "result"):
         if key in out:
             out[key] = redact_urls_in_value(out[key])
+    cut_userinfo = cut_userinfo_path(out)
     roles = fixture_roles(out, also=raw_logins(data.get("calls")))
     if roles:
         out = _rename(out, roles)
@@ -1131,7 +1228,11 @@ def _redact_fixture(
     out = _source(out, forge)
     try:
         return seal_fixture(
-            out, denylist=denylist, known=known, sort_keys=list(data) == sorted(data)
+            out,
+            denylist=denylist,
+            known=known,
+            cut_userinfo=cut_userinfo,
+            sort_keys=list(data) == sorted(data),
         )
     except UnclassifiedValueError as exc:
         raise ResidualValueError(str(exc)) from exc
@@ -1181,7 +1282,7 @@ def redact_corpus(root: Path, *, check: bool, denylist: Denylist | None = None) 
     Args:
         root: The fixture corpus.
         check: Write nothing; only say which files would change.
-        denylist: The deny-list (:func:`repoach.forge.denylist.read_denylist` when ``None``).
+        denylist: The deny-list (:func:`repoach.core.denylist.read_denylist` when ``None``).
 
     Returns:
         The files that changed, or would change under ``check``.
