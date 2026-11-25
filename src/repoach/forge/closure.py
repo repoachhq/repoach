@@ -34,6 +34,7 @@ from .closure_tables import (
     PUBLIC_SUFFIXES,
     REVERSE_DNS_HEADS,
     RFC5737_NETWORKS,
+    TENANT_ROUTE_PUBLIC,
     TENANT_ROUTES,
     UNSPECIFIED_BROADCAST,
 )
@@ -252,36 +253,49 @@ def is_public_host(host: str) -> bool:
 
 
 def is_tenant_path(host: str, path: str) -> bool:
-    """Whether ``path`` on the public ``host`` opens a tenant surface (:data:`TENANT_ROUTES`).
+    """Whether ``path`` on the public ``host`` opens a tenant surface or names an account.
+
+    Read by the one grammar of :func:`has_tenant_path` on ``<host>/<path>``, in every decoded
+    form of the path, so the redactor rewrites exactly the URLs the oracle refuses.
 
     Args:
         host: A public host, in any case.
         path: The URL path after the host, its leading ``/`` included or not.
 
     Returns:
-        ``True`` when the first segment of ``path`` is a tenant route of ``host``'s suffix and a
-        segment follows it (``stackoverflow.com/c/<team>``), or when ``host``'s suffix is an
-        :data:`ACCOUNT_NAMESPACES` one and the path's namespace segment (after an optional
-        ``v2``) starts with its lead and is not one no account holds (``ghcr.io/<owner>/…``).
+        ``True`` when a route of :data:`TENANT_ROUTES` with its identity segment, or an
+        :data:`ACCOUNT_NAMESPACES` namespace, stands after ``host`` (``stackoverflow.com/c/<team>``,
+        ``ghcr.io/<owner>/…``, ``pkg.go.dev/github.com/<owner>/…``).
     """
     folded = _canonical_host(host)
-    segments = [s for s in path.split("/") if s]
-    for suffix, routes in TENANT_ROUTES.items():
-        under = folded == suffix or folded.endswith("." + suffix)
-        if under and len(segments) >= 2 and segments[0].casefold() in routes:
-            return True
-    namespaces = segments[1:] if segments[:1] and segments[0].casefold() == "v2" else segments
-    for suffix, (lead, public) in ACCOUNT_NAMESPACES.items():
-        if not (folded == suffix or folded.endswith("." + suffix)) or not namespaces:
-            continue
-        namespace = namespaces[0].casefold()
-        if namespace.startswith(lead) and namespace[len(lead) :] and namespace not in public:
-            return True
-    return False
+    return any(
+        has_tenant_path(f"{folded}/{form.lstrip('/')}") for form in decoded_forms(path or "")
+    )
 
 
 _SEGMENT_END = "/\\s?#\"'<>"
 """What ends a path segment read lexically: ``/``, whitespace, a query or fragment mark and the prose delimiters."""
+
+
+def _route_pattern(suffix: str, route: str) -> str:
+    """The pattern of one :data:`TENANT_ROUTES` route after its host: its segments, then its identity.
+
+    ``*`` is any one segment. The identity is the segment after the route, unless it is one of
+    the route's public words (:data:`TENANT_ROUTE_PUBLIC`); a route ending in ``*:`` reads it in
+    the same segment instead, ``<namespace>:<title>``, a namespace of letters and digits (``_``
+    inside) whose title is not led by ``_`` (``Mission:_Impossible`` is an article), unless the
+    namespace, or its ``_talk`` namespace, is public.
+    """
+    parts = route.split("/")
+    public = sorted(TENANT_ROUTE_PUBLIC.get(f"{suffix} {route}", frozenset()))
+    named = parts[-1] == "*:"
+    head = parts[:-1] if named else parts
+    lead = "/+".join(rf"[^{_SEGMENT_END}]+" if p == "*" else re.escape(p) for p in head)
+    if named:
+        exempt = "".join(rf"(?!{re.escape(word)}(?:_talk)?:)" for word in public)
+        return rf"{lead}/+{exempt}[^\W_]\w*:[^_{_SEGMENT_END}]"
+    exempt = "".join(rf"(?!{re.escape(word)}[.,;:!)\]]*(?:[{_SEGMENT_END}]|$))" for word in public)
+    return rf"{lead}/+{exempt}[^{_SEGMENT_END}]"
 
 
 def _tenant_route_re() -> re.Pattern[str]:
@@ -289,19 +303,19 @@ def _tenant_route_re() -> re.Pattern[str]:
 
     The host is the suffix or any name under it, not preceded by a letter, digit or ``-``
     (``xstackoverflow.com`` is another host); an optional trailing dot and ``:<port>`` follow,
-    then ``/`` (one or more) and, for :data:`TENANT_ROUTES`, the route word, ``/`` and a
-    segment, or, for :data:`ACCOUNT_NAMESPACES`, an optional ``v2/`` and a namespace segment
-    led by its lead that is not one no account holds (``docker.io/library/…`` is public; a
-    namespace followed by ``:``, as in ``ghcr.io/<owner>:tag``, is still read). Nothing before
-    the host is required, so a scheme, ``//``, a bare host and a Markdown link are one case.
-    The suffix is matched first and the labels before it are never read, so the scan stays
-    linear.
+    then ``/`` (one or more) and, for :data:`TENANT_ROUTES`, the route and its identity
+    (:func:`_route_pattern`), or, for :data:`ACCOUNT_NAMESPACES`, an optional ``v2/`` and a
+    namespace segment led by its lead that is not one no account holds
+    (``docker.io/library/…`` is public; a namespace followed by ``:``, as in
+    ``ghcr.io/<owner>:tag``, is still read). Nothing before the host is required, so a scheme,
+    ``//``, a bare host and a Markdown link are one case. The suffix is matched first and the
+    labels before it are never read, so the scan stays linear.
     """
     alternatives = []
     host = r"\.?(?::[0-9]*)?/+"
     for suffix, routes in sorted(TENANT_ROUTES.items()):
-        words = "|".join(re.escape(word) for word in sorted(routes))
-        alternatives.append(rf"{re.escape(suffix)}{host}(?:{words})/+[^{_SEGMENT_END}]")
+        paths = "|".join(_route_pattern(suffix, route) for route in sorted(routes))
+        alternatives.append(rf"{re.escape(suffix)}{host}(?:{paths})")
     for suffix, (lead, public) in sorted(ACCOUNT_NAMESPACES.items()):
         ends = rf"(?:[{_SEGMENT_END}:@]|$)"
         exempt = "".join(rf"(?!{re.escape(word)}{ends})" for word in sorted(public))
@@ -327,6 +341,30 @@ def has_tenant_path(text: str) -> bool:
         ``True`` when a tenant route of :data:`TENANT_ROUTES` stands after its host.
     """
     return _TENANT_ROUTE_RE.search(text) is not None
+
+
+def tenant_identities(text: str) -> list[str]:
+    """The identity segment of every tenant route or account namespace in ``text``, in order.
+
+    The identity is the path segment holding the last character the route grammar reads
+    (:func:`has_tenant_path`): the segment after a route, a ``<namespace>:<title>`` segment, or
+    a namespace. The redactor checks that none survives its rewrite of a tenant URL.
+
+    Args:
+        text: The text read, one decoded form of it.
+
+    Returns:
+        Each identity segment as it stands in ``text``.
+    """
+    found = []
+    for m in _TENANT_ROUTE_RE.finditer(text):
+        last = m.end() - 1
+        begin = text.rfind("/", 0, last) + 1
+        end = last
+        while end < len(text) and text[end] not in "/?#\"'<>" and not text[end].isspace():
+            end += 1
+        found.append(text[begin:end])
+    return found
 
 
 def is_doc_mailbox_host(host: str) -> bool:

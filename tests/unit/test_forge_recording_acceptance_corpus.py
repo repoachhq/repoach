@@ -10988,6 +10988,67 @@ ROWS: tuple[Row, ...] = (
             text="bump v1.2.3 to 10.4.0-rc1; npm i pkg@1.0.0-rc1 and rails@7.1.0.rc1; open foo.py3, x.h264 and libc.so.6"
         ),
     ),
+    Row(
+        id="r7_go_module_page_on_a_forge_path_url_is_rewritten",
+        source="PR #319 review round 7 (4687852992)",
+        inp=Sample(body="see https://pkg.go.dev/github.com/kvnorg7/kvnrepo7 now"),
+        outcome=Written(text="see https://forge.example.com/org/project now"),
+        markers=("kvnorg7", "kvnrepo7"),
+    ),
+    Row(
+        id="r7_go_proxy_forge_path_bare_is_refused",
+        source="PR #319 review round 7 (4687852992)",
+        inp=Sample(body="fetch proxy.golang.org/github.com/kvnorg7/kvnrepo7/@v/list failed"),
+        outcome=Refused("tenant path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r7_npm_couchdb_user_url_is_refused",
+        source="PR #319 review round 7 (4687852992)",
+        inp=Sample(body="PUT https://registry.npmjs.org/-/user/org.couchdb.user:kvnuser7 failed"),
+        outcome=Refused("tenant path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r7_stack_overflow_profile_url_is_refused",
+        source="PR #319 review round 7 (4687852992)",
+        inp=Sample(body="see https://stackoverflow.com/users/12345/kvnuser7 for the answer"),
+        outcome=Refused("tenant path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r7_wikipedia_user_page_url_is_rewritten",
+        source="PR #319 review round 7 (4687852992)",
+        inp=Sample(body="see https://de.wikipedia.org/wiki/Benutzer:Kvnuser7 now"),
+        outcome=Written(text="see https://forge.example.com/org/project now"),
+        markers=("kvnuser7",),
+    ),
+    Row(
+        id="r7_docs_rs_owner_bare_is_refused",
+        source="PR #319 review round 7 (4687852992)",
+        inp=Sample(body="crates listed at docs.rs/releases/kvnuser7"),
+        outcome=Refused("tenant path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r7_discourse_profile_url_is_rewritten",
+        source="PR #319 review round 7 (4687852992)",
+        inp=Sample(body="asked by https://discuss.python.org/u/kvnuser7 today"),
+        outcome=Written(text="asked by https://forge.example.com/org/project today"),
+        markers=("kvnuser7",),
+    ),
+    Row(
+        id="r7_apache_committer_home_bare_is_refused",
+        source="PR #319 review round 7 (4687852992)",
+        inp=Sample(body="notes at people.apache.org/~kvnuser7/notes"),
+        outcome=Refused("tenant path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r7_public_go_npm_docs_and_wiki_pages_stay_ordinary",
+        source="PR #319 review round 7 (4687852992)",
+        inp=Sample(
+            body="see https://pkg.go.dev/golang.org/x/net/http2, https://registry.npmjs.org/lodash, https://docs.rs/releases/recent, https://en.wikipedia.org/wiki/Help:Contents and https://en.wikipedia.org/wiki/Mission:_Impossible"
+        ),
+        outcome=Written(
+            text="see https://pkg.go.dev/golang.org/x/net/http2, https://registry.npmjs.org/lodash, https://docs.rs/releases/recent, https://en.wikipedia.org/wiki/Help:Contents and https://en.wikipedia.org/wiki/Mission:_Impossible"
+        ),
+    ),
 )
 
 
@@ -11440,10 +11501,10 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
     refused = [row for row in ROWS if isinstance(row.outcome, Refused)]
     bounded = [row for row in ROWS if isinstance(row.outcome, Bounded)]
     assert (len(ROWS), len(planted), len(ordinary), len(refused), len(bounded)) == (
-        959,
-        664,
-        295,
-        110,
+        968,
+        672,
+        296,
+        115,
         2,
     )
     assert len(residual) == 25

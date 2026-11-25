@@ -840,6 +840,21 @@ def _normalize_kept_url(parts: SplitResult) -> str:
     )
 
 
+def _identity_survives(host: str, path: str, rewritten: str) -> bool:
+    """Whether an identity a tenant route names on the public ``host`` is still in ``rewritten``.
+
+    The forge route grammar places a repository's owner, not an npm registry's CouchDB user
+    (``-/user/org.couchdb.user:<login>``): such a URL is left as it stands, and the closure
+    oracle refuses it as a ``tenant path`` (PR #319 round 7, 4687852992), never written.
+    """
+    folded = rewritten.casefold()
+    return any(
+        identity.casefold() in folded
+        for form in closure.decoded_forms(path)
+        for identity in closure.tenant_identities(f"{host.casefold()}/{form.lstrip('/')}")
+    )
+
+
 def redact_urls_in_text(text: str) -> str:
     """Redact every URL, scp-style remote and forge noreply mailbox of ``text`` not on a kept host.
 
@@ -886,7 +901,10 @@ def redact_urls_in_text(text: str) -> str:
             return (redact_url(url) or url) + tail
         if _kept_host(host) and not closure.is_tenant_path(host, parts.path):
             return _normalize_kept_url(parts) + tail
-        return (redact_url(url) or url) + tail
+        rewritten = redact_url(url) or url
+        if _kept_host(host) and _identity_survives(host, parts.path, rewritten):
+            return match.group(0)
+        return rewritten + tail
 
     def _scp(match: re.Match[str]) -> str:
         host = match.group("host").casefold()
