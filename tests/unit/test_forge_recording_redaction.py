@@ -7891,6 +7891,59 @@ def test_the_denylist_test_skips_naming_the_reason_where_no_list_is_given(
     assert [s["name"] for s in with_secret] == ["Pytest — fixture deny-list"]
 
 
+def _string_literals(path: Path) -> list[str]:
+    """Every string a Python file writes, its docstrings (a module's, a function's, an attribute's) aside."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    prose = {
+        id(node.value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+    }
+    return [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in prose
+    ]
+
+
+def test_the_denylist_has_one_source() -> None:
+    """K8 (PR #319 round 9, 4689482906): the deny-list's names are written in one module, which says so.
+
+    No other module or script writes the variable's or the file's name, so a later reader (the
+    gate of SP-NO-PERSONAL-DATA-GATE) imports them; the workflow, which cannot, names the same
+    variable.
+    """
+    names = (deny_list.DENYLIST_ENV, deny_list.DENYLIST_FILE_NAME)
+    written = [
+        (path, literal)
+        for path in [*(ROOT / "src").rglob("*.py"), *(ROOT / "scripts").rglob("*.py")]
+        for literal in _string_literals(path)
+    ]
+    source = ROOT / "src" / "repoach" / "forge" / "denylist.py"
+    for name in names:
+        assert {path for path, text in written if name in text} == {source}, name
+    doc = " ".join((inspect.getdoc(deny_list) or "").split())
+    for phrase in (
+        "This module is the one source of the deny-list",
+        ":data:`DENYLIST_ENV`",
+        ":data:`DENYLIST_FILE_NAME`",
+        ":data:`DENYLIST_MIN_LENGTH`",
+        ":func:`read_denylist`",
+        "imports them from here when it lands and adds no copy",
+        ".github/workflows/ci.yml",
+    ):
+        assert phrase in doc, phrase
+    assert "A copy of" not in (inspect.getdoc(deny_list.read_denylist) or "")
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text("utf-8"))
+    restated = {
+        key
+        for step in workflow["jobs"]["test"]["steps"]
+        for key in (step.get("env") or {})
+        if "DENYLIST" in key
+    }
+    assert restated == {deny_list.DENYLIST_ENV}
+
+
 def test_the_denylist_test_is_collected_by_its_own_ci_step_only() -> None:
     """O2, D6 (PR #319 round 6, 4683465477): the deny-list test is collected once per CI job.
 
