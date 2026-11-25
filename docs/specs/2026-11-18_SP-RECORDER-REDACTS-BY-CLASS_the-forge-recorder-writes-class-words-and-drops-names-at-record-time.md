@@ -1,7 +1,7 @@
 ---
 id: SP-RECORDER-REDACTS-BY-CLASS
 title: The forge recorder replaces every login by its class word, drops names and avatars, makes user ids synthetic at record time, and refuses a fixture it cannot classify
-version: 0.28
+version: 0.29
 status: approved
 author: agent
 created: 2026-11-18
@@ -1914,6 +1914,104 @@ test. The docstrings of `repoach.core.text_forms` state every parameter and
 value, and the order of `decoded_forms`. Counts: 1 010 rows = 705 planted +
 305 ordinary = 871 written + 137 refused + 2 bounded, 25 residuals.
 
+Amendment (0.29, 2026-11-25): review round 10 of PR #319, the nine threads an
+audit of the answered ones left open.
+
+(a) **D8, no remainder of a userinfo is written** (4683464677, 4688674758). A
+text URL ended at a delimiter a password may hold (`]`, `[`, `|`, `\`, a
+backtick, a quote, `<`, `>`, a comma, a brace), so
+`https://deploy:S3cr]t@localhost/db` was rewritten to
+`https://forge.example.com]t@localhost/db`: the rest of the password was
+written, and the rewrite hid the userinfo from the judge, which then read
+`forge.example.com]t` on a documentation host. Three rules replace the list of
+delimiters. The redactor reads the authority by RFC 3986, not the delimiter:
+when the URL is cut and an `@` follows in the same whitespace-free run, in any
+encoding, it is left whole (`_cuts_userinfo`), unless the authority is a whole
+`<host>[:<port>]` ended by `/`, `?` or `#` inside the URL, or by `"`, `<`, `>` or
+a no-break space on an allowed host. The oracle ends an authority at `/`, `<`,
+`>`, `"` or an encoded space only when `<host>[:<port>]` stands before it
+(`_past_authority`), otherwise the userinfo runs to the last `@` of the run, and
+a userinfo that is none by RFC 3986 grammar is refused on every host
+(`is_cut_userinfo`), a passwordless one too. And what the redactor leaves, or a
+userinfo in the text right after the URL redaction, is refused before any login,
+id or known value is replaced, live and offline through the one `seal_fixture`
+(`cut_userinfo_path`): a learnt host would turn `redis://deploy:12/<pw>@<host>`
+into a host and a path. Placeholders in angle brackets
+(`<user>:<password>`, `<host>:<port>`) are not a userinfo, and `"https://"`
+closes the quote it opens with. Any scheme is in the class; `jdbc:` before one
+too. Not in it: a `//<user>:<pw>@<host>` with no scheme and Oracle's
+`jdbc:oracle:thin:<u>/<pw>@…`, which hold no `<scheme>://`. Measured: the audit's
+fuzz (seed 28, 1 500 texts) 46 written with a password part at `44b27e8`, live
+and offline, 0 here; 40 000 more texts over five seeds, 0; a wider generator
+(30 schemes, 9 users, 11 hosts, 12 wraps, plain, percent-, entity- and
+string-escaped delimiters and `@`), where every text still written is one of the
+two residuals of NG4-18 or a passwordless user on a documentation host. Real
+text (2.03 million lines of the repository and its site-packages, 6 100 of them
+holding a URL): 9 lines older than the round go from written to refused, all of them examples of a
+userinfo or a `http://host:port`. Named costs: a one-label or private host
+before a delimiter with an `@` later in the same run, `http://host:port`.
+
+(b) **D8, the last label** (4687852986). Led, a last label may be led by a digit
+(`u@ci.1node`, `redis://cache.1dc`), but for a version (the first label is digits,
+a `v` before them or not); in a URL's authority it may be one character. Measured
+on 37 107 real lines: 0 more refused. A one-character last label after a
+mailbox's `@` would refuse 2 lines (`x@y.z`, `t@t.t`), the ordinary row
+`r8_an_at_in_a_query_or_a_fragment_is_ordinary` (`a@b.c`) and Python's `A@B.T`:
+it is NG4-17.
+
+(c) **D4, the recorder's named refusals** (4681868948). The origin remote is read
+before the forge is selected, so a missing `git`, a `--cwd` that is missing or no
+repository is exit 2 `origin remote: unreadable (<reason>)` on the real path of
+`main()`, where `select_forge` raised first (a traceback, rc 1, the checkout's
+path printed). A write that fails is `FixtureWriteError`, exit 2 `fixture not
+written (<OSError class>)`. `record_live` lists every exception that escapes it.
+Nine tests recorded from a scratch directory that was no checkout and were red
+wherever it stood outside a git repository; they record from a real one.
+
+(d) **D8, combining marks** (4684965361). A label holds the marks IDNA admits
+(`Mn`, `Mc`, read from the Unicode categories) and its exceptions after a letter
+or a digit, never first, and no variation selector, so a mailbox, an scp remote
+and a `//` host in every script that writes vowels as marks are read. Emoji
+domains (IDNA 2003 only) stay unread without a scheme.
+
+(e) **D8, account pages** (4687852992). `TENANT_ROUTES` and `TENANT_QUERIES` gain
+the forms of the audit that a vendor page documents, its URL beside each row:
+pkg.go.dev's badge, module, file and API routes and its search, the Go proxy's
+`cached-only`, `gopkg.in/<user>/…` and `framagit.org`, Roundup's `user<id>`,
+Apache's phonebook, Pontoon, NuGet's and npm's search qualifiers, Prow, and
+MediaWiki's `ucuser` and `ususers`. Not added, no source found:
+`www.python.org/users/<u>` (the current source has no such route),
+`people.mozilla.org/~<u>`, `blog.mozilla.org/author/<u>`,
+`www.npmjs.com/search?q=maintainer:<u>` (the page answers 403). The claim of (n)
+that every allowlisted host was audited is withdrawn: the tables hold the forms
+found and sourced.
+
+(f) **D3, home paths** (4684965373). A Windows profile's `users` is read in any
+case, a separator may be doubled, and Docker Desktop's `/host_mnt/<drive>/Users`
+and `/run/desktop/mnt/host/<drive>/Users` are read; the gate spec's D1 copy
+follows.
+
+(g) **K8, one module outside the forge** (4688673733). The deny-list's reader,
+names and contract move to `repoach.core.denylist`, which imports no forge
+module. The comment of `ci.yml` still names the old path (a workflow the factory
+does not edit).
+
+(h) **D4, one renaming rule** (4683464072). The offline transform applies
+`classify_logins`, the live rule, to every string; `rename_logins_in_text` and
+`rename_logins_in_argument` are deleted. The two drifts close: a login spelt in
+two cases was `unclassified` offline, and a login inside an argument was left to
+the judge. The walk stays apart because a committed fixture is more than its exchanges
+(`bot_username`, `result`, a `gate/` capture), and a test holds both sides to the
+same written strings.
+
+(i) **Not done, the owner's choice** (4681867295). `select_forge` runs `git`
+twice through `repoach.core.paths` with the whole environment. That code serves
+every command of the package, so a reduced environment there is not this spec's
+to impose.
+
+Counts: 1 108 rows = 796 planted + 312 ordinary = 890 written + 216 refused + 2
+bounded, 26 residuals.
+
 ## Intent
 
 Child 2 of SP-REPO-CARRIES-NO-PERSONAL-DATA. SP-SCRUB-PERSONAL-DATA-AT-HEAD
@@ -2532,7 +2630,7 @@ host, a path after a placeholder-class host, a mention of a
 non-participant whose login is a language word, an identity after a
 reserved route word, a third party's npm scope on a registry host
 that is not a GitLab instance and an API path cited in prose are the named residuals (NG4-2, NG4-3,
-NG4-8, NG4-9, NG4-10, NG4-11, NG4-12, NG4-13, NG4-14, NG4-15, NG4-16). The offline transform
+NG4-8, NG4-9, NG4-10, NG4-11, NG4-12, NG4-13, NG4-14, NG4-15, NG4-16, NG4-17, NG4-18, NG4-19). The offline transform
 does the same with the same functions (D4). The acceptance corpus is
 green live and offline, the class sweep (AC8) finds no leak outside the
 residuals and no change of ordinary text outside the documented
@@ -2597,6 +2695,9 @@ ids declared) stand.
   14. (0.22, decided under the owner's goal and the owner's list) An **identity that follows a reserved route word** is not read: GitLab's legacy `s/<user>` redirect and its admin area (`admin/users/<u>`, `admin/groups/<g>`, `admin/projects/<ns>/<r>`), Bitbucket's `snippets/<ws>/<id>`, a segment after `.well-known`. A reserved word names no one, so the path led by one is written as it stands (`uploads/-/system/…`, `help/user/profile`); the price is the name an instance's own pages carry after one, which a reviewer pastes seldom and which the generic reading replaced at 0.21 while corrupting the word before it (`uploads` → `org`). Row `v22_gitlab_s_redirect_identity_after_a_reserved_word_NG4_14` (live, the identity after `s/` written on the instance; 0.23 — this item cited the ordinary rows `v22_*_reserved_word_*`, which plant no identity after the word); named test `test_a_reserved_route_word_is_never_an_identity` (the five grammars asserted); sweep `RESERVED_WORDS` (every forge's words in two shapes). The rule is a URL path's: the recorded remote and an argv API path read `<ns>/…/<repo>` by construction (0.23 (a), 0.24 (a) and (b)).
   15. (0.23, decided under the owner's goal; 0.24: every registry, the GitLab instance included) An **npm scope read from a URL** (`https://npm.<corp>/@<scope>/<pkg>/-/<pkg>-<v>.tgz`, a Nexus or Artifactory proxy, GitLab's own `api/vN/…/packages/npm/@<scope>/…` on the instance, project and group endpoints, and the company-scope case `npm.<corp>/@<corp>/…`) is never learnt and is written as it stands, the host replaced; a scope equal to a known namespace (the remote's) is replaced as that value. A scope is as often a forwarded or proxied public one (`@babel`, `@types`, which GitLab's package forwarding brings to its own endpoints, whose project and group forms impose no scope naming) as a corporate one, and reading it as a namespace corrupts every yarn.lock line and every import of the fixture's code; the price is a third party's or the company's own scope kept in a URL and beside it. Rows `v23_scoped_tarball_on_a_private_registry_keeps_its_scope_NG4_15`, the five `v23_gitlab_npm_scope_*_is_ordinary_text_NG4_15`, `v24_company_scope_on_its_own_registry_is_ordinary_text_NG4_15` (and the controls `v23_scoped_tarball_on_a_nexus_proxy_keeps_its_scope`, `v24_forwarded_types_scope_next_to_a_gitlab_npm_url_stays_in_code`, `v24_forwarded_babel_scope_on_a_gitlab_project_endpoint_stays_in_code`, `v24_gitlab_npm_scope_equal_to_the_remote_namespace_is_replaced`); named test `test_an_npm_scope_is_never_learnt_on_any_registry` (the ordinary shapes asserted).
   16. (0.27, the owner's decision of 2026-11-24, structure versus prose) An **API path cited in prose** — `[/][api/v<N>/]repos/<o>/<r>/<REST word>…` in a body, a merge request description, a code block, a review comment's `path`/`new_path`/`old_path`, a title, a commit message, a GitLab change's `diff`, a raw (non-JSON) stdout, or a channel the call declares prose (an argv `body=`/`path=`/`title=` field, the argument of `--body`/`--title`/`--message`/`--description`, a stdin declared by `--body-file -` or `-F body=@-`, a positional argument the method's signature names `body`; 0.28) — names no one and is written as it stands; the same path in the argv, stdin, stderr, a JSON stdout field or the method's arguments is read (D7, `PROVENANCE` row `structured`), whatever words follow it (0.28: the 0.27 cited-file sentence rule is withdrawn). Reading prose cost 74 corrupted ordinary directory cells at 0.26; the price is another repository named through the GitHub API in a comment, which SP-NO-PERSONAL-DATA-GATE and its optional NER oracle cover later. Rows `v27_body_led_by_a_github_api_path_is_prose_NG4_16`, `v27_json_string_in_a_body_is_prose_NG4_16`, `v27_review_path_field_api_path_is_prose_NG4_16`, `v27_reserved_owner_api_path_in_a_body_is_prose_NG4_16`, `v27_code_block_api_path_is_prose_NG4_16`, `v27_gitlab_body_api_path_is_prose_NG4_16`, `v27_raw_stdout_led_by_an_api_path_is_prose_NG4_16`; named test `test_an_api_path_cited_in_prose_is_the_named_residual_ng4_16`; the declared channels: `test_prose_is_declared_by_the_call_never_by_its_wording`, `test_a_prose_positional_argument_is_named_by_the_method_signature`, rows `v28_*`.
+  17. (0.29) A **one-character last label after a mailbox's `@`** (`u@ci.x`) is written: it is how documentation spells a mailbox (`a@b.c`) and code a product (`A@B.T`). In a URL's authority it is a host. Row `r10_one_character_last_label_after_a_mailbox_at_NG4_17`.
+  18. (0.28 (o), 0.29) An authority that **RFC 3986 reads whole** ends where the RFC ends it: `redis://localhost:12/<x>@redis` and `https://pypi.org/<x>@redis` are a host and a path, as `http://localhost:4873/@scope/pkg` is, and so is a dotted name before a `/` with no port, a userinfo before it or not. An allowed host only, when digits stand for a port; any other is refused when an `@` follows inside a segment. A raw space that follows a user with no password ends a token.
+  19. (0.29) A **Stack Overflow share link** (`stackoverflow.com/a/<answer>/<user id>`, `/q/<question>/<user id>`) names the sharer by id and is written: no public vendor page that documents the form could be read.
 
 ## Assumptions
 
@@ -2607,17 +2708,17 @@ ids declared) stand.
 ## Interface
 
 Inputs (0.17; the 0.6–0.16 names not listed here are deleted or demoted per **What 0.17 removes or demotes**):
-- `src/repoach/forge/closure.py`: `LOCAL_CHARS`, and from `closure_tables.py` (0.28 (k)) `HOST_TLDS`, `EXTENSION_TLDS`, `REVERSE_DNS_HEADS`, `IPV4_RESERVED`, `PUBLIC_SUFFIXES` (the 25 registrable suffixes), `PUBLIC_HOSTS`, `TENANT_ROUTES`, `ACCOUNT_NAMESPACES` (0.28 (m)), `FORGE_PATH_HOSTS`, `GO_MODULE_HOSTS`, `TENANT_ROUTE_PUBLIC` (0.28 (n)), `TENANT_QUERIES` (0.28 (p)); `is_numeric_label_host(host)` (0.28 (p)), `is_placeholder_host(host)`, `is_public_host(host)`, `is_tenant_path(host, path)`, `has_tenant_path(text)` (0.28 (l)), `tenant_identities(text) -> list[str]` (0.28 (n)), `userinfos(text) -> list[Mailbox]`, `is_doc_mailbox_host(host)`, `Host(host, led, start, end, literal=False)`, `hosts(text) -> list[Host]`, `Mailbox(local, host, start, end)`, `mailboxes(text) -> list[Mailbox]`, `public_addresses(text) -> list[str]`, `forms_of(text, *, literals=())`, `is_literal_mailbox(box)`, `JUDGED_KINDS`, `Known` (an opaque, count-only repr; `values(kind)`), `residual(text, known) -> tuple[kind, n] | None`, `judge(text, known) -> Refusal | None` with `Refusal(reason, kind, n)` and reasons `residual`, `tenant path`, `unknown host`, `public address`, `unknown mailbox`, `url userinfo`.
-- `src/repoach/forge/recording.py`: `rename_logins_in_text(text, roles)`, `rename_logins_in_argument(arg, roles)`, `rewrite_recorded_source(source, forge)`, `replace_known_in_source(source, known)` (0.28 (l)), `login_sightings(values)`, `assign_roles(sightings, *, bot="", maintainer=None, author=None, held=...)` (0.28 (k)), `known_values(raw, *, roles, remote="", denylist=None, min_length=4, ids=None, projects=None, forge="github", keep_users=frozenset(), keep_projects=frozenset()) -> Known`, `replace_known(text, known, mapping=None) -> str`, `replace_known_in_value`, `replace_known_in_stdout`, `Known.mapping()`, `ReplaySpawn(exchanges, normalize=None)`, `_PROJECT_ID_RE`, `project_id_values` (D9), `_api_route(path)`, `LANGUAGE_AT_WORDS` with its parts `PYTHON_DECORATORS`, `CSS_AT_RULES`, `DOC_TAGS`, `LANGUAGE_ANNOTATIONS` (in `recording_tables.py` since 0.28 (k)), `_URL_IPV6_HOST` and `_URL_BODY` of `_URL_IN_TEXT_RE` (0.20), plus the unchanged 0.16 names of D1, D1b (demoted), D1c and D2.
-- `src/repoach/forge/fixture_pipeline.py` (0.28 (l)): `classify_calls`, `synthesize_user_ids`, `replace_known_in_calls`, `redact_recording(calls, args, kwargs, *, raw, roles, remote, denylist, forge, method) -> RedactedRecording`, `seal_fixture(fixture, *, denylist, known, users_in=None, sort_keys=False)`, and since 0.28 (m) the offline transform: `redact_fixture(data, ids=None, *, forge, projects=None, remote="", denylist=None)`, `redact_corpus(root, *, check, denylist=None)`, `fixture_known`, `fixture_roles`, `fixture_forge`, `redact_output`, `corpus_start`, `render`, `ResidualValueError`, `UnknownForgeError`, and since 0.28 (p) the live recorder: `record_live(*, forge_name, cwd, case, method, args, kwargs, trim, out_root) -> Path`, `build_roles(calls, *, bot, maintainer, author, also=())`, `origin_url(cwd) -> str`, `OriginRemoteError`, `git_env()`, `GIT_ENV_KEYS`, `WRITE_METHODS`; `repoach.forge.fixture_judge.has_secret_token(text)`, and since 0.28 (n) `find_secret_tokens(text)`, `SECRET_TOKEN_PATTERNS`, `CONSTANT_FIELDS`; `repoach.forge.denylist.Denylist.judged_with(known)`, `entry_fold(entry)` (0.28 (n)).
+- `src/repoach/forge/closure.py`: `LOCAL_CHARS`, and from `closure_tables.py` (0.28 (k)) `HOST_TLDS`, `EXTENSION_TLDS`, `REVERSE_DNS_HEADS`, `IPV4_RESERVED`, `PUBLIC_SUFFIXES` (the 25 registrable suffixes), `PUBLIC_HOSTS`, `TENANT_ROUTES`, `ACCOUNT_NAMESPACES` (0.28 (m)), `FORGE_PATH_HOSTS`, `GO_MODULE_HOSTS`, `TENANT_ROUTE_PUBLIC` (0.28 (n)), `TENANT_QUERIES` (0.28 (p)); `is_numeric_label_host(host)` (0.28 (p)), `is_placeholder_host(host)`, `is_public_host(host)`, `is_tenant_path(host, path)`, `has_tenant_path(text)` (0.28 (l)), `tenant_identities(text) -> list[str]` (0.28 (n)), `userinfos(text) -> list[Mailbox]`, `is_cut_userinfo(userinfo)`, `has_cut_userinfo(text)`, `tenant_forms(text)` (0.29), `is_doc_mailbox_host(host)`, `Host(host, led, start, end, literal=False)`, `hosts(text) -> list[Host]`, `Mailbox(local, host, start, end)`, `mailboxes(text) -> list[Mailbox]`, `public_addresses(text) -> list[str]`, `forms_of(text, *, literals=())`, `is_literal_mailbox(box)`, `JUDGED_KINDS`, `Known` (an opaque, count-only repr; `values(kind)`), `residual(text, known) -> tuple[kind, n] | None`, `judge(text, known) -> Refusal | None` with `Refusal(reason, kind, n)` and reasons `residual`, `tenant path`, `unknown host`, `public address`, `unknown mailbox`, `url userinfo`.
+- `src/repoach/forge/recording.py`: `holds_cut_url(text) -> bool` (0.29), `rewrite_recorded_source(source, forge)`, `replace_known_in_source(source, known)` (0.28 (l)), `login_sightings(values)`, `assign_roles(sightings, *, bot="", maintainer=None, author=None, held=...)` (0.28 (k)), `known_values(raw, *, roles, remote="", denylist=None, min_length=4, ids=None, projects=None, forge="github", keep_users=frozenset(), keep_projects=frozenset()) -> Known`, `replace_known(text, known, mapping=None) -> str`, `replace_known_in_value`, `replace_known_in_stdout`, `Known.mapping()`, `ReplaySpawn(exchanges, normalize=None)`, `_PROJECT_ID_RE`, `project_id_values` (D9), `_api_route(path)`, `LANGUAGE_AT_WORDS` with its parts `PYTHON_DECORATORS`, `CSS_AT_RULES`, `DOC_TAGS`, `LANGUAGE_ANNOTATIONS` (in `recording_tables.py` since 0.28 (k)), `_URL_IPV6_HOST` and `_URL_BODY` of `_URL_IN_TEXT_RE` (0.20), plus the unchanged 0.16 names of D1, D1b (demoted), D1c and D2.
+- `src/repoach/forge/fixture_pipeline.py` (0.28 (l)): `classify_calls`, `synthesize_user_ids`, `replace_known_in_calls`, `redact_recording(calls, args, kwargs, *, raw, roles, remote, denylist, forge, method) -> RedactedRecording`, `cut_userinfo_path(recording) -> str` (0.29), `seal_fixture(fixture, *, denylist, known, cut_userinfo, users_in=None, sort_keys=False)`, `FixtureWriteError` (0.29), and since 0.28 (m) the offline transform: `redact_fixture(data, ids=None, *, forge, projects=None, remote="", denylist=None)`, `redact_corpus(root, *, check, denylist=None)`, `fixture_known`, `fixture_roles`, `fixture_forge`, `redact_output`, `corpus_start`, `render`, `ResidualValueError`, `UnknownForgeError`, and since 0.28 (p) the live recorder: `record_live(*, forge_name, cwd, case, method, args, kwargs, trim, out_root) -> Path`, `build_roles(calls, *, bot, maintainer, author, also=())`, `origin_url(cwd) -> str`, `OriginRemoteError`, `git_env()`, `GIT_ENV_KEYS`, `WRITE_METHODS`; `repoach.forge.fixture_judge.has_secret_token(text)`, and since 0.28 (n) `find_secret_tokens(text)`, `SECRET_TOKEN_PATTERNS`, `CONSTANT_FIELDS`; `repoach.forge.denylist.Denylist.judged_with(known)`, `entry_fold(entry)` (0.28 (n)).
 - `src/repoach/forge/fixture_reading.py` (0.28 (n)): `RECORDED_FIELDS`, `FIXTURE_SCHEMA_KEYS`, `CODE_KEYS`, `LOGIN_KEYS`, `CLASS_WORD_RE`, `NON_PERSON_LOGINS`, `SECRET_KEY_RE`, `SYNTHETIC_IDS_KEY`, `SYNTHETIC_PROJECT_IDS_KEY`, `RECORDED_SOURCE_HEAD_RE`, `is_classified_login(login)`, `login_values(payload, path="")`, `decode_json_values(text)`, `secret_keys(value)`, `fixture_strings(value, path)`, `scanned_strings(fixture)`.
-- `src/repoach/core/text_forms.py` (0.28 (o), standard library only): `decoded_forms(text) -> list[str]`, `ascii_labels(text) -> str`, `folds(text) -> tuple[str, ...]`, `node_id_numbers(text) -> list[str]`, `token_pattern(word)`, `folded_forms(text) -> list[str]`; `repoach.forge.recording.userinfo_crosses_path(url) -> bool` (0.28 (o)); `repoach.forge.denylist.KnownValues`.
+- `src/repoach/core/text_forms.py` (0.28 (o), standard library only): `decoded_forms(text, *, keep_encoded_spaces=False) -> list[str]` and `ENCODED_SPACE` (0.29), `ascii_labels(text) -> str`, `folds(text) -> tuple[str, ...]`, `node_id_numbers(text) -> list[str]`, `token_pattern(word)`, `folded_forms(text) -> list[str]`; `repoach.forge.recording.userinfo_crosses_path(url) -> bool` (0.28 (o)); `repoach.core.denylist.KnownValues` (the module since 0.29).
 - `scripts/record_forge_fixture.py`: `main(argv=None)`, `FIXTURE_ROOT`, the CLI unchanged; the recorder is `fixture_pipeline.record_live` (0.28 (p)).
 - `scripts/redact_forge_fixtures.py`: `redact_fixture(data, ids=None, *, forge, projects=None, remote="", denylist=None)`, `fixture_known(data, *, roles=None, remote="", denylist=None, ids=None, projects=None, forge="github")` (`None` is the maintainer's deny-list since 0.28 (k)), `fixture_roles(data, also=())`, `ResidualValueError`, `run`, the CLI unchanged.
 
 Outputs: a fixture file, or exit 2 with one of `unclassified: <path>`, `generic class home_path at <path>`, `deny-list entry <n> at <path>`, `deny-list entry <n>: too short`, `residual <kind> <n> at <path>` (kinds `login`, `host`, `segment`, `id`, `name`, `mailbox`), `tenant path at <path>`, `unknown host at <path>`, `public address at <path>`, `unknown mailbox at <path>`, `url userinfo at <path>`, `refusing to record <method>: no protocol method has that name`, `needle <kind> <n>: too short`, `needle <kind> <n>: a class word or placeholder`, `synthetic user id <n> past 1999`, `synthetic project id <n> past 2999`, `secret-shaped value at <path>`, `nesting too deep: the recording cannot be walked` (0.21, a `RecursionError` of any reader; `origin remote: unreadable (<reason>)`, 0.28 (p); offline `nesting too deep: the fixture cannot be walked`) on stderr, stdout empty. `generic class mailbox`, `generic class public_ipv4` and `unredacted host` are no longer written by anything.
 
-Errors: `UnclassifiedValueError`, `DenylistError`, `OriginRemoteError` (0.28 (p)), `UnknownForgeError`, `NeedleError`, `ResidualValueError`, `SyntheticIdsExhaustedError` as at 0.16; every message carries a kind, an ordinal or a path, never a value.
+Errors: `UnclassifiedValueError`, `DenylistError`, `OriginRemoteError` (0.28 (p)), `FixtureWriteError` (0.29), `UnknownForgeError`, `NeedleError`, `ResidualValueError`, `SyntheticIdsExhaustedError` as at 0.16; every message carries a kind, an ordinal or a path, never a value.
 
 ## Behavior
 
@@ -2758,6 +2859,9 @@ login and a deny-list entry (`pos_*`, `deny_in_*`).
 | the unchanged 0.6–0.16 tests of `test_forge_recording_redaction.py` not retired in **What 0.17 removes or demotes** | D1, D1c, D2, D5, D6, the deny-list route and opacity, the conformance replay | as at 0.16 |
 | `tests/unit/test_forge_recording_regression_corpus.py` (0.14–0.16) | folded into the acceptance corpus and deleted (0.17): its rows are the `reg_*` rows | as at 0.16 |
 | `tests/unit/test_forge_conformance.py` (existing) | D4, C2 | as at 0.6 |
+| `tests/unit/test_forge_closure.py::test_no_delimiter_leaves_the_rest_of_a_userinfo_in_the_text`, `::test_a_userinfo_is_refused_when_it_is_none_by_grammar`, `::test_the_redactor_never_rewrites_a_url_that_may_stop_inside_a_userinfo`, `::test_the_readers_of_a_userinfo_stay_linear_in_a_run_without_whitespace`, `::test_a_led_host_takes_a_last_label_led_by_a_digit`, `::test_a_label_holds_the_combining_marks_idna_admits`, `::test_the_account_pages_read_from_a_vendor_source_are_refused` (0.29) | D8, 0.29 (a), (b), (d), (e): every delimiter by scheme, host and encoding; the residuals NG4-17 and NG4-18 |
+| `tests/unit/test_forge_recording_redaction.py::test_the_recorder_names_why_it_cannot_read_a_checkout_on_its_real_path`, `::test_a_forge_selected_without_git_is_the_same_named_refusal`, `::test_a_fixture_that_cannot_be_written_is_a_named_refusal`, `::test_a_windows_profile_is_a_home_path_in_any_case_and_with_a_doubled_separator`, `::test_live_and_offline_rename_a_login_by_the_same_rule` (0.29) | 0.29 (c), (f), (h) |
+| `tests/unit/test_forge_recording_acceptance_corpus.py` rows `r10_url_*`, `r10_audit_fuzz_*`, `r10_host_*`, `r10_idn_*`, `r10_account_page_*`, `r10_home_path_*` and their ordinary siblings (0.29: 98 rows, 89 of the 90 planted ones written with a marker at `44b27e8`) | 0.29 (a) to (f), live and offline |
 
 ## Success conditions
 
