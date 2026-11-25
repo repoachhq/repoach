@@ -1,7 +1,7 @@
 """Acceptance corpus of SP-RECORDER-REDACTS-BY-CLASS 0.17: one row, one input, one outcome.
 
-Every row runs through the public ``record`` path of
-``scripts/record_forge_fixture.py`` against a fake forge (live) and
+Every row runs through :func:`repoach.forge.fixture_pipeline.record_live`, the public
+path of ``scripts/record_forge_fixture.py``, against a fake forge (live) and
 through :func:`repoach.forge.fixture_pipeline.redact_fixture`, the offline
 transform ``scripts/redact_forge_fixtures.py`` runs (offline). Each row carries exactly one expected outcome:
 
@@ -11489,17 +11489,17 @@ def _fake_forge(inp: Sample, tmp_path: Path, bot: str | None = None) -> Forge:
 def _record_live(
     row: Row, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> tuple[str, str, dict[str, Any] | None]:
-    """Run the row through ``record()``: the public live path, every helper real but the forge."""
+    """Run the row through ``record_live()``: the public live path, every helper real but the forge."""
     inp = row.inp
     monkeypatch.setenv(deny_list.DENYLIST_ENV, "\n".join(inp.deny))
     monkeypatch.setattr(
-        REC, "select_forge", lambda **kw: _fake_forge(inp, tmp_path, kw.get("bot_username"))
+        OFF, "select_forge", lambda **kw: _fake_forge(inp, tmp_path, kw.get("bot_username"))
     )
-    monkeypatch.setattr(REC, "origin_url", lambda _cwd: inp.remote)
-    monkeypatch.setattr(REC, "_author_of", lambda *_a: inp.author)
+    monkeypatch.setattr(OFF, "origin_url", lambda _cwd: inp.remote)
+    monkeypatch.setattr(OFF, "_author_of", lambda *_a: inp.author)
     out_root = tmp_path / "out" / row.id
     try:
-        path = REC.record(
+        path = OFF.record_live(
             forge_name=inp.forge,
             cwd=tmp_path,
             case=inp.case,
@@ -11822,6 +11822,11 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
         if isinstance(row.outcome, Written) and not row.markers and "NG4" in row.id
     ]
     assert all(row.residual for row in unmarked), [row.id for row in unmarked if not row.residual]
+
+
+def test_the_corpus_runs_the_function_the_script_runs() -> None:
+    """PR #319 round 9 (4689482897): the script's one recorder is the pipeline's, so a row needs no script."""
+    assert REC.record_live is OFF.record_live
 
 
 def test_acceptance_corpus_live_and_offline(

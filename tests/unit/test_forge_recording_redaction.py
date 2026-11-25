@@ -419,7 +419,7 @@ def test_logins_are_classified_in_stdout_and_argv_with_a_stable_mapping() -> Non
         },
         {"args": [], "stdout": json.dumps({"author": {"login": "w[bot]"}, "user": "q"})},
     ]
-    built = rec.build_roles(calls, bot="", maintainer="x", author="y")
+    built = fixture_pipeline.build_roles(calls, bot="", maintainer="x", author="y")
     assert built == {
         "x": "maintainer",
         "y": "author",
@@ -427,7 +427,7 @@ def test_logins_are_classified_in_stdout_and_argv_with_a_stable_mapping() -> Non
         "q": "author-2",
         "w[bot]": "bot-2",
     }
-    assert rec.build_roles([], bot="dev-bot[bot]", maintainer=None, author="y") == {
+    assert fixture_pipeline.build_roles([], bot="dev-bot[bot]", maintainer=None, author="y") == {
         "dev-bot[bot]": "bot",
         "y": "author",
     }
@@ -464,10 +464,12 @@ def _run_main(
     if denylist is not None:
         monkeypatch.setenv(deny_list.DENYLIST_ENV, denylist)
     monkeypatch.setattr(
-        rec, "select_forge", lambda **kw: _fake_forge(stdout, tmp_path, kw.get("bot_username"))
+        fixture_pipeline,
+        "select_forge",
+        lambda **kw: _fake_forge(stdout, tmp_path, kw.get("bot_username")),
     )
     if roles is not None:
-        monkeypatch.setattr(rec, "build_roles", lambda *_a, **_kw: dict(roles))
+        monkeypatch.setattr(fixture_pipeline, "build_roles", lambda *_a, **_kw: dict(roles))
     out = tmp_path / "out"
     code: int = rec.main(
         [
@@ -618,7 +620,7 @@ def test_recorder_writes_class_words_and_a_replayed_result(
             ]
         ]
     )
-    monkeypatch.setattr(rec, "_author_of", lambda *_a: None)
+    monkeypatch.setattr(fixture_pipeline, "_author_of", lambda *_a: None)
     assert _run_main(monkeypatch, tmp_path, stdout, None) == 0
     path = Path(capsys.readouterr().out.strip())
     fixture = json.loads(path.read_text())
@@ -831,7 +833,9 @@ def test_recorded_source_names_the_forge_and_the_refusal_covers_it(
     stdout = json.dumps(
         [[{"id": 9, "user": {"login": "q-handle"}, "state": "APPROVED", "body": ""}]]
     )
-    monkeypatch.setattr(rec, "recorded_source", lambda *_a: "recorded from /home/someone-x/y")
+    monkeypatch.setattr(
+        fixture_pipeline, "recorded_source", lambda *_a: "recorded from /home/someone-x/y"
+    )
     assert _run_main(monkeypatch, tmp_path, stdout, {"q-handle": "author"}) == 2
     err = capsys.readouterr()
     assert err.err.splitlines()[-1] == "generic class home_path at source"
@@ -849,7 +853,7 @@ def test_an_unknown_mention_in_free_text_becomes_a_class_word(
     }
     assert mentions(payload) == ["x-handle", "y-handle"]
     calls = [{"args": [], "stdout": json.dumps({"author": {"login": "y"}, "body": "cc @x-handle"})}]
-    assert rec.build_roles(calls, bot="", maintainer=None, author="y") == {
+    assert fixture_pipeline.build_roles(calls, bot="", maintainer=None, author="y") == {
         "y": "author",
         "@x-handle": "author-2",
     }
@@ -857,7 +861,7 @@ def test_an_unknown_mention_in_free_text_becomes_a_class_word(
     stdout = json.dumps(
         [[{"id": 9, "user": {"login": "q-handle"}, "state": "APPROVED", "body": "ping @x-handle"}]]
     )
-    monkeypatch.setattr(rec, "_author_of", lambda *_a: None)
+    monkeypatch.setattr(fixture_pipeline, "_author_of", lambda *_a: None)
     assert _run_main(monkeypatch, tmp_path, stdout, None) == 0
     text = Path(capsys.readouterr().out.strip()).read_text()
     assert "x-handle" not in text and "ping @author-2" in text
@@ -880,7 +884,7 @@ def test_non_person_logins_are_kept_and_every_other_login_is_classified() -> Non
         {"user": {"login": "dependabot[bot]"}},
     ]
     calls = [{"args": [], "stdout": json.dumps(answers)}]
-    assert rec.build_roles(calls, bot="repoach-bot", maintainer=None, author=None) == {
+    assert fixture_pipeline.build_roles(calls, bot="repoach-bot", maintainer=None, author=None) == {
         "owner": "author",
         "project_1_bot_ab12": "service",
         "dependabot[bot]": "bot",
@@ -1136,7 +1140,7 @@ def test_a_mention_is_a_handle_not_a_decorator_nor_a_dotted_name_and_replaces_on
     assert mentions(prose) == ["someone-x", "ok-x"]
     payload = {"body": body, "diff": diff, "user": {"login": "q-handle", "id": 5}}
     calls = [{"args": ["api", "x"], "stdout": json.dumps(payload), "stderr": "", "returncode": 0}]
-    roles = rec.build_roles(calls, bot="", maintainer=None, author="q-handle")
+    roles = fixture_pipeline.build_roles(calls, bot="", maintainer=None, author="q-handle")
     assert roles == {"q-handle": "author", "@someone-x": "author-2"}
     out = json.loads(fixture_pipeline.classify_calls(calls, roles)[0]["stdout"])
     assert (
@@ -1149,7 +1153,9 @@ def test_a_mention_is_a_handle_not_a_decorator_nor_a_dotted_name_and_replaces_on
         {"args": [], "stdout": json.dumps({"body": "cc @z-handle"})},
         {"args": [], "stdout": json.dumps({"user": {"login": "z-handle"}})},
     ]
-    assert rec.build_roles(later, bot="", maintainer=None, author=None) == {"z-handle": "author"}
+    assert fixture_pipeline.build_roles(later, bot="", maintainer=None, author=None) == {
+        "z-handle": "author"
+    }
 
     clean = "+from dataclasses import dataclass\n+@dataclass\n+@pytest.fixture\n+x = 1\n"
     fixture = {
@@ -1175,7 +1181,7 @@ def test_a_mention_is_a_handle_not_a_decorator_nor_a_dotted_name_and_replaces_on
     stdout = json.dumps(
         [[{"id": 9, "user": {"login": "q-handle"}, "state": "APPROVED", "body": body}]]
     )
-    monkeypatch.setattr(rec, "_author_of", lambda *_a: None)
+    monkeypatch.setattr(fixture_pipeline, "_author_of", lambda *_a: None)
     assert _run_main(monkeypatch, tmp_path, stdout, None) == 0
     written = json.loads(Path(capsys.readouterr().out.strip()).read_text())
     assert written["result"][0]["body"] == (
@@ -1212,7 +1218,7 @@ def test_an_scp_or_ssh_remote_gets_the_placeholder_host_namespace_and_project() 
     for text in ("clone git@github.com:x-handle/r.git", "ssh://git@gitlab.com/x-handle/r.git"):
         answer = {"author": {"login": "x-handle"}, "body": text}
         recorded = [{"args": [], "stdout": redact_stdout(json.dumps(answer)), "stderr": text}]
-        built = rec.build_roles(recorded, bot="", maintainer=None, author="x-handle")
+        built = fixture_pipeline.build_roles(recorded, bot="", maintainer=None, author="x-handle")
         calls = fixture_pipeline.classify_calls(recorded, built)
         assert "x-handle" not in json.dumps(calls) and "github.com" not in json.dumps(calls)
         fixture_judge.refuse_unclassified(
@@ -1221,7 +1227,7 @@ def test_an_scp_or_ssh_remote_gets_the_placeholder_host_namespace_and_project() 
 
         raw = [{"args": [], "stdout": json.dumps(answer), "stderr": ""}]
         unredacted = fixture_pipeline.classify_calls(
-            raw, rec.build_roles(raw, bot="", maintainer=None, author=None)
+            raw, fixture_pipeline.build_roles(raw, bot="", maintainer=None, author=None)
         )
         with pytest.raises(
             fixture_judge.UnclassifiedValueError, match=r"^unknown host at exchanges\[0\]"
@@ -1253,7 +1259,7 @@ def test_a_login_equal_to_a_git_word_is_replaced_everywhere(
         "body": "merge into main",
     }
     calls = [{"args": ["pr", "view", "1"], "stdout": json.dumps(answer), "stderr": ""}]
-    roles = rec.build_roles(calls, bot="", maintainer=None, author="main")
+    roles = fixture_pipeline.build_roles(calls, bot="", maintainer=None, author="main")
     out = json.loads(fixture_pipeline.classify_calls(calls, roles)[0]["stdout"])
     assert out == {
         "author": {"login": "author"},
@@ -1265,7 +1271,7 @@ def test_a_login_equal_to_a_git_word_is_replaced_everywhere(
     stdout = json.dumps(
         [[{"id": 9, "user": {"login": "main"}, "state": "APPROVED", "body": "rebase on main"}]]
     )
-    monkeypatch.setattr(rec, "_author_of", lambda *_a: "main")
+    monkeypatch.setattr(fixture_pipeline, "_author_of", lambda *_a: "main")
     assert _run_main(monkeypatch, tmp_path, stdout, None) == 0
     fixture = json.loads(Path(capsys.readouterr().out.strip()).read_text())
     assert fixture["result"] == [
@@ -1443,7 +1449,7 @@ def _placed(text: str, position: str) -> dict[str, Any]:
 
 
 def _through_the_pipeline(fixture: dict[str, Any], found: closure.Known) -> dict[str, Any]:
-    """``fixture`` as :func:`rec.record` writes it: redacted, classified, ids synthetic."""
+    """``fixture`` as :func:`fixture_pipeline.record_live` writes it: redacted, classified, ids synthetic."""
     calls = [dict(c) for c in fixture["calls"]]
     for call in calls:
         call["stdout"] = redact_stdout(call["stdout"])
@@ -1641,8 +1647,10 @@ def test_a_remote_userinfo_is_never_kept() -> None:
     [
         fixture_judge.UnclassifiedValueError,
         deny_list.DenylistError,
+        fixture_pipeline.OriginRemoteError,
         SyntheticIdsExhaustedError,
         NeedleError,
+        ForgeError,
     ],
 )
 def test_every_refusal_class_of_the_recorder_exits_2_and_writes_nothing(
@@ -1656,7 +1664,7 @@ def test_every_refusal_class_of_the_recorder_exits_2_and_writes_nothing(
     def _refuse(**_kw: object) -> Path:
         raise error("refused at exchanges[0]")
 
-    monkeypatch.setattr(rec, "record", _refuse)
+    monkeypatch.setattr(rec, "record_live", _refuse)
     out = tmp_path / "out"
     argv = ["--forge", "github", "--case", "c", "--method", "reviews", "--out", str(out)]
     assert rec.main(argv) == 2
@@ -1829,7 +1837,8 @@ def build(**kw):
     forge._spawn = lambda argv, *, input_data=None: CommandResult(
         returncode=0, stdout=sys.argv[3], stderr="", argv=list(argv))
     return forge
-rec.select_forge = build
+from repoach.forge import fixture_pipeline
+fixture_pipeline.select_forge = build
 argv = ["--forge", "github", "--cwd", str(tmp), "--case", "c", "--method", "reviews",
         "--args", "[7]", "--out", str(tmp / "out")]
 sys.exit(rec.main(argv))
@@ -1955,7 +1964,7 @@ def test_branch_names_holding_a_login_are_replaced_and_the_rest_refused() -> Non
         "body": "x-q-handle",
     }
     calls = _one_call(answer)
-    roles = rec.build_roles(calls, bot="", maintainer=None, author=None)
+    roles = fixture_pipeline.build_roles(calls, bot="", maintainer=None, author=None)
     out = json.loads(fixture_pipeline.classify_calls(calls, roles)[0]["stdout"])
     assert out == {
         "author": {"login": "author"},
@@ -1988,7 +1997,9 @@ def test_logins_under_dropped_keys_are_needles_and_roles(
     found = needles(raw, roles={})
     assert _kinds(found, "login") == ["q-handle", "q-other-a", "q-other-b"]
     redacted = [{**c, "stdout": redact_stdout(c["stdout"])} for c in raw[0]]
-    roles = rec.build_roles(redacted, bot="", maintainer=None, author=None, also=["q-other-a"])
+    roles = fixture_pipeline.build_roles(
+        redacted, bot="", maintainer=None, author=None, also=["q-other-a"]
+    )
     assert roles == {"q-handle": "author", "q-other-a": "author-2"}
 
     stdout = json.dumps(
@@ -2396,7 +2407,7 @@ def test_noreply_mailboxes_are_redacted_by_class_and_not_refused() -> None:
     ]
     raw_copy = [dict(c) for c in raw_call]
     raw_call[0]["stdout"] = redact_stdout(raw_call[0]["stdout"])
-    roles = rec.build_roles(raw_call, bot="", maintainer=None, author="zqxjdoe7")
+    roles = fixture_pipeline.build_roles(raw_call, bot="", maintainer=None, author="zqxjdoe7")
     found = needles(raw_copy, roles=roles, remote="git@github.com:own-x/repo-y.git")
     calls = fixture_pipeline.synthesize_user_ids(
         fixture_pipeline.classify_calls(raw_call, {**found.mapping(), **roles}),
@@ -2560,7 +2571,7 @@ def test_bots_scoped_packages_and_case_insensitive_decorators() -> None:
     item = {"user": {"login": "dependabot[bot]", "id": 49699333}, "body": dep_body}
     raw = _one_call([item])
     redacted_calls = [{**c, "stdout": redact_stdout(c["stdout"])} for c in raw]
-    roles = rec.build_roles(
+    roles = fixture_pipeline.build_roles(
         redacted_calls,
         bot="repoach-bot",
         maintainer=None,
@@ -2597,7 +2608,7 @@ def test_bots_scoped_packages_and_case_insensitive_decorators() -> None:
         {"args": [], "stdout": json.dumps({"body": "cc @renovate please rebase"})},
         {"args": [], "stdout": json.dumps({"user": {"login": "renovate[bot]"}})},
     ]
-    assert rec.build_roles(mention_first, bot="", maintainer=None, author=None) == {
+    assert fixture_pipeline.build_roles(mention_first, bot="", maintainer=None, author=None) == {
         "renovate[bot]": "bot",
         "renovate": "bot",
     }
@@ -2894,7 +2905,7 @@ def test_short_bot_stems_placeholder_bots_and_offline_bot_parity() -> None:
             [{"user": {"login": bot_login, "id": 44556677}, "body": f"Please run @{stem} check."}]
         )
         red_calls = [{**c, "stdout": redact_stdout(c["stdout"])} for c in raw]
-        roles = rec.build_roles(
+        roles = fixture_pipeline.build_roles(
             red_calls,
             bot="repoach-bot",
             maintainer=None,
@@ -4756,17 +4767,27 @@ def test_offline_and_live_roles_give_a_bot_stem_its_own_word_only_when_mentioned
         {"args": [], "stdout": json.dumps(mention)},
         {"args": [], "stdout": json.dumps(bot)},
     ]
-    assert rec.build_roles(calls, bot="", maintainer=None, author=None) == both
-    assert rec.build_roles(calls[::-1], bot="", maintainer=None, author=None) == both
-    assert rec.build_roles(calls[1:], bot="", maintainer=None, author=None) == {"zqbot[bot]": "bot"}
-    assert rec.build_roles(calls[:1], bot="", maintainer=None, author=None) == {"@zqbot": "author"}
+    assert fixture_pipeline.build_roles(calls, bot="", maintainer=None, author=None) == both
+    assert fixture_pipeline.build_roles(calls[::-1], bot="", maintainer=None, author=None) == both
+    assert fixture_pipeline.build_roles(calls[1:], bot="", maintainer=None, author=None) == {
+        "zqbot[bot]": "bot"
+    }
+    assert fixture_pipeline.build_roles(calls[:1], bot="", maintainer=None, author=None) == {
+        "@zqbot": "author"
+    }
     short = [{"args": [], "stdout": json.dumps({"user": {"login": "ci[bot]"}, "body": "cc @ci"})}]
-    assert rec.build_roles(short, bot="", maintainer=None, author=None) == {"ci[bot]": "bot"}
-    assert rec.build_roles([], bot="repoach-bot", maintainer="zqmaint", author="zqauth") == {
+    assert fixture_pipeline.build_roles(short, bot="", maintainer=None, author=None) == {
+        "ci[bot]": "bot"
+    }
+    assert fixture_pipeline.build_roles(
+        [], bot="repoach-bot", maintainer="zqmaint", author="zqauth"
+    ) == {
         "zqmaint": "maintainer",
         "zqauth": "author",
     }
-    assert rec.build_roles([], bot="zqrobot", maintainer=None, author=None) == {"zqrobot": "bot"}
+    assert fixture_pipeline.build_roles([], bot="zqrobot", maintainer=None, author=None) == {
+        "zqrobot": "bot"
+    }
 
 
 def test_the_offline_transform_replaces_known_values_everywhere_but_the_closed_fields() -> None:
@@ -4924,12 +4945,14 @@ def _record_through(
     remote: str = "",
     author: str | None = None,
 ) -> dict[str, Any]:
-    """Run :func:`rec.record` against ``forge`` and read the fixture back."""
+    """Run :func:`fixture_pipeline.record_live` against ``forge`` and read the fixture back."""
     _no_denylist(monkeypatch, tmp_path)
-    monkeypatch.setattr(rec, "select_forge", lambda **kw: _as_bot(forge, kw.get("bot_username")))
-    monkeypatch.setattr(rec, "origin_url", lambda _cwd: remote)
-    monkeypatch.setattr(rec, "_author_of", lambda *_a: author)
-    path = rec.record(
+    monkeypatch.setattr(
+        fixture_pipeline, "select_forge", lambda **kw: _as_bot(forge, kw.get("bot_username"))
+    )
+    monkeypatch.setattr(fixture_pipeline, "origin_url", lambda _cwd: remote)
+    monkeypatch.setattr(fixture_pipeline, "_author_of", lambda *_a: author)
+    path = fixture_pipeline.record_live(
         forge_name="github",
         cwd=tmp_path,
         case="c",
@@ -5038,7 +5061,7 @@ def test_record_trims_classifies_the_maintainer_and_names_its_refusals(
     with pytest.raises(
         SystemExit, match=r"^refusing to record write method 'post_comment': fixtures never post$"
     ):
-        rec.record(
+        fixture_pipeline.record_live(
             forge_name="github",
             cwd=tmp_path,
             case="c",
@@ -5083,7 +5106,7 @@ def test_replay_names_the_bot_and_the_error_the_redacted_fixture_raises(
     asked: list[str | None] = []
     forge = _build("github", tmp_path, "repoach-bot")
     monkeypatch.setattr(
-        rec, "select_forge", lambda **kw: asked.append(kw.get("bot_username")) or forge
+        fixture_pipeline, "select_forge", lambda **kw: asked.append(kw.get("bot_username")) or forge
     )
     probe = _build("github", tmp_path, "repoach-bot")
     recorder = recording.RecordingSpawn(
@@ -5093,9 +5116,11 @@ def test_replay_names_the_bot_and_the_error_the_redacted_fixture_raises(
     with pytest.raises(ForgeError):
         probe.pull_request(7)
     failing = [e.to_json() for e in recorder.exchanges]
-    result, raises = rec._replay("github", tmp_path, "pull_request", [7], {}, failing, "zqbotword")
+    result, raises = fixture_pipeline._replay(
+        "github", tmp_path, "pull_request", [7], {}, failing, "zqbotword"
+    )
     assert (result, raises) == (None, "ForgeError") or raises is not None
-    rec._replay("github", tmp_path, "pull_request", [7], {}, failing, None)
+    fixture_pipeline._replay("github", tmp_path, "pull_request", [7], {}, failing, None)
     assert asked == ["zqbotword", None]
     assert fixture_judge.generic_class("a /home/zqperson/x") == "home_path"
     with pytest.raises(
@@ -5130,27 +5155,27 @@ def test_build_roles_keeps_a_mention_when_a_longer_login_follows_and_skips_the_k
     """
     mention = {"args": [], "stdout": json.dumps({"body": "cc @zqname"})}
     other = {"args": [], "stdout": json.dumps({"user": {"login": "zqname12345"}})}
-    assert rec.build_roles([mention, other], bot="", maintainer=None, author=None) == {
+    assert fixture_pipeline.build_roles([mention, other], bot="", maintainer=None, author=None) == {
         "@zqname": "author",
         "zqname12345": "author-2",
     }
     upper = {"args": [], "stdout": json.dumps({"user": {"login": "ZQName[BOT]"}})}
-    assert rec.build_roles([mention, upper], bot="", maintainer=None, author=None) == {
+    assert fixture_pipeline.build_roles([mention, upper], bot="", maintainer=None, author=None) == {
         "ZQName[BOT]": "bot",
         "zqname": "bot",
     }
-    assert rec.build_roles([upper, mention], bot="", maintainer=None, author=None) == {
+    assert fixture_pipeline.build_roles([upper, mention], bot="", maintainer=None, author=None) == {
         "ZQName[BOT]": "bot",
         "zqname": "bot",
     }
-    assert rec.build_roles([], bot="", maintainer=None, author="repoach-bot") == {}
-    assert rec.build_roles([other], bot="", maintainer=None, author="repoach-bot") == {
+    assert fixture_pipeline.build_roles([], bot="", maintainer=None, author="repoach-bot") == {}
+    assert fixture_pipeline.build_roles([other], bot="", maintainer=None, author="repoach-bot") == {
         "zqname12345": "author-2"
     }
-    assert rec.build_roles([], bot="zqrobot", maintainer=None, author="zqrobot") == {
+    assert fixture_pipeline.build_roles([], bot="zqrobot", maintainer=None, author="zqrobot") == {
         "zqrobot": "bot"
     }
-    assert rec.build_roles([], bot="", maintainer="zqmaint", author="zqmaint") == {
+    assert fixture_pipeline.build_roles([], bot="", maintainer="zqmaint", author="zqmaint") == {
         "zqmaint": "maintainer"
     }
 
@@ -7047,7 +7072,7 @@ def test_a_mention_only_handle_equal_to_a_language_word_is_the_documented_residu
     for word in ("test", "main", "link", "todo", "state", "model", "param", "override"):
         assert word in recording.LANGUAGE_AT_WORDS, word
         body = f"cc @{word} please review, {word}"
-        roles = rec.build_roles(
+        roles = fixture_pipeline.build_roles(
             [_exchange([{"user": {"login": word}, "body": body}])],
             bot="repoach-bot",
             maintainer=None,
@@ -7062,12 +7087,12 @@ def test_a_mention_only_handle_equal_to_a_language_word_is_the_documented_residu
         assert not _kinds(mention_only, "login"), word
         assert closure.judge(body, mention_only) is None and closure.judge(body, none) is None
         assert (
-            rec.build_roles(
+            fixture_pipeline.build_roles(
                 [_exchange([{"body": body}])], bot="repoach-bot", maintainer=None, author=None
             )
             == {}
         )
-    assert rec.build_roles(
+    assert fixture_pipeline.build_roles(
         [_exchange([{"body": "cc @zqxperson"}])], bot="repoach-bot", maintainer=None, author=None
     ) == {"@zqxperson": "author"}
     assert recording.redact_urls_in_text("see https://gitlab.com/kvnteam/-/merge_requests") == (
@@ -7119,9 +7144,9 @@ def test_the_recorder_never_raises_on_a_recording_nested_past_the_readers(
         patched.setattr(fixture_pipeline, "_redact_fixture", _overflow)
         with pytest.raises(fixture_pipeline.ResidualValueError, match=r"^nesting too deep"):
             fixture_pipeline.redact_fixture(fixture, forge="github", denylist=NO_DENYLIST)
-    monkeypatch.setattr(rec, "_record", _overflow)
+    monkeypatch.setattr(fixture_pipeline, "_record", _overflow)
     with pytest.raises(fixture_judge.UnclassifiedValueError, match=r"^nesting too deep"):
-        rec.record(
+        fixture_pipeline.record_live(
             forge_name="github",
             cwd=Path("."),
             case="x",
@@ -7155,15 +7180,15 @@ def test_the_recorder_runs_its_own_git_with_a_minimal_environment(
         seen.append(dict(kw["env"]))
         return subprocess.CompletedProcess(argv, 0, "git@h.io:zqgroup/zqrepo.git\n", "")
 
-    monkeypatch.setattr(rec.subprocess, "run", _run)
-    assert rec.origin_url(tmp_path) == "git@h.io:zqgroup/zqrepo.git"
+    monkeypatch.setattr(fixture_pipeline.subprocess, "run", _run)
+    assert fixture_pipeline.origin_url(tmp_path) == "git@h.io:zqgroup/zqrepo.git"
     (env,) = seen
-    assert set(env) <= {*rec.GIT_ENV_KEYS, "GIT_TERMINAL_PROMPT"}
+    assert set(env) <= {*fixture_pipeline.GIT_ENV_KEYS, "GIT_TERMINAL_PROMPT"}
     assert env["GIT_CONFIG_GLOBAL"] == str(tmp_path / "gitconfig")
     assert env["GIT_CONFIG_NOSYSTEM"] == "1" and env["GIT_TERMINAL_PROMPT"] == "0"
     assert env["PATH"] == os.environ["PATH"]
     assert not any("zqfake" in v or "zqentry" in v for v in env.values())
-    assert rec.GIT_ENV_KEYS == (
+    assert fixture_pipeline.GIT_ENV_KEYS == (
         "PATH",
         "HOME",
         "XDG_CONFIG_HOME",
@@ -7184,14 +7209,14 @@ def test_origin_url_reads_a_real_checkout_under_the_minimal_environment(
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     repo = tmp_path / "checkout"
     repo.mkdir()
-    subprocess.run(["git", "init", "-q", str(repo)], check=True, env=rec.git_env())
-    assert rec.origin_url(repo) == ""
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, env=fixture_pipeline.git_env())
+    assert fixture_pipeline.origin_url(repo) == ""
     subprocess.run(
         ["git", "-C", str(repo), "remote", "add", "origin", "git@h.io:zqgroup/zqrepo.git"],
         check=True,
-        env=rec.git_env(),
+        env=fixture_pipeline.git_env(),
     )
-    assert rec.origin_url(repo) == "git@h.io:zqgroup/zqrepo.git"
+    assert fixture_pipeline.origin_url(repo) == "git@h.io:zqgroup/zqrepo.git"
 
 
 def test_an_omitted_deny_list_is_the_maintainers_and_never_an_empty_one(
@@ -7258,11 +7283,11 @@ def test_live_and_offline_roles_come_from_one_builder(monkeypatch: pytest.Monkey
         [mention],
     ):
         calls = [{"args": [], "stdout": json.dumps(a)} for a in answers]
-        live = rec.build_roles(calls, bot="", maintainer=None, author="zqauthor")
+        live = fixture_pipeline.build_roles(calls, bot="", maintainer=None, author="zqauthor")
         live.pop("zqauthor")
         assert fixture_pipeline.fixture_roles(_roles_data(*answers)) == live, answers
     calls = [{"args": [], "stdout": json.dumps(a)} for a in (mention, bot, other)]
-    assert rec.build_roles(calls, bot="", maintainer=None, author=None) == {
+    assert fixture_pipeline.build_roles(calls, bot="", maintainer=None, author=None) == {
         "zqbot[bot]": "bot",
         "zqbot": "bot",
         "@zqhandle": "author",
@@ -7275,9 +7300,8 @@ def test_live_and_offline_roles_come_from_one_builder(monkeypatch: pytest.Monkey
         seen.append("called")
         return real(*a, **kw)
 
-    monkeypatch.setattr(rec, "assign_roles", _spy)
     monkeypatch.setattr(fixture_pipeline, "assign_roles", _spy)
-    rec.build_roles(calls, bot="", maintainer=None, author=None)
+    fixture_pipeline.build_roles(calls, bot="", maintainer=None, author=None)
     fixture_pipeline.fixture_roles(_roles_data(mention))
     assert seen == ["called", "called"]
     assert recording.login_sightings([mention, other]) == [
@@ -7312,7 +7336,7 @@ def test_every_exception_main_catches_is_one_the_entry_point_documents() -> None
     Each script's ``main`` catches what its entry point raises; a name caught there and missing
     from the entry point's ``Raises:`` is an undocumented escape.
     """
-    assert _caught_by_main(rec) <= _raises_names(rec.record)
+    assert _caught_by_main(rec) <= _raises_names(fixture_pipeline.record_live)
     assert _caught_by_main(redact_fixtures) <= _raises_names(fixture_pipeline.redact_corpus)
     assert {
         "SystemExit",
@@ -7324,7 +7348,7 @@ def test_every_exception_main_catches_is_one_the_entry_point_documents() -> None
         "ForgeError",
         "ConfigError",
         "TypeError",
-    } == _raises_names(rec.record)
+    } == _raises_names(fixture_pipeline.record_live)
     for function in (
         fixture_pipeline.redact_fixture,
         fixture_pipeline.fixture_known,
@@ -7341,7 +7365,7 @@ def test_record_refuses_an_unknown_method_and_a_replay_that_issues_another_call(
     _no_denylist(monkeypatch, tmp_path)
     for method in ("no_such_method", "_spawn", "available_methods"):
         with pytest.raises(SystemExit, match=r"no protocol method has that name$"):
-            rec.record(
+            fixture_pipeline.record_live(
                 forge_name="github",
                 cwd=tmp_path,
                 case="c",
@@ -7358,7 +7382,7 @@ def test_record_refuses_an_unknown_method_and_a_replay_that_issues_another_call(
     def _mismatch(*_a: Any, **_kw: Any) -> tuple[object, str | None]:
         raise recording.ReplayMismatchError("unrecorded call: ['api', 'zqprivate']")
 
-    monkeypatch.setattr(rec, "_replay", _mismatch)
+    monkeypatch.setattr(fixture_pipeline, "_replay", _mismatch)
     with pytest.raises(SystemExit) as stopped:
         _record_through(monkeypatch, tmp_path, forge, method="conversation_comments", args=[7])
     assert str(stopped.value) == (
@@ -7370,7 +7394,7 @@ def test_record_refuses_an_unknown_method_and_a_replay_that_issues_another_call(
     def _unavailable(**_kw: Any) -> Forge:
         raise ForgeError("forge 'github' (from flag) needs the 'gh' CLI on PATH")
 
-    monkeypatch.setattr(rec, "select_forge", _unavailable)
+    monkeypatch.setattr(fixture_pipeline, "select_forge", _unavailable)
     assert (
         rec.main(
             ["--forge", "github", "--cwd", str(tmp_path), "--case", "c", "--method", "pull_request"]
@@ -7537,12 +7561,12 @@ def test_git_env_keeps_the_git_variables_only(monkeypatch: pytest.MonkeyPatch) -
     for key, value in secrets.items():
         monkeypatch.setenv(key, value)
     monkeypatch.setenv("XDG_CONFIG_HOME", "/x")
-    env = rec.git_env()
+    env = fixture_pipeline.git_env()
     assert set(env) == {"PATH", "HOME", "XDG_CONFIG_HOME", "GIT_TERMINAL_PROMPT"}
     assert env["GIT_TERMINAL_PROMPT"] == "0" and env["XDG_CONFIG_HOME"] == "/x"
     assert not any(value in env.values() for value in secrets.values())
     monkeypatch.setenv("GIT_TERMINAL_PROMPT", "1")
-    assert rec.git_env()["GIT_TERMINAL_PROMPT"] == "0"
+    assert fixture_pipeline.git_env()["GIT_TERMINAL_PROMPT"] == "0"
 
 
 def test_origin_url_refuses_on_timeout_missing_git_and_a_failing_git(
@@ -7565,7 +7589,7 @@ def test_origin_url_refuses_on_timeout_missing_git_and_a_failing_git(
         code, out = answer
         return subprocess.CompletedProcess(argv, code, out, "fatal: zqsecret")
 
-    monkeypatch.setattr(rec.subprocess, "run", _run)
+    monkeypatch.setattr(fixture_pipeline.subprocess, "run", _run)
     remote = "git@h.io:zqgroup/zqrepo.git\n"
     for script, reason in (
         ([subprocess.TimeoutExpired(["git"], 30)], "timeout"),
@@ -7579,8 +7603,8 @@ def test_origin_url_refuses_on_timeout_missing_git_and_a_failing_git(
         ([(2, remote), subprocess.TimeoutExpired(["git"], 30)], "exit 2"),
     ):
         answers[:] = script
-        with capture_logs() as logs, pytest.raises(rec.OriginRemoteError) as refused:
-            rec.origin_url(tmp_path)
+        with capture_logs() as logs, pytest.raises(fixture_pipeline.OriginRemoteError) as refused:
+            fixture_pipeline.origin_url(tmp_path)
         assert str(refused.value) == f"origin remote: unreadable ({reason})"
         assert answers == [], reason
         assert refused.value.__cause__ is None and refused.value.__context__ is None
@@ -7593,7 +7617,7 @@ def test_origin_url_refuses_on_timeout_missing_git_and_a_failing_git(
     for code, names in ((2, ""), (2, "upstream\norigin-2\n"), (128, "upstream\n")):
         answers[:] = [(code, remote), (0, names)]
         with capture_logs() as logs:
-            assert rec.origin_url(tmp_path) == ""
+            assert fixture_pipeline.origin_url(tmp_path) == ""
         assert [e["event"] for e in logs] == ["recorder.no_origin"]
 
 
@@ -7612,21 +7636,31 @@ def test_a_git_error_reading_the_origin_is_a_refusal_whatever_the_locale(
     monkeypatch.setenv("LANGUAGE", "fr")
     _no_denylist(monkeypatch, tmp_path)
     monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
-    assert "GIT_CEILING_DIRECTORIES" not in rec.git_env()
+    assert "GIT_CEILING_DIRECTORIES" not in fixture_pipeline.git_env()
     repo = tmp_path / "zqcheckout"
     repo.mkdir()
-    subprocess.run(["git", "init", "-q", str(repo)], check=True, env=rec.git_env())
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, env=fixture_pipeline.git_env())
     add = ["git", "-C", str(repo), "remote", "add"]
-    subprocess.run([*add, "upstream", "git@h.io:zqgroup/zqrepo.git"], check=True, env=rec.git_env())
-    assert rec.origin_url(repo) == ""
-    subprocess.run([*add, "origin", "git@h.io:zqgroup/zqrepo.git"], check=True, env=rec.git_env())
-    assert rec.origin_url(repo) == "git@h.io:zqgroup/zqrepo.git"
-    with pytest.raises(rec.OriginRemoteError, match=r"^origin remote: unreadable \(exit 128\)$"):
-        rec.origin_url(tmp_path / "zqmissing")
+    subprocess.run(
+        [*add, "upstream", "git@h.io:zqgroup/zqrepo.git"],
+        check=True,
+        env=fixture_pipeline.git_env(),
+    )
+    assert fixture_pipeline.origin_url(repo) == ""
+    subprocess.run(
+        [*add, "origin", "git@h.io:zqgroup/zqrepo.git"], check=True, env=fixture_pipeline.git_env()
+    )
+    assert fixture_pipeline.origin_url(repo) == "git@h.io:zqgroup/zqrepo.git"
+    with pytest.raises(
+        fixture_pipeline.OriginRemoteError, match=r"^origin remote: unreadable \(exit 128\)$"
+    ):
+        fixture_pipeline.origin_url(tmp_path / "zqmissing")
     config = repo / ".git" / "config"
     config.write_text(config.read_text(encoding="utf-8") + "[remote\n", encoding="utf-8")
-    with pytest.raises(rec.OriginRemoteError, match=r"^origin remote: unreadable \(exit 128\)$"):
-        rec.origin_url(repo)
+    with pytest.raises(
+        fixture_pipeline.OriginRemoteError, match=r"^origin remote: unreadable \(exit 128\)$"
+    ):
+        fixture_pipeline.origin_url(repo)
     forge = GitHubForge(cwd=repo, bot_login="repoach-bot")
     forge._spawn = ReplaySpawn(
         [
@@ -7640,8 +7674,8 @@ def test_a_git_error_reading_the_origin_is_a_refusal_whatever_the_locale(
             )
         ]
     )
-    monkeypatch.setattr(rec, "select_forge", lambda **_kw: forge)
-    monkeypatch.setattr(rec, "_author_of", lambda *_a: None)
+    monkeypatch.setattr(fixture_pipeline, "select_forge", lambda **_kw: forge)
+    monkeypatch.setattr(fixture_pipeline, "_author_of", lambda *_a: None)
     out = tmp_path / "out"
     argv = ["--forge", "github", "--cwd", str(repo), "--case", "c", "--out", str(out)]
     capsys.readouterr()
@@ -7652,14 +7686,14 @@ def test_a_git_error_reading_the_origin_is_a_refusal_whatever_the_locale(
     assert "zqcheckout" not in printed.err and "zqgroup" not in printed.err
     assert not out.exists()
     monkeypatch.setenv("PATH", str(tmp_path / "nowhere"))
-    with pytest.raises(rec.OriginRemoteError, match=r"\(git missing\)$"):
-        rec.origin_url(repo)
+    with pytest.raises(fixture_pipeline.OriginRemoteError, match=r"\(git missing\)$"):
+        fixture_pipeline.origin_url(repo)
 
 
 def test_live_and_offline_finish_through_the_one_shared_pipeline() -> None:
     """D4 (PR #319 round 5, 4683464072, 4683464045): one pipeline module, a narrow API for the scripts.
 
-    The live ``_record`` runs :func:`repoach.forge.fixture_pipeline.redact_recording`, and both
+    The live ``_record`` (in the pipeline module since round 9) runs :func:`repoach.forge.fixture_pipeline.redact_recording`, and both
     scripts declare the synthetic ids and judge through
     :func:`repoach.forge.fixture_pipeline.seal_fixture`, so neither writes a fixture the other
     would judge differently. The offline transform (in the pipeline module since round 6)
@@ -7667,8 +7701,11 @@ def test_live_and_offline_finish_through_the_one_shared_pipeline() -> None:
     ``rename_logins_in_argument``, ``rewrite_recorded_source``, ``replace_known_in_source``),
     never its patterns.
     """
-    live = inspect.getsource(rec._record)
+    live = inspect.getsource(fixture_pipeline._record)
+    command = inspect.getsource(rec.main)
+    assert command.count("record_live(") == 1
     offline = inspect.getsource(fixture_pipeline._redact_fixture)
+    assert "recorded_source(" in live and "recorded_source(" not in offline
     assert "redact_recording(" in live and "seal_fixture(" in live and "seal_fixture(" in offline
     for source in (live, offline):
         assert "refuse_unclassified(" not in source and "declared_user_ids(" not in source
@@ -7689,7 +7726,6 @@ def test_live_and_offline_finish_through_the_one_shared_pipeline() -> None:
         "MENTION_ONLY_PREFIX",
         "RECORDED_SOURCE_RE",
         "RECORDED_SOURCE_HEAD_RE",
-        "recorded_source",
     }
     assert imported and not imported & internals
     assert not any(name.startswith("_") for name in imported)
@@ -7787,6 +7823,46 @@ def test_the_offline_script_is_the_command_line_of_the_pipeline(tmp_path: Path) 
     )
     with pytest.raises(fixture_pipeline.ResidualValueError, match=r"^unknown mailbox"):
         fixture_pipeline.redact_corpus(tmp_path, check=True, denylist=NO_DENYLIST)
+
+
+def test_the_live_script_is_the_command_line_of_the_pipeline() -> None:
+    """D4 (PR #319 round 9, 4689482897): one recorder, in the pipeline module; the script parses argv and maps exit codes.
+
+    ``scripts/record_forge_fixture.py`` defines ``main`` and its default root only, takes from the
+    library ``record_live`` and the refusals ``main`` catches, and calls nothing of the recorder
+    but ``record_live``: the sequence (collect, redact by field, roles, deny-list, redact, replay,
+    seal, write) is a test's to call without importing a script.
+    """
+    tree = ast.parse((ROOT / "scripts" / "record_forge_fixture.py").read_text(encoding="utf-8"))
+    defined = {
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    }
+    assigned = {
+        target.id
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+    assert defined == {"main"}
+    assert assigned == {"__all__", "FIXTURE_ROOT"}
+    taken = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("repoach.forge")
+        for alias in node.names
+    }
+    assert taken == {"record_live", *_caught_by_main(rec)}
+    called = {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert called == {"main", "record_live", "route_default_logs_to_stderr", "Path"}
+    for name in ("record_live", "build_roles", "origin_url", "git_env", "OriginRemoteError"):
+        assert getattr(fixture_pipeline, name).__module__ == fixture_pipeline.__name__, name
 
 
 def test_the_denylist_test_skips_naming_the_reason_where_no_list_is_given(
@@ -7888,7 +7964,8 @@ def test_a_refusal_class_names_every_reason_it_is_raised_for() -> None:
         assert head.split(" {")[0] in doc, head
     judged = inspect.getdoc(fixture_judge.UnclassifiedValueError) or ""
     heads = _message_heads(forge / "fixture_judge.py", "UnclassifiedValueError")
-    heads |= _message_heads(ROOT / "scripts" / "record_forge_fixture.py", "UnclassifiedValueError")
+    pipeline = ROOT / "src" / "repoach" / "forge" / "fixture_pipeline.py"
+    heads |= _message_heads(pipeline, "UnclassifiedValueError")
     reasons = {
         str(node.args[0].value)
         for node in ast.walk(ast.parse((forge / "closure.py").read_text(encoding="utf-8")))
