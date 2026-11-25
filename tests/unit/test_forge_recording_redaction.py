@@ -1768,7 +1768,9 @@ ALLOWED_CASE_SENSITIVE: dict[str, frozenset[str]] = {
     "denylist": frozenset(),
     "redact_forge_fixtures": frozenset(),
     "fixture_pipeline": frozenset(),
-    "closure": frozenset({"_RUN", "_LABEL", "_CLASS_WORD_LOCAL", "_DOC_MAILBOX_HOST"}),
+    "closure": frozenset(
+        {"_RUN", "_LABEL", "_CLASS_WORD_LOCAL", "_DOC_MAILBOX_HOST", "_QUERY_TOKEN"}
+    ),
     "text_forms": frozenset({"_STRING_ESCAPE", "_NEW_NODE", "_LEGACY_NODE", "_LEGACY_DECODED"}),
 }
 """Module patterns case-sensitive by nature: encodings, the placeholders the redaction writes, the tools' literals, and the gate's copied regexes."""

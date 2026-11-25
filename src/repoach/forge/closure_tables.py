@@ -527,12 +527,16 @@ The recorder writes a known forge host as ``forge.example.com`` wherever it stan
 spelling.
 """
 
+_MOZILLA_WIKI_NAMESPACES = ("special:", "user:", "user_talk:")
+"""The namespaces of the Mozilla wiki that name an account; its other ``<word>:<title>`` pages are projects'."""
+
 TENANT_ROUTES: dict[str, frozenset[str]] = {
-    "apache.org": frozenset({"roster/committer"}),
+    "apache.org": frozenset({"confluence/*/~", "confluence/~", "roster/committer"}),
     "crates.io": frozenset({"api/v1/teams", "api/v1/users", "teams", "users"}),
     "docs.rs": frozenset({"releases"}),
     "go.dev": frozenset(GO_MODULE_HOSTS),
     "golang.org": frozenset({*GO_MODULE_HOSTS, *(f"lookup/{h}" for h in GO_MODULE_HOSTS)}),
+    "hg.mozilla.org": frozenset({"users"}),
     "jsdelivr.net": frozenset({"combine", "gh"}),
     "mozilla.org": frozenset(
         {"*/android/user", "*/firefox/user", "android/user", "firefox/user", "p", "u"}
@@ -544,8 +548,13 @@ TENANT_ROUTES: dict[str, frozenset[str]] = {
     "pypi.org": frozenset({"manage/organization", "org", "user"}),
     "python.org": frozenset({"u"}),
     "readthedocs.org": frozenset({"organizations", "profiles"}),
-    "stackoverflow.com": frozenset({"c", "users/*"}),
-    "wikipedia.org": frozenset({"wiki/*:"}),
+    "reviews.apache.org": frozenset({"users"}),
+    "stackoverflow.com": frozenset({"c", "cv", "story", "users", "users/*"}),
+    "support.mozilla.org": frozenset({"*/user", "user"}),
+    "wiki.mozilla.org": frozenset(
+        {f"{lead}{ns}" for lead in ("", "index.php/") for ns in _MOZILLA_WIKI_NAMESPACES}
+    ),
+    "wikipedia.org": frozenset({"w/index.php/*:", "wiki/*:"}),
     "yarnpkg.com": frozenset({"-/org", "-/team", "-/user"}),
 }
 """Routes that open a tenant surface or name an account on a public host, by registrable suffix (PR #319 rounds 4, 6 and 7).
@@ -565,12 +574,37 @@ Mozilla people page and add-on author (``people.mozilla.org/p/<user>``,
 forge path a Go host embeds (:data:`FORGE_PATH_HOSTS`). A route whose last segment ends in ``:``
 holds its identity in that same segment: on Wikipedia ``wiki/<namespace>:<title>`` is a user
 page (``wiki/User:<name>``, ``wiki/Benutzer:<name>``, ``Special:Contributions/<name>``) unless
-the namespace is a public one (:data:`TENANT_ROUTE_PUBLIC`), whatever the language names it. A
-Stack Overflow profile names its user in the segment after the id (``users/<id>/<name>``). The
-redactor rewrites a tenant URL through the forge route grammar and keeps it only when no
+the namespace is a public one (:data:`TENANT_ROUTE_PUBLIC`), whatever the language names it; on
+the Mozilla wiki the namespaces are written out. A route whose last segment is ``~`` names the
+account in a segment led by it: a personal space of Apache Confluence
+(``cwiki.apache.org/confluence/display/~<id>``, ``spaces/~<id>``), never a project's space
+(``display/KAFKA``). A Mozilla support profile is ``user/<name>`` after an optional locale, and
+Mozilla's Mercurial host and Apache's Review Board name one after ``users``. A
+Stack Overflow profile names its user in the segment after the id (``users/<id>/<name>``), or,
+with none, by the id alone (``users/<id>``, PR #319 round 9, 4689483333), and a developer story
+in the segment after ``story`` or ``cv``. The same accounts named in a query are
+:data:`TENANT_QUERIES`. The redactor rewrites a tenant URL through the forge route grammar and keeps it only when no
 identity survives the rewrite; one the grammar cannot place (a CouchDB user, a profile name) is
 left as it stands, and the oracle refuses it.
 """
+
+_WIKIPEDIA_PUBLIC_NAMESPACES = frozenset(
+    {
+        "category",
+        "draft",
+        "file",
+        "help",
+        "image",
+        "mediawiki",
+        "module",
+        "portal",
+        "talk",
+        "template",
+        "timedtext",
+        "wikipedia",
+        "wp",
+    }
+)
 
 TENANT_ROUTE_PUBLIC: dict[str, frozenset[str]] = {
     "go.dev forge.example.com": frozenset({"org"}),
@@ -579,32 +613,50 @@ TENANT_ROUTE_PUBLIC: dict[str, frozenset[str]] = {
     "docs.rs releases": frozenset(
         {"activity", "failures", "feed", "queue", "recent", "recent-failures", "search", "stars"}
     ),
-    "wikipedia.org wiki/*:": frozenset(
-        {
-            "category",
-            "draft",
-            "file",
-            "help",
-            "image",
-            "mediawiki",
-            "module",
-            "portal",
-            "talk",
-            "template",
-            "timedtext",
-            "wikipedia",
-            "wp",
-        }
-    ),
+    "stackoverflow.com users": frozenset({"account-recovery", "login", "signup"}),
+    "wikipedia.org w/index.php/*:": _WIKIPEDIA_PUBLIC_NAMESPACES,
+    "wikipedia.org wiki/*:": _WIKIPEDIA_PUBLIC_NAMESPACES,
+    "wikipedia.org ?*:": _WIKIPEDIA_PUBLIC_NAMESPACES,
 }
 """The identities a route names that are public pages, by ``"<suffix> <route>"`` (PR #319 round 7).
 
 ``org`` after the placeholder host on a Go host is the recorder's own placeholder namespace, an
 identity already redacted. ``docs.rs/releases/recent`` and its siblings are docs.rs's own
-listings, not an owner. On Wikipedia a namespace of articles, categories, help, templates, files, portals, modules,
+listings, not an owner, and ``stackoverflow.com/users/login`` and its siblings are its forms.
+On Wikipedia a namespace of articles, categories, help, templates, files, portals, modules,
 drafts and the project's own pages, or its talk namespace (``<namespace>_talk``), is public;
 every other namespace (``User``, ``User_talk``, ``Special``, a localised user namespace) is
-refused.
+refused, in a path and, under the key ``?*:``, in a query.
+"""
+
+_PAGE_PARAMETERS = ("page", "title", "titles")
+"""The query parameters of MediaWiki that name a page (``index.php?title=``, ``api.php?titles=``, ``page=``)."""
+
+TENANT_QUERIES: dict[str, frozenset[tuple[str, str, str]]] = {
+    "apache.org": frozenset(
+        {
+            ("", "key", "~"),
+            ("", "spacekey", "~"),
+            ("", "username", ""),
+            ("viewprofile.jspa", "name", ""),
+        }
+    ),
+    "bugzilla.mozilla.org": frozenset(
+        {("user_profile", "login", ""), ("user_profile", "user_id", "")}
+    ),
+    "wiki.mozilla.org": frozenset(
+        {("", name, ns) for name in _PAGE_PARAMETERS for ns in _MOZILLA_WIKI_NAMESPACES}
+    ),
+    "wikipedia.org": frozenset({("", name, "*:") for name in _PAGE_PARAMETERS}),
+}
+"""Query parameters that name an account on a public host, by suffix (PR #319 round 9, 4689483333).
+
+Each is ``(page, parameter, value)``, in any case: ``page`` is what the path must end with, ``""``
+for any. The value is an account whatever it is (``""``: Confluence's
+``viewuserprofile.action?username=<id>``, Jira's ``ViewProfile.jspa?name=<id>``, Bugzilla's
+``user_profile?login=<login>``), one led by ``~``
+(a personal space, ``viewspace.action?key=~<id>``), or ``<namespace>:<title>`` read as the path
+form of :data:`TENANT_ROUTES` is (``w/index.php?title=User:<name>``).
 """
 
 

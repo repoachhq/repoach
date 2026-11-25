@@ -35,6 +35,7 @@ from .closure_tables import (
     PUBLIC_SUFFIXES,
     REVERSE_DNS_HEADS,
     RFC5737_NETWORKS,
+    TENANT_QUERIES,
     TENANT_ROUTE_PUBLIC,
     TENANT_ROUTES,
     UNSPECIFIED_BROADCAST,
@@ -240,7 +241,8 @@ def is_tenant_path(host: str, path: str) -> bool:
 
     Args:
         host: A public host, in any case.
-        path: The URL path after the host, its leading ``/`` included or not.
+        path: The URL path after the host, its leading ``/`` included or not, with its
+            ``?<query>`` when it has one.
 
     Returns:
         ``True`` when a route of :data:`TENANT_ROUTES` with its identity segment, or an
@@ -258,25 +260,61 @@ _SEGMENT_END = "/\\s?#\"'<>"
 """What ends a path segment read lexically: ``/``, whitespace, a query or fragment mark and the prose delimiters."""
 
 
+_SPACE = r"(?:[_+ ]|%20)"
+"""One space of a wiki title as a URL spells it: ``_``, ``+`` or ``%20``, or decoded."""
+
+
+def _namespace_pattern(
+    namespace: str, public: frozenset[str], title: str, *, space: str = "%20"
+) -> str:
+    """The pattern of a ``<namespace>:<title>`` wiki page that names an account, up to its title's first character.
+
+    ``*:`` is any namespace of letters and digits (``_`` or a space inside) that is not
+    ``public``, nor a ``public`` one's talk namespace; any other namespace is read as it stands.
+    The leading ``:`` and ``_`` a wiki ignores are skipped.
+
+    Args:
+        namespace: ``*:``, or a namespace with its ``:``.
+        public: The namespaces that name no account.
+        title: The character class of a title, ``[^`` and ``]`` left out.
+        space: The pattern of a space inside a ``*:`` namespace, ``_`` aside: ``+`` is one in a
+            query only (``wiki/C++:_x`` is an article).
+
+    Returns:
+        The pattern's source; the title of a ``*:`` namespace is not led by ``_``
+        (``Mission:_Impossible`` is an article).
+    """
+    if namespace != "*:":
+        words = _SPACE.join(re.escape(word) for word in namespace.rstrip(":").split("_"))
+        return rf"[:_]*{words}:[^{title}]"
+    exempt = "".join(rf"(?!{re.escape(word)}(?:{_SPACE}talk)?:)" for word in sorted(public))
+    return rf"[:_]*{exempt}[^\W_](?:\w|{space})*(?: talk)?:[^_{title}]"
+
+
 def _route_pattern(suffix: str, route: str) -> str:
     """The pattern of one :data:`TENANT_ROUTES` route after its host: its segments, then its identity.
 
     ``*`` is any one segment. The identity is the segment after the route, unless it is one of
-    the route's public words (:data:`TENANT_ROUTE_PUBLIC`); a route ending in ``*:`` reads it in
-    the same segment instead, ``<namespace>:<title>``, a namespace of letters and digits (``_``
-    inside) whose title is not led by ``_`` (``Mission:_Impossible`` is an article), unless the
-    namespace, or its ``_talk`` namespace, is public.
+    the route's public words (:data:`TENANT_ROUTE_PUBLIC`); a route ending in ``~`` reads a
+    segment led by ``~`` and no other, and a route ending in ``<namespace>:`` or ``*:`` reads it
+    in the same segment instead (:func:`_namespace_pattern`).
     """
     parts = route.split("/")
-    public = sorted(TENANT_ROUTE_PUBLIC.get(f"{suffix} {route}", frozenset()))
-    named = parts[-1] == "*:"
-    head = parts[:-1] if named else parts
-    lead = "/+".join(rf"[^{_SEGMENT_END}]+" if p == "*" else re.escape(p) for p in head)
-    if named:
-        exempt = "".join(rf"(?!{re.escape(word)}(?:_talk)?:)" for word in public)
-        return rf"{lead}/+{exempt}[^\W_]\w*:[^_{_SEGMENT_END}]"
-    exempt = "".join(rf"(?!{re.escape(word)}[.,;:!)\]]*(?:[{_SEGMENT_END}]|$))" for word in public)
-    return rf"{lead}/+{exempt}[^{_SEGMENT_END}]"
+    public = TENANT_ROUTE_PUBLIC.get(f"{suffix} {route}", frozenset())
+    last = parts[-1]
+    marked = last == "~" or last.endswith(":")
+    lead = "".join(
+        (rf"[^{_SEGMENT_END}]+" if p == "*" else re.escape(p)) + "/+"
+        for p in (parts[:-1] if marked else parts)
+    )
+    if last == "~":
+        return rf"{lead}~[^{_SEGMENT_END}]"
+    if marked:
+        return lead + _namespace_pattern(last, public, _SEGMENT_END)
+    exempt = "".join(
+        rf"(?!{re.escape(word)}[.,;:!)\]]*(?:[{_SEGMENT_END}]|$))" for word in sorted(public)
+    )
+    return rf"{lead}{exempt}[^{_SEGMENT_END}]"
 
 
 def _tenant_route_re() -> re.Pattern[str]:
@@ -285,7 +323,7 @@ def _tenant_route_re() -> re.Pattern[str]:
     The host is the suffix or any name under it, not preceded by a letter, digit or ``-``
     (``xstackoverflow.com`` is another host); an optional trailing dot and ``:<port>`` follow,
     then ``/`` (one or more) and, for :data:`TENANT_ROUTES`, the route and its identity
-    (:func:`_route_pattern`), or, for :data:`ACCOUNT_NAMESPACES`, an optional ``v2/`` and a
+    (:func:`_route_pattern`; the longest first, so ``users/<id>/<name>`` reads the name), or, for :data:`ACCOUNT_NAMESPACES`, an optional ``v2/`` and a
     namespace segment led by its lead that is not one no account holds
     (``docker.io/library/…`` is public; a namespace followed by ``:``, as in
     ``ghcr.io/<owner>:tag``, is still read). Nothing before the host is required, so a scheme,
@@ -295,7 +333,8 @@ def _tenant_route_re() -> re.Pattern[str]:
     alternatives = []
     host = r"\.?(?::[0-9]*)?/+"
     for suffix, routes in sorted(TENANT_ROUTES.items()):
-        paths = "|".join(_route_pattern(suffix, route) for route in sorted(routes))
+        longest = sorted(routes, key=lambda route: (-len(route), route))
+        paths = "|".join(_route_pattern(suffix, route) for route in longest)
         alternatives.append(rf"{re.escape(suffix)}{host}(?:{paths})")
     for suffix, (lead, public) in sorted(ACCOUNT_NAMESPACES.items()):
         ends = rf"(?:[{_SEGMENT_END}:@]|$)"
@@ -306,6 +345,67 @@ def _tenant_route_re() -> re.Pattern[str]:
 
 
 _TENANT_ROUTE_RE = _tenant_route_re()
+
+_QUERY_END = "\\s&#;\"'<>"
+"""What ends a query parameter's value read lexically: whitespace, ``&``, ``;``, ``#`` and the prose delimiters."""
+
+_QUERY_TOKEN = re.compile(r"[^\s\"'<>]+")
+"""A run a URL with its query can stand in: anything but whitespace and the prose delimiters."""
+
+
+def _query_pattern(suffix: str, parameter: str, value: str) -> re.Pattern[str]:
+    """The pattern of one :data:`TENANT_QUERIES` parameter, its whole value in group 1."""
+    if value.endswith(":"):
+        public = TENANT_ROUTE_PUBLIC.get(f"{suffix} ?{value}", frozenset())
+        named = _namespace_pattern(value, public, _QUERY_END, space=r"\+|%20")
+    else:
+        named = rf"{re.escape(value)}[^{_QUERY_END}]"
+    return re.compile(rf"[?&;]{re.escape(parameter)}=({named}[^{_QUERY_END}]*)", re.IGNORECASE)
+
+
+_QUERY_HOST_RE = re.compile(
+    rf"(?<![A-Za-z0-9-])({'|'.join(re.escape(s) for s in sorted(TENANT_QUERIES))})\.?(?::[0-9]*)?(?=[/?])",
+    re.IGNORECASE,
+)
+"""A host of :data:`TENANT_QUERIES` (the suffix or any name under it) before a path or a query."""
+
+_QUERY_PATTERNS: dict[str, tuple[tuple[re.Pattern[str], re.Pattern[str]], ...]] = {
+    suffix: tuple(
+        (
+            re.compile(rf"{re.escape(page)}(?=\?)" if page else "", re.IGNORECASE),
+            _query_pattern(suffix, parameter, value),
+        )
+        for page, parameter, value in sorted(queries)
+    )
+    for suffix, queries in TENANT_QUERIES.items()
+}
+"""Each parameter of :data:`TENANT_QUERIES` by suffix: where its page ends, then the parameter's own pattern."""
+
+
+def _query_identities(text: str) -> list[str]:
+    """The account every :data:`TENANT_QUERIES` parameter of ``text`` names, read lexically after its host.
+
+    The host is the first of its suffix in the token (:data:`_QUERY_TOKEN`) and the parameter
+    stands anywhere after it, whatever leads the host, so the scan reads each token a fixed
+    number of times.
+
+    Args:
+        text: The text read, one decoded form of it.
+
+    Returns:
+        Each value as it stands in ``text``.
+    """
+    found: list[str] = []
+    for token in (m.group(0) for m in _QUERY_TOKEN.finditer(text) if "?" in m.group(0)):
+        begins: dict[str, int] = {}
+        for host in _QUERY_HOST_RE.finditer(token):
+            begins.setdefault(host.group(1).casefold(), host.end())
+        for suffix, begin in begins.items():
+            for page, pattern in _QUERY_PATTERNS[suffix]:
+                at = page.search(token, begin)
+                if at is not None:
+                    found += [m.group(1) for m in pattern.finditer(token, at.end())]
+    return found
 
 
 def has_tenant_path(text: str) -> bool:
@@ -319,23 +419,24 @@ def has_tenant_path(text: str) -> bool:
         text: The text read, one decoded form of it.
 
     Returns:
-        ``True`` when a tenant route of :data:`TENANT_ROUTES` stands after its host.
+        ``True`` when a tenant route of :data:`TENANT_ROUTES`, or an account parameter of
+        :data:`TENANT_QUERIES`, stands after its host.
     """
-    return _TENANT_ROUTE_RE.search(text) is not None
+    return _TENANT_ROUTE_RE.search(text) is not None or bool(_query_identities(text))
 
 
 def tenant_identities(text: str) -> list[str]:
-    """The identity segment of every tenant route or account namespace in ``text``, in order.
+    """The identity of every tenant route, account namespace and account parameter in ``text``: paths, then queries.
 
     The identity is the path segment holding the last character the route grammar reads
     (:func:`has_tenant_path`): the segment after a route, a ``<namespace>:<title>`` segment, or
-    a namespace. The redactor checks that none survives its rewrite of a tenant URL.
+    a namespace. A query's is the parameter's value (:func:`_query_identities`). The redactor checks that none survives its rewrite of a tenant URL.
 
     Args:
         text: The text read, one decoded form of it.
 
     Returns:
-        Each identity segment as it stands in ``text``.
+        Each identity as it stands in ``text``.
     """
     found = []
     for m in _TENANT_ROUTE_RE.finditer(text):
@@ -345,7 +446,7 @@ def tenant_identities(text: str) -> list[str]:
         while end < len(text) and text[end] not in "/?#\"'<>" and not text[end].isspace():
             end += 1
         found.append(text[begin:end])
-    return found
+    return found + _query_identities(text)
 
 
 def is_doc_mailbox_host(host: str) -> bool:

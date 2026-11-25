@@ -1846,11 +1846,12 @@ def test_a_vendor_with_tenant_consoles_is_public_by_its_documentation_hosts_only
     assert set(closure_tables.GO_MODULE_HOSTS) == go
     npm = frozenset({"-/org", "-/team", "-/user"})
     assert {
-        "apache.org": frozenset({"roster/committer"}),
+        "apache.org": frozenset({"confluence/*/~", "confluence/~", "roster/committer"}),
         "crates.io": frozenset({"api/v1/teams", "api/v1/users", "teams", "users"}),
         "docs.rs": frozenset({"releases"}),
         "go.dev": frozenset(go),
         "golang.org": frozenset(go | {f"lookup/{h}" for h in go}),
+        "hg.mozilla.org": frozenset({"users"}),
         "jsdelivr.net": frozenset({"combine", "gh"}),
         "mozilla.org": frozenset(
             {"*/android/user", "*/firefox/user", "android/user", "firefox/user", "p", "u"}
@@ -1862,8 +1863,20 @@ def test_a_vendor_with_tenant_consoles_is_public_by_its_documentation_hosts_only
         "pypi.org": frozenset({"manage/organization", "org", "user"}),
         "python.org": frozenset({"u"}),
         "readthedocs.org": frozenset({"organizations", "profiles"}),
-        "stackoverflow.com": frozenset({"c", "users/*"}),
-        "wikipedia.org": frozenset({"wiki/*:"}),
+        "reviews.apache.org": frozenset({"users"}),
+        "stackoverflow.com": frozenset({"c", "cv", "story", "users", "users/*"}),
+        "support.mozilla.org": frozenset({"*/user", "user"}),
+        "wiki.mozilla.org": frozenset(
+            {
+                "index.php/special:",
+                "index.php/user:",
+                "index.php/user_talk:",
+                "special:",
+                "user:",
+                "user_talk:",
+            }
+        ),
+        "wikipedia.org": frozenset({"w/index.php/*:", "wiki/*:"}),
         "yarnpkg.com": npm,
     } == closure_tables.TENANT_ROUTES
     assert set(closure_tables.TENANT_ROUTE_PUBLIC) == {
@@ -1871,17 +1884,40 @@ def test_a_vendor_with_tenant_consoles_is_public_by_its_documentation_hosts_only
         "go.dev forge.example.com",
         "golang.org forge.example.com",
         "golang.org lookup/forge.example.com",
+        "stackoverflow.com users",
+        "wikipedia.org ?*:",
+        "wikipedia.org w/index.php/*:",
         "wikipedia.org wiki/*:",
     }
+    pages = ("page", "title", "titles")
+    namespaces = ("special:", "user:", "user_talk:")
+    assert {
+        "apache.org": frozenset(
+            {
+                ("", "key", "~"),
+                ("", "spacekey", "~"),
+                ("", "username", ""),
+                ("viewprofile.jspa", "name", ""),
+            }
+        ),
+        "bugzilla.mozilla.org": frozenset(
+            {("user_profile", "login", ""), ("user_profile", "user_id", "")}
+        ),
+        "wiki.mozilla.org": frozenset({("", name, ns) for name in pages for ns in namespaces}),
+        "wikipedia.org": frozenset({("", name, "*:") for name in pages}),
+    } == closure_tables.TENANT_QUERIES
     assert {
         "apache.org": ("~", frozenset()),
         "docker.io": ("", frozenset({"library"})),
         "ghcr.io": ("", frozenset()),
         "npmjs.com": ("~", frozenset()),
     } == closure_tables.ACCOUNT_NAMESPACES
-    assert set(closure_tables.TENANT_ROUTES) | set(closure_tables.ACCOUNT_NAMESPACES) <= (
-        closure_tables.PUBLIC_SUFFIXES
-    )
+    for suffix in {
+        *closure_tables.TENANT_ROUTES,
+        *closure_tables.TENANT_QUERIES,
+        *closure_tables.ACCOUNT_NAMESPACES,
+    }:
+        assert closure.is_public_host(suffix) and suffix not in closure_tables.PUBLIC_HOSTS, suffix
     assert not closure_tables.PUBLIC_HOSTS & closure_tables.PUBLIC_SUFFIXES
     for host in closure_tables.PUBLIC_HOSTS:
         assert closure.is_public_host(host) and closure.is_public_host(host.upper() + ".")
@@ -2179,6 +2215,79 @@ def test_a_container_registry_namespace_is_an_identity_slot() -> None:
     assert time.perf_counter() - started < 2.0
 
 
+def test_an_account_named_in_a_query_is_read_as_one_in_a_path() -> None:
+    """D8 (PR #319 round 9, 4689483333): ``index.php?title=User:<name>`` names whom ``wiki/User:<name>`` does.
+
+    The parameter is read wherever it stands after its host, in any case and in every decoded
+    form, whatever leads the host. The redactor drops the query with the URL it rewrites, so no
+    identity is left; a page of a public namespace or a project's space stays ordinary.
+    """
+    none = closure.Known(())
+    planted = (
+        "en.wikipedia.org/w/index.php?title=User:Kvnuser",
+        "en.wikipedia.org/w/index.php?title=User_talk:Kvnuser&action=history",
+        "en.wikipedia.org/w/index.php?action=edit&title=User:Kvnuser",
+        "en.wikipedia.org/w/index.php?title=User+talk:Kvnuser",
+        "en.wikipedia.org/w/index.php?title=User%20talk:Kvnuser",
+        "en.wikipedia.org/w/index.php?title=:User:Kvnuser",
+        "en.wikipedia.org/?title=User:Kvnuser",
+        "en.wikipedia.org?title=User:Kvnuser",
+        "de.wikipedia.org/w/index.php?title=Benutzer:Kvnuser",
+        "en.wikipedia.org/w/index.php?title=Special:Contributions/Kvnuser",
+        "en.wikipedia.org/w/api.php?action=query&titles=User:Kvnuser&format=json",
+        "en.wikipedia.org/w/api.php?action=parse&amp;page=User:Kvnuser",
+        "EN.WIKIPEDIA.ORG:443/w/index.php?TITLE=USER:Kvnuser",
+        "wiki.mozilla.org/index.php?title=User:Kvnuser",
+        "wiki.mozilla.org/index.php?title=User_talk:Kvnuser&action=edit",
+        "cwiki.apache.org/confluence/spaces/viewspace.action?key=~kvnuser",
+        "cwiki.apache.org/confluence/pages/viewpage.action?spaceKey=~kvnuser&title=Home",
+        "cwiki.apache.org/confluence/users/viewuserprofile.action?username=kvnuser",
+        "issues.apache.org/jira/secure/ViewProfile.jspa?name=kvnuser",
+        "bugzilla.mozilla.org/user_profile?user_id=kvn12345",
+    )
+    for shape in planted:
+        for text in (
+            f"see {shape} now",
+            f"see https://{shape} now",
+            f"see //{shape} now",
+            f"[x](https://{shape})",
+            "see https%3A%2F%2F"
+            + shape.replace("%", "%25").replace("/", "%2F").replace(":", "%3A").replace("=", "%3D"),
+        ):
+            assert closure.judge(text, none) == closure.Refusal("tenant path"), text
+        host, _, path = shape.partition("/")
+        assert any("kvn" in found.casefold() for found in closure.tenant_identities(shape)), shape
+        if path:
+            assert closure.is_tenant_path(host.partition(":")[0], path), shape
+        written = recording.redact_urls_in_text(f"see https://{shape} now")
+        assert "kvn" not in written.casefold(), written
+    assert closure.tenant_identities(
+        "en.wikipedia.org/w/index.php?title=User:Kvnuser&x=1 cwiki.apache.org/x?key=~kvnid#a"
+    ) == ["User:Kvnuser", "~kvnid"]
+    for text in (
+        "see https://en.wikipedia.org/w/index.php?title=Main_Page&oldid=1",
+        "see https://en.wikipedia.org/w/index.php?title=Help:Contents and ?title=Talk:Python",
+        "see https://en.wikipedia.org/w/index.php?title=Help_talk:Contents",
+        "see https://en.wikipedia.org/w/index.php?title=Mission:_Impossible",
+        "see https://en.wikipedia.org/w/index.php?subtitle=User:x and https://en.wikipedia.org/wiki/X?x=1",
+        "see https://en.wikipedia.org/wiki/Python then ?title=User:x",
+        "see https://wiki.mozilla.org/index.php?title=Firefox:Home",
+        "see https://cwiki.apache.org/confluence/pages/viewpage.action?spaceKey=KAFKA&title=Home",
+        "see https://cwiki.apache.org/confluence/pages/viewpage.action?pageId=1&key=~",
+        "see https://issues.apache.org/jira/browse/KAFKA-1?name=x",
+        "see https://bugzilla.mozilla.org/show_bug.cgi?id=1&user_id=2",
+        "see https://example.com/w/index.php?title=User:x and https://docs.python.org/?username=x",
+    ):
+        assert closure.judge(text, none) is None, text
+        assert recording.redact_urls_in_text(text) == text, text
+    started = time.perf_counter()
+    assert not closure.has_tenant_path("en.wikipedia.org/?" * 5000)
+    assert not closure.has_tenant_path("en.wikipedia.org/?" + "&title=x" * 10000)
+    assert not closure.has_tenant_path("issues.apache.org/?" + "viewprofile.jspa?" * 5000)
+    assert not closure.has_tenant_path("en.wikipedia.org/?title=" + "User" * 10000)
+    assert time.perf_counter() - started < 2.0
+
+
 def test_a_host_is_read_by_dns_label_grammar_in_every_label() -> None:
     """D3 (PR #319 round 7, 4687852986): a led host whose last label holds a digit is a host.
 
@@ -2353,6 +2462,27 @@ def test_an_account_route_or_an_embedded_forge_path_on_a_public_host_is_refused(
         "en.wikipedia.org/wiki/Special:Contributions/Kvnuser",
         "stackoverflow.com/users/12345/kvnuser",
         "proxy.golang.org/forge.example.com/kvnorg/kvnrepo/@v/list",
+        "support.mozilla.org/en-US/user/kvnuser/",
+        "support.mozilla.org/user/kvnuser",
+        "wiki.mozilla.org/User:Kvnuser",
+        "wiki.mozilla.org/User_talk:Kvnuser",
+        "wiki.mozilla.org/index.php/User:Kvnuser/Notes",
+        "wiki.mozilla.org/Special:Contributions/Kvnuser",
+        "cwiki.apache.org/confluence/display/~kvnuser",
+        "cwiki.apache.org/confluence/display/~kvnuser/Home",
+        "cwiki.apache.org/confluence/spaces/~kvnuser/overview",
+        "cwiki.apache.org/confluence/~kvnuser",
+        "stackoverflow.com/users/12345",
+        "stackoverflow.com/users/12345/",
+        "stackoverflow.com/users/12345?tab=profile",
+        "ru.stackoverflow.com/users/12345/kvnuser",
+        "stackoverflow.com/story/kvnuser",
+        "en.wikipedia.org/w/index.php/User:Kvnuser",
+        "en.wikipedia.org/wiki/:User:Kvnuser",
+        "en.wikipedia.org/wiki/User%20talk:Kvnuser",
+        "en.m.wikipedia.org/wiki/User:Kvnuser",
+        "hg.mozilla.org/users/kvnuser_example.com/repo",
+        "reviews.apache.org/users/kvnuser/",
     )
     for shape in planted:
         for text in (
@@ -2384,6 +2514,12 @@ def test_an_account_route_or_an_embedded_forge_path_on_a_public_host_is_refused(
         "see https://readthedocs.org/projects/pip/ and https://pip.readthedocs.io/en/stable/",
         "see https://cdn.jsdelivr.net/npm/lodash@4/x.js",
         "see pkg.go.dev/forge.example.com/org/project and docs.rs/releases/recent, then",
+        "see https://support.mozilla.org/en-US/kb/profiles and https://support.mozilla.org/en-US/user",
+        "see https://wiki.mozilla.org/Firefox:Home and https://wiki.mozilla.org/Firefox/Planning",
+        "see https://cwiki.apache.org/confluence/display/KAFKA/KIP-1 and confluence/display/~ there",
+        "see https://stackoverflow.com/users/login, https://stackoverflow.com/users/ and /users?tab=x",
+        "see https://en.wikipedia.org/w/index.php/Help:Contents and https://en.wikipedia.org/wiki/C++:_x",
+        "see https://hg.mozilla.org/mozilla-central/ and https://reviews.apache.org/r/1/",
     ):
         assert closure.judge(text, none) is None, text
         assert recording.redact_urls_in_text(text) == text, text

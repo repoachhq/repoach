@@ -11266,6 +11266,84 @@ ROWS: tuple[Row, ...] = (
             text="//1.build the list //2.get/set it //7.1.0.rc1/x, 163.com in prose, 3.14/2 and 10.5:3"
         ),
     ),
+    Row(
+        id="r9_account_route_mozilla_support_profile_url_is_rewritten",
+        source="PR #319 review round 9 (4689483333)",
+        inp=Sample(body="asked by https://support.mozilla.org/en-US/user/kvnuser9 today"),
+        outcome=Written(text="asked by https://forge.example.com/org/project today"),
+        markers=("kvnuser9", "support.mozilla.org"),
+    ),
+    Row(
+        id="r9_account_route_mozilla_wiki_user_bare_is_refused",
+        source="PR #319 review round 9 (4689483333)",
+        inp=Sample(body="notes at wiki.mozilla.org/User:Kvnuser9"),
+        outcome=Refused("tenant path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r9_account_route_apache_personal_space_bare_is_refused",
+        source="PR #319 review round 9 (4689483333)",
+        inp=Sample(stderr="see cwiki.apache.org/confluence/display/~kvnuser9/Notes"),
+        outcome=Refused("tenant path at exchanges[0].stderr"),
+    ),
+    Row(
+        id="r9_account_route_apache_personal_space_key_url_is_rewritten",
+        source="PR #319 review round 9 (4689483333)",
+        inp=Sample(
+            body="see https://cwiki.apache.org/confluence/spaces/viewspace.action?key=~kvnuser9 now"
+        ),
+        outcome=Written(text="see https://forge.example.com/org/project now"),
+        markers=("kvnuser9", "cwiki.apache.org"),
+    ),
+    Row(
+        id="r9_account_route_stack_overflow_id_alone_url_is_rewritten",
+        source="PR #319 review round 9 (4689483333)",
+        inp=Sample(body="see https://stackoverflow.com/users/918273645 for it"),
+        outcome=Written(text="see https://forge.example.com/users/org for it"),
+        markers=("918273645", "stackoverflow.com"),
+    ),
+    Row(
+        id="r9_account_route_stack_overflow_id_alone_bare_is_refused",
+        source="PR #319 review round 9 (4689483333)",
+        inp=Sample(body="see stackoverflow.com/users/918273645 for it"),
+        outcome=Refused("tenant path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r9_account_route_wikipedia_user_title_query_url_is_rewritten",
+        source="PR #319 review round 9 (4689483333)",
+        inp=Sample(
+            body="see https://en.wikipedia.org/w/index.php?title=User:Kvnuser9&action=history now"
+        ),
+        outcome=Written(text="see https://forge.example.com/org/project now"),
+        markers=("kvnuser9", "wikipedia.org"),
+    ),
+    Row(
+        id="r9_account_route_wikipedia_user_title_query_bare_is_refused",
+        source="PR #319 review round 9 (4689483333)",
+        inp=Sample(
+            body="[talk](//en.wikipedia.org/w/index.php?action=edit&title=User_talk%3AKvnuser9)"
+        ),
+        outcome=Refused("tenant path at exchanges[0].stdout[0].body"),
+    ),
+    Row(
+        id="r9_public_wiki_page_and_project_space_are_ordinary",
+        source="PR #319 review round 9 (4689483333)",
+        inp=Sample(
+            body="see https://en.wikipedia.org/w/index.php?title=Main_Page&oldid=1, https://wiki.mozilla.org/Firefox:Home, https://cwiki.apache.org/confluence/display/KAFKA/KIP-1 and https://support.mozilla.org/en-US/kb/x"
+        ),
+        outcome=Written(
+            text="see https://en.wikipedia.org/w/index.php?title=Main_Page&oldid=1, https://wiki.mozilla.org/Firefox:Home, https://cwiki.apache.org/confluence/display/KAFKA/KIP-1 and https://support.mozilla.org/en-US/kb/x"
+        ),
+    ),
+    Row(
+        id="r9_public_wiki_page_stack_overflow_listing_is_ordinary",
+        source="PR #319 review round 9 (4689483333)",
+        inp=Sample(
+            body="see https://stackoverflow.com/users?tab=Reputation and https://stackoverflow.com/users/login"
+        ),
+        outcome=Written(
+            text="see https://stackoverflow.com/users?tab=Reputation and https://stackoverflow.com/users/login"
+        ),
+    ),
 )
 
 
@@ -11718,10 +11796,10 @@ def test_the_planted_and_ordinary_split_is_computed_from_the_rows() -> None:
     refused = [row for row in ROWS if isinstance(row.outcome, Refused)]
     bounded = [row for row in ROWS if isinstance(row.outcome, Bounded)]
     assert (len(ROWS), len(planted), len(ordinary), len(refused), len(bounded)) == (
-        997,
-        694,
-        303,
-        126,
+        1007,
+        702,
+        305,
+        130,
         2,
     )
     assert len(residual) == 25

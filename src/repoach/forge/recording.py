@@ -985,10 +985,11 @@ def redact_urls_in_text(text: str) -> str:
             return match.group(0)
         if "@" in parts.netloc:
             return (redact_url(url) or url) + tail
-        if _kept_host(host) and not closure.is_tenant_path(host, parts.path):
+        target = f"{parts.path}?{parts.query}" if parts.query else parts.path
+        if _kept_host(host) and not closure.is_tenant_path(host, target):
             return _normalize_kept_url(parts) + tail
         rewritten = redact_url(url) or url
-        if _kept_host(host) and _identity_survives(host, parts.path, rewritten):
+        if _kept_host(host) and _identity_survives(host, target, rewritten):
             return match.group(0)
         return rewritten + tail
 
