@@ -21,6 +21,7 @@ from repoach.llm_proxy.providers.defaults import (
     ANTHROPIC_DEFAULT_BASE,
     CEREBRAS_DEFAULT_BASE,
     DEEPSEEK_DEFAULT_BASE,
+    GEMINI_DEFAULT_BASE,
     GROQ_DEFAULT_BASE,
     KIMI_DEFAULT_BASE,
     NVIDIA_NIM_DEFAULT_BASE,
@@ -40,6 +41,10 @@ THINKING_CLASSIFICATION: dict[str, ThinkingClass] = {
     "claude_code/opus": "hybrid",
     "claude_code/sonnet": "hybrid",
     "claude_code/haiku": "hybrid",
+    "gemini-2.5": "hybrid",
+    "gemini-3.": "hybrid",
+    "gemini-4-": "hybrid",
+    "antigravity/": "hybrid",
 }
 
 TransportType = Literal["openai_chat", "anthropic_messages"]
@@ -174,6 +179,22 @@ PROVIDER_DESCRIPTORS: dict[str, ProviderDescriptor] = {
         credential_attr="openai_compatible_api_key",
         base_url_attr="openai_compatible_base_url",
         capabilities=("chat", "streaming", "tools"),
+    ),
+    "gemini": ProviderDescriptor(
+        provider_id="gemini",
+        transport_type="openai_chat",
+        credential_env="GEMINI_API_KEY",
+        credential_url="https://aistudio.google.com/app/api-keys",
+        credential_attr="gemini_api_key",
+        default_base_url=GEMINI_DEFAULT_BASE,
+        base_url_attr="gemini_base_url",
+        capabilities=("chat", "streaming", "tools"),
+    ),
+    "antigravity": ProviderDescriptor(
+        provider_id="antigravity",
+        transport_type="anthropic_messages",
+        static_credential="antigravity-cli",
+        capabilities=("chat", "tools", "native_anthropic", "subscription"),
     ),
 }
 

@@ -110,6 +110,7 @@ ProviderKind = Literal[
     "",
     "anthropic",
     "claude_code",
+    "antigravity",
     "openai_compatible",
     "gemini",
     "gateway",
