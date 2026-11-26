@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 
 from repoach.llm_proxy.api._failover import peek_for_content
+from repoach.llm_proxy.providers.anthropic_messages import AnthropicMessagesTransport
 from repoach.llm_proxy.providers.base import ProviderConfig
 from repoach.llm_proxy.providers.catalog import PROVIDER_DESCRIPTORS
 from repoach.llm_proxy.providers.registry import _build_generic_anthropic
@@ -77,6 +78,41 @@ def test_direct_anthropic_reply_is_seen_as_content():
     peek = asyncio.run(peek_for_content(chunks))
     assert peek.got_content, "a normal Anthropic reply must not be an empty completion"
     assert peek.stream_done
+
+
+def test_event_mode_is_set_at_construction():
+    """The chunk mode is a constructor argument, not a later assignment.
+
+    The registry builder and any other construction path get event mode
+    from ``__init__``: the value lands on the instance while the class
+    default stays ``"line"``, and omitting the argument keeps that default.
+    """
+    descriptor = PROVIDER_DESCRIPTORS["anthropic"]
+    built = AnthropicMessagesTransport(
+        ProviderConfig(api_key="test-key"),
+        provider_name=descriptor.provider_id,
+        default_base_url=descriptor.default_base_url or "",
+        stream_chunk_mode="event",
+    )
+    assert built.__dict__["stream_chunk_mode"] == "event"
+    assert AnthropicMessagesTransport.stream_chunk_mode == "line"
+    assert _provider().__dict__["stream_chunk_mode"] == "event"
+    default = AnthropicMessagesTransport(
+        ProviderConfig(api_key="test-key"),
+        provider_name=descriptor.provider_id,
+        default_base_url=descriptor.default_base_url or "",
+    )
+    assert default.stream_chunk_mode == "line"
+    assert "stream_chunk_mode" not in default.__dict__
+
+
+def test_subclass_class_default_survives_super_init():
+    """OpenRouter keeps its class-level event mode through ``super().__init__``."""
+    from repoach.llm_proxy.providers.open_router.client import OpenRouterProvider
+
+    provider = OpenRouterProvider(ProviderConfig(api_key="test-key"))
+    assert provider.stream_chunk_mode == "event"
+    assert "stream_chunk_mode" not in provider.__dict__
 
 
 def test_line_chunks_would_hide_the_reply():

@@ -67,7 +67,8 @@ def _build_generic_anthropic(
     ``event:`` and ``data:`` lines together. In line mode no chunk ever
     carries both, so every direct Anthropic reply was classified
     ``empty_completion`` and the provider was breaker-tripped. Streaming
-    whole events lets the peek see the reply as content.
+    whole events lets the peek see the reply as content. The mode is a
+    constructor argument so the instance is never observable in line mode.
 
     Args:
         config: Provider configuration carrying the API key and base URL.
@@ -75,8 +76,8 @@ def _build_generic_anthropic(
             base URL.
 
     Returns:
-        The Anthropic Messages transport with ``stream_chunk_mode`` set to
-        ``"event"``.
+        The Anthropic Messages transport constructed with
+        ``stream_chunk_mode="event"``.
     """
     from repoach.llm_proxy.providers.anthropic_messages import AnthropicMessagesTransport
 
@@ -84,8 +85,8 @@ def _build_generic_anthropic(
         config,
         provider_name=descriptor.provider_id,
         default_base_url=descriptor.default_base_url or "",
+        stream_chunk_mode="event",
     )
-    provider.stream_chunk_mode = "event"
     return provider
 
 

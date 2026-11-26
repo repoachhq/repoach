@@ -18,7 +18,14 @@ StreamChunkMode = Literal["line", "event"]
 
 
 class AnthropicMessagesTransport(BaseProvider):
-    """Base class for providers that stream from an Anthropic-compatible endpoint."""
+    """Base class for providers that stream from an Anthropic-compatible endpoint.
+
+    Attributes:
+        stream_chunk_mode: How ``_iter_stream_chunks`` groups the upstream
+            SSE lines. ``"line"`` yields each line, ``"event"`` yields one
+            whole SSE event per chunk, which the failover peek needs to see
+            a reply as content. Subclasses may override the class default.
+    """
 
     stream_chunk_mode: StreamChunkMode = "line"
 
@@ -28,8 +35,23 @@ class AnthropicMessagesTransport(BaseProvider):
         *,
         provider_name: str,
         default_base_url: str,
+        stream_chunk_mode: StreamChunkMode | None = None,
     ):
+        """Create the transport and its HTTP client.
+
+        Args:
+            config: Provider configuration carrying the API key, base URL,
+                proxy and timeouts.
+            provider_name: Name used for logs and the scoped rate limiter.
+            default_base_url: Base URL used when ``config.base_url`` is unset.
+            stream_chunk_mode: Chunk mode for this instance. ``None`` keeps
+                the class default, so a subclass that declares its own
+                ``stream_chunk_mode`` (OpenRouter streams whole events) is
+                not reset to ``"line"`` by ``super().__init__``.
+        """
         super().__init__(config)
+        if stream_chunk_mode is not None:
+            self.stream_chunk_mode = stream_chunk_mode
         self._provider_name = provider_name
         self._api_key = config.api_key
         self._base_url = (config.base_url or default_base_url).rstrip("/")
