@@ -7789,7 +7789,12 @@ def test_a_git_error_reading_the_origin_is_a_refusal_whatever_the_locale(
 
 
 def _run_recorder(argv: list[str], cwd: Path, path: Path) -> subprocess.CompletedProcess[str]:
-    """Run the recorder's script in a real child whose PATH holds what ``path`` holds and nothing else."""
+    """Run the recorder's script in a real child whose PATH holds what ``path`` holds and nothing else.
+
+    ``sys.executable`` on a self-hosted toolcache has no rpath to its own libpython, so a parent
+    ``LD_LIBRARY_PATH`` is forwarded; without it the child dies with rc 127 before Python starts
+    (PR #319 CI).
+    """
     env = {
         "PATH": str(path),
         "HOME": str(cwd),
@@ -7798,6 +7803,9 @@ def _run_recorder(argv: list[str], cwd: Path, path: Path) -> subprocess.Complete
         "GIT_CONFIG_NOSYSTEM": "1",
         "PYTHONPATH": str(ROOT / "src"),
     }
+    ld = os.environ.get("LD_LIBRARY_PATH")
+    if ld:
+        env["LD_LIBRARY_PATH"] = ld
     script = str(ROOT / "scripts" / "record_forge_fixture.py")
     return subprocess.run(
         [sys.executable, script, "--forge", "github", "--case", "c", *argv],
@@ -7814,13 +7822,17 @@ def test_the_recorder_names_why_it_cannot_read_a_checkout_on_its_real_path(tmp_p
 
     A real child runs the script with a real PATH and no test double. The origin remote is read
     before the forge is selected, whose own ``git`` would fail with a traceback that prints the
-    checkout's path; nothing is recorded and nothing written.
+    checkout's path; nothing is recorded and nothing written. The "no repository" stand-in carries
+    a ``.git`` file whose gitdir is gone: git itself rules "not a git repository" before it would
+    ever climb to an ancestor checkout, so the refusal names the same exit 128 on a bare runner
+    and on a machine whose temporary tree sits inside one.
     """
     if shutil.which("git") is None:
         pytest.skip("git is not installed")
     repo = _checkout(tmp_path / "zqcheckout")
     bare = tmp_path / "zqbare"
     bare.mkdir()
+    (bare / ".git").write_text("gitdir: /nonexistent-zq\n", encoding="utf-8")
     empty = tmp_path / "bin-empty"
     empty.mkdir()
     with_git = tmp_path / "bin-git"
