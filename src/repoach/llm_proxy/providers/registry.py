@@ -61,6 +61,23 @@ def _build_generic_openai(config: ProviderConfig, descriptor: ProviderDescriptor
 def _build_generic_anthropic(
     config: ProviderConfig, descriptor: ProviderDescriptor
 ) -> BaseProvider:
+    """Build the direct Anthropic Messages transport in event chunk mode.
+
+    The failover peek parses one whole SSE event per chunk, that is the
+    ``event:`` and ``data:`` lines together. In line mode no chunk ever
+    carries both, so every direct Anthropic reply was classified
+    ``empty_completion`` and the provider was breaker-tripped. Streaming
+    whole events lets the peek see the reply as content.
+
+    Args:
+        config: Provider configuration carrying the API key and base URL.
+        descriptor: Catalog descriptor naming the provider and its default
+            base URL.
+
+    Returns:
+        The Anthropic Messages transport with ``stream_chunk_mode`` set to
+        ``"event"``.
+    """
     from repoach.llm_proxy.providers.anthropic_messages import AnthropicMessagesTransport
 
     provider = AnthropicMessagesTransport(
@@ -68,9 +85,6 @@ def _build_generic_anthropic(
         provider_name=descriptor.provider_id,
         default_base_url=descriptor.default_base_url or "",
     )
-    # The failover peek parses one whole SSE event per chunk (event: and
-    # data: lines together). Line chunks never carry both, so every direct
-    # Anthropic reply was judged an empty completion and breaker-tripped.
     provider.stream_chunk_mode = "event"
     return provider
 

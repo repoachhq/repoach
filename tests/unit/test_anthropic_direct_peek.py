@@ -3,6 +3,9 @@
 Before the fix, the generic anthropic transport streamed line chunks; the peek
 parses one whole SSE event per chunk, so a normal reply was classified
 empty_completion and the provider was breaker-tripped on every call.
+
+``_STREAM`` is the SSE shape recorded from api.anthropic.com on 2026-11-26
+(claude-haiku-5-5).
 """
 
 from __future__ import annotations
@@ -14,7 +17,6 @@ from repoach.llm_proxy.providers.base import ProviderConfig
 from repoach.llm_proxy.providers.catalog import PROVIDER_DESCRIPTORS
 from repoach.llm_proxy.providers.registry import _build_generic_anthropic
 
-# Shape recorded from api.anthropic.com on 2026-11-26 (claude-haiku-5-5).
 _STREAM = [
     "event: message_start",
     'data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_1","type":"message","role":"assistant","content":[],"stop_reason":null,"usage":{"input_tokens":18,"output_tokens":1}}}',
@@ -41,18 +43,35 @@ _STREAM = [
 
 
 class _FakeResponse:
+    """HTTP response stand-in that replays the recorded Anthropic stream."""
+
     async def aiter_lines(self):
+        """Yield the recorded SSE lines one by one, as httpx does.
+
+        Yields:
+            Each line of ``_STREAM``, blank separators included.
+        """
         for line in _STREAM:
             yield line
 
 
 def _provider():
+    """Build the direct Anthropic provider through the real registry builder.
+
+    Returns:
+        The transport as the proxy builds it for the ``anthropic`` descriptor.
+    """
     return _build_generic_anthropic(
         ProviderConfig(api_key="test-key"), PROVIDER_DESCRIPTORS["anthropic"]
     )
 
 
 def test_direct_anthropic_reply_is_seen_as_content():
+    """A normal direct Anthropic reply reaches the peek as content.
+
+    The registry builds the transport in event mode, so the peek sees the
+    text delta and the end of stream instead of an empty completion.
+    """
     provider = _provider()
     chunks = provider._iter_stream_chunks(_FakeResponse(), state=None, thinking_enabled=False)
     peek = asyncio.run(peek_for_content(chunks))
