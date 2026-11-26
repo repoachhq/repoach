@@ -63,11 +63,16 @@ def _build_generic_anthropic(
 ) -> BaseProvider:
     from repoach.llm_proxy.providers.anthropic_messages import AnthropicMessagesTransport
 
-    return AnthropicMessagesTransport(
+    provider = AnthropicMessagesTransport(
         config,
         provider_name=descriptor.provider_id,
         default_base_url=descriptor.default_base_url or "",
     )
+    # The failover peek parses one whole SSE event per chunk (event: and
+    # data: lines together). Line chunks never carry both, so every direct
+    # Anthropic reply was judged an empty completion and breaker-tripped.
+    provider.stream_chunk_mode = "event"
+    return provider
 
 
 _BESPOKE_FACTORIES: dict[str, ProviderFactory] = {
