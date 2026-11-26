@@ -276,7 +276,13 @@ def test_cli_degradation_matrix_unreachable_proxy_and_empty_db(tmp_path: Path) -
             "--db-path",
             str(db),
         ],
-        env={**os.environ, "REPOACH_OPENROUTER_API_KEY": ""},
+        env={
+            **os.environ,
+            "REPOACH_OPENROUTER_API_KEY": "",
+            "MODEL_OPUS": "nvidia_nim/z-ai/glm-5.2",
+            "MODEL_SONNET": "nvidia_nim/deepseek-ai/deepseek-v4-pro",
+            "MODEL_HAIKU": "nvidia_nim/z-ai/glm-5.2",
+        },
     )
     assert result.exit_code == 0, f"expected exit 0, got {result.exit_code}; stderr={result.stderr}"
     assert "proxy: unreachable" in result.stdout

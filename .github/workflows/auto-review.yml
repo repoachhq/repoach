@@ -492,6 +492,7 @@ jobs:
           REPOACH_KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
           REPOACH_GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           REPOACH_CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          REPOACH_ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # Capability chains.  These are not secret — they reference
           # public model names — so we can declare them inline.
           # Match the production .env used on the developer box.
@@ -1070,6 +1071,7 @@ jobs:
           REPOACH_KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
           REPOACH_GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           REPOACH_CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          REPOACH_ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # SP-LLM-SINGLE-SOURCE-OF-TRUTH (2026-05-05): chains live in
           # the version-controlled ``chains.env`` at the repo root.
           # The startup step below sources it so the same definition
