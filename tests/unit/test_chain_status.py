@@ -264,7 +264,15 @@ def test_cli_argv_parsing_and_exit_zero(tmp_path: Path) -> None:
 
 
 def test_cli_degradation_matrix_unreachable_proxy_and_empty_db(tmp_path: Path) -> None:
-    """Unbound proxy + empty db → exit 0, degradation lines rendered, no traceback."""
+    """Unbound proxy + empty db → exit 0, degradation lines rendered, no traceback.
+
+    The three tier chains are pinned to NIM heads so the degradation
+    matrix (unreachable proxy, no probes in window) is exercised
+    independently of whatever ``chains.env`` currently heads each tier
+    with: a non-NIM head short-circuits to ``UNMONITORED`` before the
+    probe lookup. That loss of monitoring for non-NIM heads (the
+    ``anthropic`` heads today) is tracked in ``docs/tech_debt.md`` row 111.
+    """
     db = tmp_path / "nonexistent"
     runner = CliRunner()
     result = runner.invoke(
