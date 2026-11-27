@@ -8,6 +8,7 @@ from repoach.llm_proxy.core.anthropic import get_user_facing_error_message
 from repoach.llm_proxy.providers.exceptions import (
     APIError,
     AuthenticationError,
+    BillingError,
     InvalidRequestError,
     OverloadedError,
     RateLimitError,
@@ -47,6 +48,39 @@ def _rate_limit_block_seconds(e: Exception, *, default_s: float, max_s: float) -
     return min(seconds, max_s)
 
 
+BILLING_REJECTION_MARKERS: tuple[str, ...] = ("credit balance is too low",)
+"""Lowercase phrases that mark a 400 as an account billing fault, not a malformed request.
+
+Anthropic answers an account without credits with HTTP 400
+``invalid_request_error`` and the message "Your credit balance is too low
+to access the Anthropic API" (SP-REVIEW-SURVIVES-TRANSPORT-FAILURES D12)."""
+
+
+def _is_billing_rejection(e: Exception) -> bool:
+    """Tell whether a 400 rejects the account's billing rather than the request.
+
+    Reads the exception text and, when the upstream body was already read
+    (the native Anthropic transport reads it before raising), the response
+    body. A streamed body that was never read is logged and treated as no
+    billing marker.
+
+    Args:
+        e: The raw upstream 400 exception.
+
+    Returns:
+        True when the text or body carries a :data:`BILLING_REJECTION_MARKERS` phrase.
+    """
+    texts = [str(e)]
+    response = getattr(e, "response", None)
+    if isinstance(response, httpx.Response):
+        try:
+            texts.append(response.text)
+        except httpx.ResponseNotRead as exc:
+            logger.debug("400 body not read, billing marker not checked: {}", exc)
+    haystack = " ".join(texts).lower()
+    return any(marker in haystack for marker in BILLING_REJECTION_MARKERS)
+
+
 def map_error(
     e: Exception,
     *,
@@ -59,6 +93,9 @@ def map_error(
     A 429 blocks ``limiter`` for the upstream's ``Retry-After`` value
     when present (capped at ``rate_limit_block_max_s``), else for
     ``rate_limit_block_default_s`` (SP-FAILOVER-SKIPS-BLOCKED-PROVIDER).
+    A 400 whose text or body says the credit balance is too low maps to
+    :class:`BillingError` (a 402), not :class:`InvalidRequestError`, so it
+    keeps striking the breaker (SP-REVIEW-SURVIVES-TRANSPORT-FAILURES D12).
     """
     message = get_user_facing_error_message(e)
     limiter = rate_limiter or GlobalRateLimiter.get_scoped_instance("error_mapping_default")
@@ -73,6 +110,8 @@ def map_error(
         )
         return RateLimitError(message, raw_error=str(e))
     if isinstance(e, openai.BadRequestError):
+        if _is_billing_rejection(e):
+            return BillingError(message, raw_error=str(e))
         return InvalidRequestError(message, raw_error=str(e))
     if isinstance(e, openai.InternalServerError):
         raw_message = str(e)
@@ -94,6 +133,8 @@ def map_error(
             )
             return RateLimitError(message, raw_error=str(e))
         if status == 400:
+            if _is_billing_rejection(e):
+                return BillingError(message, raw_error=str(e))
             return InvalidRequestError(message, raw_error=str(e))
         if status >= 500:
             if status in (502, 503, 504):

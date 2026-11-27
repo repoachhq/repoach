@@ -24,6 +24,7 @@ import time
 from collections.abc import Callable, Iterator
 
 import httpx
+import openai
 import pytest
 from loguru import logger
 
@@ -33,7 +34,12 @@ from repoach.llm_proxy.api.services import ClaudeProxyService, _classify_failove
 from repoach.llm_proxy.config.settings import Settings
 from repoach.llm_proxy.providers.base import BaseProvider, ProviderConfig
 from repoach.llm_proxy.providers.catalog import PROVIDER_DESCRIPTORS
-from repoach.llm_proxy.providers.exceptions import UpstreamStatusError
+from repoach.llm_proxy.providers.error_mapping import map_error
+from repoach.llm_proxy.providers.exceptions import (
+    BillingError,
+    InvalidRequestError,
+    UpstreamStatusError,
+)
 from repoach.llm_proxy.providers.open_router.client import OpenRouterProvider
 from repoach.llm_proxy.providers.registry import _build_generic_anthropic
 from repoach.llm_proxy.routing import get_breaker
@@ -48,6 +54,15 @@ TEMPERATURE_REJECTION = {
         "message": "`temperature` is deprecated for this model.",
     },
     "request_id": "req_011CVtemperature",
+}
+CREDIT_REJECTION = {
+    "type": "error",
+    "error": {
+        "type": "invalid_request_error",
+        "message": "Your credit balance is too low to access the Anthropic API. "
+        "Please go to Plans & Billing to upgrade or purchase credits.",
+    },
+    "request_id": "req_011CVcredits",
 }
 QUARANTINE_THRESHOLD = 3
 
@@ -90,7 +105,7 @@ _SUCCESS_STREAM = "".join(
     f"event: {name}\ndata: {json.dumps(payload)}\n\n" for name, payload in _SUCCESS_EVENTS
 )
 
-ProviderBuilder = Callable[[int], BaseProvider]
+ProviderBuilder = Callable[..., BaseProvider]
 
 
 @pytest.fixture
@@ -121,7 +136,7 @@ def _status_body(status_code: int) -> dict:
     return {"type": "error", "error": {"type": "api_error", "message": f"HTTP {status_code}"}}
 
 
-def _anthropic_provider(status_code: int) -> BaseProvider:
+def _anthropic_provider(status_code: int, body: dict | None = None) -> BaseProvider:
     """Build the direct Anthropic transport the way the proxy registry does.
 
     The fake upstream answers ``status_code`` for ``REJECTING_MODEL`` and a
@@ -129,6 +144,7 @@ def _anthropic_provider(status_code: int) -> BaseProvider:
 
     Args:
         status_code: The HTTP status returned for ``REJECTING_MODEL``.
+        body: The error body returned with it; :func:`_status_body` when ``None``.
 
     Returns:
         The registry-built transport whose HTTP client talks to the fake.
@@ -144,7 +160,8 @@ def _anthropic_provider(status_code: int) -> BaseProvider:
             The rejection for ``REJECTING_MODEL``, a stream otherwise.
         """
         if json.loads(request.content)["model"] == REJECTING_MODEL:
-            return httpx.Response(status_code, json=_status_body(status_code), request=request)
+            error_body = body if body is not None else _status_body(status_code)
+            return httpx.Response(status_code, json=error_body, request=request)
         return httpx.Response(
             200,
             content=_SUCCESS_STREAM.encode(),
@@ -161,11 +178,12 @@ def _anthropic_provider(status_code: int) -> BaseProvider:
     return provider
 
 
-def _open_router_provider(status_code: int) -> BaseProvider:
+def _open_router_provider(status_code: int, body: dict | None = None) -> BaseProvider:
     """Build the OpenRouter transport with a fake upstream answering ``status_code``.
 
     Args:
         status_code: The HTTP status every call receives.
+        body: The error body returned with it; :func:`_status_body` when ``None``.
 
     Returns:
         The OpenRouter transport whose HTTP client talks to the fake.
@@ -180,7 +198,8 @@ def _open_router_provider(status_code: int) -> BaseProvider:
         Returns:
             The fake upstream response.
         """
-        return httpx.Response(status_code, json=_status_body(status_code), request=request)
+        error_body = body if body is not None else _status_body(status_code)
+        return httpx.Response(status_code, json=error_body, request=request)
 
     provider = OpenRouterProvider(ProviderConfig(api_key="test-key"))
     provider._client = httpx.AsyncClient(
@@ -361,6 +380,7 @@ def test_invalid_request_400_still_fails_over_to_next_candidate(
     ("status_code", "reason"),
     [
         (401, "auth_failed_propagated"),
+        (403, "auth_failed_propagated"),
         (402, "provider_402_propagated"),
         (429, "rate_limited"),
         (503, "provider_5xx"),
@@ -398,3 +418,97 @@ def test_request_rejection_statuses_classify_as_invalid_request() -> None:
     assert _classify_failover_reason(UpstreamStatusError(422)) == "invalid_request"
     assert _classify_failover_reason(UpstreamStatusError(404)) == "provider_404"
     assert _classify_failover_reason(UpstreamStatusError(402)) == "provider_402"
+
+
+@pytest.mark.parametrize("build_provider", [_anthropic_provider, _open_router_provider])
+def test_credit_balance_400_still_strikes_as_billing(
+    monkeypatch: pytest.MonkeyPatch,
+    records: list[dict],
+    build_provider: ProviderBuilder,
+) -> None:
+    """A 400 "credit balance is too low" is a billing fault and keeps striking.
+
+    Anthropic sends it as a 400 ``invalid_request_error``, but no request
+    shape can fix an empty account: every call to the provider fails the
+    same way. It strikes the breaker as a 402 does, with the account-wide
+    reason, and is never spared as a rejected request.
+    """
+    provider = build_provider(400, CREDIT_REJECTION)
+    service = _service(monkeypatch, provider)
+    candidate = _candidate(f"{_provider_id(provider)}/{REJECTING_MODEL}")
+    ref = ModelRef.parse(candidate.provider_model_ref)
+
+    _dispatch(service, [candidate])
+
+    assert get_breaker().is_down(ref, time.monotonic())
+    assert get_breaker()._consecutive_failures[ref] == 1
+    assert get_breaker()._down_reason[ref] == "provider_402_propagated"
+    events = _failover_events(records)
+    assert [event["breaker_strike"] for event in events] == [True]
+    assert [event["primary_reason"] for event in events] == ["provider_402"]
+    assert [event["upstream_error_type"] for event in events] == ["billing_error"]
+
+
+@pytest.mark.parametrize("build_provider", [_anthropic_provider, _open_router_provider])
+def test_timeout_still_strikes(
+    monkeypatch: pytest.MonkeyPatch,
+    records: list[dict],
+    build_provider: ProviderBuilder,
+) -> None:
+    """A read timeout carries no status and keeps striking as ``empty_completion``.
+
+    The transports degrade it to an error event without a status, as before
+    this change, so the dispatcher records the same reason and strike.
+    """
+    provider = build_provider(200)
+
+    async def timing_out(request: httpx.Request) -> httpx.Response:
+        """Time out every call.
+
+        Args:
+            request: The outgoing Messages request.
+
+        Raises:
+            httpx.ReadTimeout: Always.
+        """
+        raise httpx.ReadTimeout("read timed out", request=request)
+
+    provider._client = httpx.AsyncClient(
+        base_url="https://upstream.test/v1", transport=httpx.MockTransport(timing_out)
+    )
+    service = _service(monkeypatch, provider)
+    candidate = _candidate(f"{_provider_id(provider)}/{REJECTING_MODEL}")
+    ref = ModelRef.parse(candidate.provider_model_ref)
+
+    _dispatch(service, [candidate])
+
+    assert get_breaker().is_down(ref, time.monotonic())
+    assert get_breaker()._consecutive_failures[ref] == 1
+    events = _failover_events(records)
+    assert [event["breaker_strike"] for event in events] == [True]
+    assert [event["primary_reason"] for event in events] == ["empty_completion"]
+
+
+def test_credit_balance_400_maps_to_billing_error() -> None:
+    """Both 400 shapes carrying the credit message map to a 402 ``BillingError``."""
+    request = httpx.Request("POST", "https://api.anthropic.test/v1/messages")
+    credit_response = httpx.Response(400, json=CREDIT_REJECTION, request=request)
+    temperature_response = httpx.Response(400, json=TEMPERATURE_REJECTION, request=request)
+
+    credit_http = map_error(httpx.HTTPStatusError("400", request=request, response=credit_response))
+    credit_openai = map_error(
+        openai.BadRequestError(
+            "Error code: 400", response=credit_response, body=CREDIT_REJECTION["error"]
+        )
+    )
+    temperature_http = map_error(
+        httpx.HTTPStatusError("400", request=request, response=temperature_response)
+    )
+
+    assert isinstance(credit_http, BillingError)
+    assert credit_http.status_code == 402
+    assert isinstance(credit_openai, BillingError)
+    assert isinstance(temperature_http, InvalidRequestError)
+    assert not isinstance(temperature_http, BillingError)
+    assert _classify_failover_reason(credit_http) == "provider_402"
+    assert _classify_failover_reason(temperature_http) == "invalid_request"

@@ -155,8 +155,12 @@ Measured 2026-11-04, `origin/develop` `b8f7b3a`.
   per-candidate quarantine (a model id the provider does not serve,
   SP-CHAIN-DEAD-HOP-QUARANTINE); 401/403, 402, 429, 5xx and transport
   errors strike as before, now with their real reason on the native
-  Anthropic transport instead of `empty_completion`. Not in this change:
-  removing `temperature` from the callers.
+  Anthropic transport instead of `empty_completion`. A 400 whose text or
+  body says "credit balance is too low" (Anthropic's answer to an account
+  without credits) is a billing fault, not a request fault: `map_error`
+  maps it to a 402 `BillingError` (`billing_error`), so it strikes as
+  `provider_402` and quarantines the provider account-wide. Not in this
+  change: removing `temperature` from the callers.
 - D5. A submitted review never starts a bot review: it moves no head
   (F7). It runs the `rearm` job only (60 s coalesce, its own group), so
   the run concludes `success` and merge-on-ci re-judges the merge (F8).
@@ -176,7 +180,7 @@ Measured 2026-11-04, `origin/develop` `b8f7b3a`.
 - G8: a preflight-refused chain answers 502 with `Retry-After`; `GatewayTransportError.retry_after_s` carries it; the window waits it out or gives up (D7).
 - G9: both job proxies of `auto-review.yml` keep their breaker in `runner.temp` (D8); `report_configured_models_gone` names each configured `provider_410` entry at start (D9).
 - G10: `review pr` prints `providers: …` on stderr after its usage line (D10).
-- G11: a 400 or 422 from a provider fails over without a breaker strike and is logged with its status and error type; 401, 402, 429 and 503 still strike (D12).
+- G11: a 400 or 422 from a provider fails over without a breaker strike and is logged with its status and error type; 401, 402, 403, 429, 503, a read timeout and a 400 "credit balance is too low" still strike (D12).
 - G6: `docs/merge_gate.md` states the window, the one automatic retry, what starts a review and what re-arms a merge; `docs/tech_debt.md` carries the #288 measurement as a row, closed by this PR.
 
 ## Non-Goals
@@ -299,7 +303,7 @@ flowchart TD
 - [ ] AC6: `pytest -q tests/unit/test_proxy_output_cap_is_not_transport.py tests/unit/test_claude_code_output_cap.py` → green: the recorded `max_output_tokens` JSON raises `OutputCapExceededError` whose message is the CLI's `result`, not its usage counts; through the proxy app it trips nothing and reaches the gateway client as `GatewayOutputCapError`; the Sentinel spawns the CLI once and its review is `incomplete_cause: other`; a chain tripped for 120 s answers `Retry-After: 120` and the window waits 120 s, one tripped for 7 days is given up at once; a configured 410 entry is named at start; both job proxies keep their breaker in `runner.temp`; the CLI's cap is `max_tokens + 32000`. Today (`b8f7b3a`): the first file does not exist; in the second, the cap equals `max_tokens`.
 - [ ] AC7: `pytest -q tests/integration/test_review_survives_transport_failures_end_to_end.py` → green: #288's 220 s of 502s inside the window, four reviewers approve and `review pr` does not exit 3; past the window it exits 3 with `incomplete_cause: transport` and today's summary line. Today: the file does not exist.
 - [ ] AC8: `pytest -q tests/unit/test_review_survives_transport_failures.py -k served` → green: a run whose Sentinel never answered and whose judge answered after one failure reports `providers: Sentinel none served, <n> failed (GatewayTransportError); Refuter fake/opus, 1 failed (GatewayTransportError)`. Today: no such line.
-- [ ] AC9: `pytest -q tests/unit/test_proxy_request_errors_spare_breaker.py` → green: `test_invalid_request_400_fails_over_without_breaker_strike` (direct Anthropic and OpenRouter: four 400 `invalid_request_error` dispatches, no trip, no consecutive-failure count, no `breaker_quarantined`, each `proxy_chain_failover_fired` with `primary_reason=invalid_request`, `upstream_status_code=400`, `upstream_error_type=invalid_request_error`, `breaker_strike=False`), `test_invalid_request_400_still_fails_over_to_next_candidate`, `test_outage_statuses_still_strike` (401, 402, 429, 503 on both transports: one strike with the real reason) and `test_request_rejection_statuses_classify_as_invalid_request`. Today (`dfe3d67`): 12 failed; the direct Anthropic 400 is tripped as `empty_completion` after `PEEK_DECISION reason=output_tokens_zero`.
+- [ ] AC9: `pytest -q tests/unit/test_proxy_request_errors_spare_breaker.py` → green: `test_invalid_request_400_fails_over_without_breaker_strike` (direct Anthropic and OpenRouter: four 400 `invalid_request_error` dispatches, no trip, no consecutive-failure count, no `breaker_quarantined`, each `proxy_chain_failover_fired` with `primary_reason=invalid_request`, `upstream_status_code=400`, `upstream_error_type=invalid_request_error`, `breaker_strike=False`), `test_invalid_request_400_still_fails_over_to_next_candidate`, `test_outage_statuses_still_strike` (401, 403, 402, 429, 503 on both transports: one strike with the real reason), `test_credit_balance_400_still_strikes_as_billing` (both transports: one strike, `provider_402`, `billing_error`), `test_timeout_still_strikes`, `test_credit_balance_400_maps_to_billing_error` and `test_request_rejection_statuses_classify_as_invalid_request`. Today (`dfe3d67`): 12 failed; the direct Anthropic 400 is tripped as `empty_completion` after `PEEK_DECISION reason=output_tokens_zero`.
 - [ ] AC4: `repoach arch check --base develop` → ok.
 - [ ] AC5: `docs/merge_gate.md` names the transport window, the one automatic retry, what starts a review and what re-arms a merge.
 

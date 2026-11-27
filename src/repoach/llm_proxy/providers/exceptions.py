@@ -78,6 +78,28 @@ class OverloadedError(ProviderError):
         )
 
 
+class BillingError(ProviderError):
+    """Raised when the provider refuses to serve because the account cannot pay.
+
+    Anthropic answers a request from an account without credits with HTTP
+    400 ``invalid_request_error`` ("Your credit balance is too low to access
+    the Anthropic API"). The status says the request is malformed; the
+    message says the account is out of credits, which every request to the
+    provider will hit. It is mapped to a 402 ``billing_error`` so the
+    failover dispatcher strikes the breaker as it does for a 402, instead of
+    sparing it as a rejected request (SP-REVIEW-SURVIVES-TRANSPORT-FAILURES
+    D12).
+    """
+
+    def __init__(self, message: str, raw_error: Any = None):
+        super().__init__(
+            message,
+            status_code=402,
+            error_type="billing_error",
+            raw_error=raw_error,
+        )
+
+
 class APIError(ProviderError):
     """Raised when the provider returns a generic API error."""
 

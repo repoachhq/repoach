@@ -26,6 +26,7 @@ from repoach.llm_proxy.providers.base import BaseProvider
 from repoach.llm_proxy.providers.exceptions import (
     APIError,
     AuthenticationError,
+    BillingError,
     InvalidRequestError,
     OutputCapExceededError,
     OverloadedError,
@@ -94,7 +95,9 @@ def _classify_failover_reason(exc: BaseException) -> str:
     dashboards can group fallbacks by upstream symptom regardless of
     which provider raised them. A 400 or 422 is ``invalid_request``
     whichever way it arrives (:data:``REQUEST_REJECTION_STATUSES``), so it
-    never strikes the breaker. ``FirstByteTimeoutError`` is checked
+    never strikes the breaker; a 400 the transport mapped to
+    :class:``BillingError`` (credit balance too low) arrives as a 402 and is
+    ``provider_402``, which does. ``FirstByteTimeoutError`` is checked
     BEFORE the generic ``"timeout"`` substring test — per
     SP-PROXY-FIRST-BYTE-DEADLINE its class name itself contains
     "Timeout", so testing the substring first would silently collapse
@@ -131,6 +134,8 @@ def _classify_failover_reason(exc: BaseException) -> str:
         return "provider_5xx"
     if isinstance(exc, AuthenticationError):
         return "auth_failed"
+    if isinstance(exc, BillingError):
+        return "provider_402"
     if isinstance(exc, InvalidRequestError):
         return INVALID_REQUEST_REASON
     if isinstance(exc, APIError):
