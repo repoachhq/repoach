@@ -47,7 +47,7 @@ python_bin="${PYTHON:-python}"
 repo="$(git rev-parse --show-toplevel)"
 
 resolve() {
-    git -C "$repo" rev-parse --verify --quiet --end-of-options "$1^{commit}"
+    git -C "$repo" rev-parse --verify --quiet --end-of-options "$1^{commit}" 2>/dev/null
 }
 
 if ! reader_sha="$(resolve "$reader_ref")" ; then

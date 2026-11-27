@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import httpx
@@ -80,12 +81,21 @@ def test_chain_status_end_to_end_degraded_environment(tmp_path: Path) -> None:
 
     Asserts exit code 0, the expected degraded digest lines, and no
     traceback on stderr (fail-open contract G4 of SP-CHAIN-STATUS-DIGEST).
+
+    The command runs this tree's code through the interpreter running the
+    suite, not whichever ``repoach`` is first on ``PATH``. The three tier
+    chains are pinned to NIM heads, as in the unit degradation matrix of
+    ``tests/unit/test_chain_status.py``: a non-NIM head short-circuits to
+    ``UNMONITORED`` before the probe lookup, so the ``no probes in window``
+    line would otherwise depend on what ``chains.env`` heads each tier with.
     """
     db_path = tmp_path / "db" / "repoach.db"
     db_path.parent.mkdir()
 
     result = subprocess.run(
         [
+            sys.executable,
+            "-m",
             "repoach",
             "chain-status",
             "--db-path",
@@ -97,7 +107,13 @@ def test_chain_status_end_to_end_degraded_environment(tmp_path: Path) -> None:
         text=True,
         cwd=str(_REPO),
         timeout=30,
-        env={**os.environ, "REPOACH_OPENROUTER_API_KEY": ""},
+        env={
+            **os.environ,
+            "REPOACH_OPENROUTER_API_KEY": "",
+            "MODEL_OPUS": "nvidia_nim/z-ai/glm-5.2",
+            "MODEL_SONNET": "nvidia_nim/deepseek-ai/deepseek-v4-pro",
+            "MODEL_HAIKU": "nvidia_nim/z-ai/glm-5.2",
+        },
     )
 
     assert result.returncode == 0, (
