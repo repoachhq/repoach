@@ -165,7 +165,7 @@ jobs:
                 || github.event.inputs.pr_number }}
       cancel-in-progress: ${{ github.actor != 'github-actions[bot]' }}
     runs-on: ${{ vars.REPOACH_REVIEW_RUNNER || vars.REPOACH_RUNNER || 'self-hosted' }}
-    # SP-CI-SECRETS-ISOLATION follow-up: the six provider keys live
+    # SP-CI-SECRETS-ISOLATION follow-up: the seven provider keys live
     # ONLY in the ``bots`` Environment (no repo-level copies), so this
     # job binds to it too — it boots the proxy sidecar and needs them.
     # Caveat: a future protection rule on ``bots`` (required reviewer,
@@ -482,7 +482,7 @@ jobs:
         # is now proxy-only.  Boot the proxy in the background and
         # block until /health responds, then run the review CLI
         # against it.  All provider API keys (NIM, OpenRouter,
-        # DeepSeek, Kimi, Groq, Cerebras) are consumed by the proxy
+        # DeepSeek, Kimi, Groq, Cerebras, Anthropic) are consumed by the proxy
         # — agent_loop never touches them directly.
         env:
           # Provider credentials — consumed by the proxy.
@@ -492,6 +492,7 @@ jobs:
           REPOACH_KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
           REPOACH_GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           REPOACH_CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          REPOACH_ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # Capability chains.  These are not secret — they reference
           # public model names — so we can declare them inline.
           # Match the production .env used on the developer box.
@@ -734,7 +735,7 @@ jobs:
     # design (the Coder gates run ruff + the pytest matrix on the
     # fixed tree, and the fix loop edits and pushes that tree).  The
     # containment is therefore the actor gate above plus this
-    # ``bots`` Environment: move the six provider secrets into it so
+    # ``bots`` Environment: move the seven provider secrets into it so
     # they exist only where PR code runs deliberately, and add a
     # required-reviewer protection on the Environment if the threat
     # model ever changes (collaborators, public repo).
@@ -1070,6 +1071,7 @@ jobs:
           REPOACH_KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
           REPOACH_GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           REPOACH_CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          REPOACH_ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # SP-LLM-SINGLE-SOURCE-OF-TRUTH (2026-05-05): chains live in
           # the version-controlled ``chains.env`` at the repo root.
           # The startup step below sources it so the same definition

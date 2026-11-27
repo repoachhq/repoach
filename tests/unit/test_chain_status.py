@@ -264,7 +264,15 @@ def test_cli_argv_parsing_and_exit_zero(tmp_path: Path) -> None:
 
 
 def test_cli_degradation_matrix_unreachable_proxy_and_empty_db(tmp_path: Path) -> None:
-    """Unbound proxy + empty db → exit 0, degradation lines rendered, no traceback."""
+    """Unbound proxy + empty db → exit 0, degradation lines rendered, no traceback.
+
+    The three tier chains are pinned to NIM heads so the degradation
+    matrix (unreachable proxy, no probes in window) is exercised
+    independently of whatever ``chains.env`` currently heads each tier
+    with: a non-NIM head short-circuits to ``UNMONITORED`` before the
+    probe lookup. That loss of monitoring for non-NIM heads (the
+    ``anthropic`` heads today) is tracked in ``docs/tech_debt.md`` row 111.
+    """
     db = tmp_path / "nonexistent"
     runner = CliRunner()
     result = runner.invoke(
@@ -276,7 +284,13 @@ def test_cli_degradation_matrix_unreachable_proxy_and_empty_db(tmp_path: Path) -
             "--db-path",
             str(db),
         ],
-        env={**os.environ, "REPOACH_OPENROUTER_API_KEY": ""},
+        env={
+            **os.environ,
+            "REPOACH_OPENROUTER_API_KEY": "",
+            "MODEL_OPUS": "nvidia_nim/z-ai/glm-5.2",
+            "MODEL_SONNET": "nvidia_nim/deepseek-ai/deepseek-v4-pro",
+            "MODEL_HAIKU": "nvidia_nim/z-ai/glm-5.2",
+        },
     )
     assert result.exit_code == 0, f"expected exit 0, got {result.exit_code}; stderr={result.stderr}"
     assert "proxy: unreachable" in result.stdout
