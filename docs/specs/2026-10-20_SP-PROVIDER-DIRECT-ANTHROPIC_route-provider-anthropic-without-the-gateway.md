@@ -1,17 +1,17 @@
 ---
 id: SP-PROVIDER-DIRECT-ANTHROPIC
 title: Route REPOACH_PROVIDER=anthropic to the Anthropic API without the gateway
-version: 0.3
+version: 0.4
 status: delivered
 author: agent
 created: 2026-10-20
-updated: 2026-10-20
+updated: 2026-11-27
 
 owns:
-  code: [tests/unit/test_doctor_provider_route.py, tests/unit/test_provider_direct_anthropic.py]
+  code: [tests/unit/test_doctor_provider_route.py, tests/unit/test_provider_direct_anthropic.py, tests/unit/test_anthropic_sampling_params.py]
   resources: []
 
-depends_on: [SP-UNIVERSAL-PROVIDERS, SP-UNIVERSAL-INSTALL, SP-UNIVERSAL-PROJECT-CONFIG, SP-BYO-PROVIDERS, SP-AGENT-THINKING-CONTROL, SP-PROVIDER-INIT-DEDUP, SP-RETRY-BACKOFF-DEDUP]
+depends_on: [SP-UNIVERSAL-PROVIDERS, SP-UNIVERSAL-INSTALL, SP-UNIVERSAL-PROJECT-CONFIG, SP-BYO-PROVIDERS, SP-AGENT-THINKING-CONTROL, SP-PROVIDER-INIT-DEDUP, SP-RETRY-BACKOFF-DEDUP, SP-BUDGET-RETRY-FIXES, SP-PROXY-FIRST-BYTE-DEADLINE, SP-CHAINS-THINKING-CLASS, SP-PROVIDER-TRANSPORT-SPI]
 provides_to: []
 
 constraints:
@@ -43,6 +43,19 @@ Found while delivering: the gateway's `anthropic` descriptor posted to
 `ci review` loopback gateway could never have reached the API either.
 `ANTHROPIC_DEFAULT_BASE` now carries `/v1`.
 
+**0.4 (2026-11-27): Claude 5.5 rejects sampling fields.** Measured on
+api.anthropic.com: `claude-opus-5-5`, `claude-sonnet-5-5` and
+`claude-haiku-5-5` answer HTTP 400 `invalid_request_error`
+"`temperature` is deprecated for this model." for any `temperature`, and
+the same for `top_p` and `top_k`; without them, 200. Every reviewer sends a
+temperature (agent loop 0.1, refuter 0.0), so in CI run 45986316427 each
+anthropic call was a 400, the peek classified it `output_tokens_zero` and
+the breaker quarantined Anthropic for the job. The `anthropic` catalog
+descriptor now lists those models in `sampling_fixed_models`, and
+`AnthropicMessagesTransport` omits `temperature`, `top_p` and `top_k` for
+them on both paths (gateway registry and in-process direct provider). No
+retry on 400; other models and providers are unchanged (G5, AC7).
+
 ## Context
 
 Measured 2026-10-20 plugging repoach into Yoob (GitLab, no gateway):
@@ -61,6 +74,7 @@ Measured 2026-10-20 plugging repoach into Yoob (GitLab, no gateway):
 - G1 (delivered): `[provider].kind = "anthropic"` (or `REPOACH_PROVIDER=anthropic`) with `REPOACH_ANTHROPIC_API_KEY`, else `ANTHROPIC_API_KEY` in the environment or `~/.config/repoach/env` → the agent loop calls the Anthropic Messages API in-process through the gateway's own `AnthropicMessagesTransport` and translation helpers (made public in `llm_proxy/api/agent_dispatcher.py`), no proxy, no `REPOACH_LLM_PROXY_BASE_URL`, no `REPOACH_ANTHROPIC_AUTH_TOKEN`.
 - G2 (delivered): tier → model id from `[provider].opus/sonnet/haiku`, else the SP-UNIVERSAL-PROVIDERS G3 defaults.
 - G3 (delivered): transport failures surface as `GatewayTransportError` (retried by the reviewer backoff, then `ERROR` per SP-REVIEW-TRANSPORT-ERROR-VERDICT); a 401 is `GatewayError` naming the variable that supplied the key, never its value.
+- G5 (0.4): a model listed in the `anthropic` descriptor's `sampling_fixed_models` never receives `temperature`, `top_p` or `top_k`, on the gateway and the direct path; every other model and provider keeps them.
 - G4 (shipped): `doctor` prints `provider=<kind> (<source>; not routed)` and `provider_route=gateway (<url>)` or `provider_route=none`, and for `anthropic` `provider_credential=<NAME> (present)` (first of `REPOACH_ANTHROPIC_API_KEY`, `ANTHROPIC_API_KEY`) or `provider_credential=none (reads REPOACH_ANTHROPIC_API_KEY, then ANTHROPIC_API_KEY)`; with no gateway URL it fails rc 2 with `provider <kind>: not routed, set REPOACH_LLM_PROXY_BASE_URL`. Since G1 shipped: `provider=anthropic (<source>)`, `provider_route=direct (anthropic)`, and a missing key is a doctor problem (rc 2) naming both variables.
 
 ## Non-Goals
@@ -95,6 +109,7 @@ Measured 2026-10-20 plugging repoach into Yoob (GitLab, no gateway):
 - Adds dependency (when G1 lands): `agent_engine` → `llm_proxy.providers.anthropic_messages` (SP-PROVIDER-INIT-DEDUP) and the dispatcher's translation (SP-AGENT-THINKING-CONTROL).
 - Today: `cli/doctor_cmds.py` reads the resolved `[provider].kind` (SP-UNIVERSAL-PROJECT-CONFIG).
 - Adds dependency (0.3): SP-PROVIDER-DIRECT-ANTHROPIC -> SP-RETRY-BACKOFF-DEDUP (its AC5 test drives a real reviewer to prove a rejected key is one request, not a retry schedule).
+- Adds dependency (0.4): SP-PROVIDER-DIRECT-ANTHROPIC -> SP-BUDGET-RETRY-FIXES, SP-PROXY-FIRST-BYTE-DEADLINE, SP-CHAINS-THINKING-CLASS, SP-PROVIDER-TRANSPORT-SPI (the AC7 test serves the real proxy app: its failover service, settings, the provider catalog and the registry builder).
 
 ## Diagram
 ```mermaid
@@ -112,6 +127,7 @@ flowchart TD
 - [x] AC3b: `pytest -q tests/unit/test_doctor_provider_route.py::test_anthropic_credential_order_never_prints_the_value` → green: both set → `REPOACH_ANTHROPIC_API_KEY (present)`; only the second → `ANTHROPIC_API_KEY (present)`; none → the `reads …` line; no value in the output.
 - [ ] AC4: `REPOACH_PROVIDER=anthropic ANTHROPIC_API_KEY=$KEY repoach review pr <n> --dry-run` with no gateway process → rc 0 or 2, `len(reviews) == 4`, no `ERROR`. Not run: no Anthropic key on the measuring machine (`docs/tech_debt.md`); the same path end to end is pinned against a loopback HTTP server by AC5, and the `claude_code` sibling was measured live (SP-UNIVERSAL-PROVIDERS AC3b).
 - [x] AC5: `pytest -q tests/unit/test_provider_direct_anthropic.py` → green (a real loopback HTTP server, not `httpx.MockTransport`: the transport builds its own client) with an `httpx.MockTransport` answering the Messages SSE stream: one `AgentResponse` per call; a 401 → `GatewayError` naming the variable; a connect error → `GatewayTransportError`.
+- [x] AC7: `pytest -q tests/unit/test_anthropic_sampling_params.py` → green: a reviewer turn (temperature 0.0 and 0.1) through `ProxyGatewayClient` → `/v1/agent` → the registry-built `anthropic` transport, and through the in-process provider, posts no `temperature`/`top_p`/`top_k` for `claude-{opus,sonnet,haiku}-5-5`; `claude-sonnet-5` and `open_router` keep the temperature. Live 2026-11-27: the same turn to `claude-sonnet-5-5` → HTTP 200 with text; with the omission disabled → HTTP 400 "`temperature` is deprecated for this model."
 - [x] AC6: `pytest -q tests/unit/test_doctor_provider_route.py::test_anthropic_with_its_key_is_direct_even_beside_a_gateway` → green: `provider_route=direct (anthropic)`, no provider problem (wording follows SP-UNIVERSAL-PROVIDERS: `direct (<kind>)`).
 
 ## Open Questions

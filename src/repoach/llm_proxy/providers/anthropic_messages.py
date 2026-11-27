@@ -15,6 +15,8 @@ from repoach.llm_proxy.providers.error_mapping import map_error, provider_error_
 ANTHROPIC_DEFAULT_MAX_TOKENS = 81920
 ANTHROPIC_MESSAGES_API_VERSION = "2023-06-01"
 StreamChunkMode = Literal["line", "event"]
+SAMPLING_PARAMS: tuple[str, ...] = ("temperature", "top_p", "top_k")
+"""Request fields omitted for a model in the transport's ``sampling_fixed_models``."""
 
 
 class AnthropicMessagesTransport(BaseProvider):
@@ -36,6 +38,7 @@ class AnthropicMessagesTransport(BaseProvider):
         provider_name: str,
         default_base_url: str,
         stream_chunk_mode: StreamChunkMode | None = None,
+        sampling_fixed_models: frozenset[str] = frozenset(),
     ):
         """Create the transport and its HTTP client.
 
@@ -48,11 +51,16 @@ class AnthropicMessagesTransport(BaseProvider):
                 the class default, so a subclass that declares its own
                 ``stream_chunk_mode`` (OpenRouter streams whole events) is
                 not reset to ``"line"`` by ``super().__init__``.
+            sampling_fixed_models: Upstream model ids whose requests must
+                not carry ``temperature``, ``top_p`` or ``top_k``; the
+                catalog descriptor's ``sampling_fixed_models``. Empty keeps
+                every request's sampling fields.
         """
         super().__init__(config)
         if stream_chunk_mode is not None:
             self.stream_chunk_mode = stream_chunk_mode
         self._provider_name = provider_name
+        self._sampling_fixed_models = sampling_fixed_models
         self._api_key = config.api_key
         self._base_url = (config.base_url or default_base_url).rstrip("/")
         self._global_rate_limiter = self._scoped_rate_limiter(provider_name)
@@ -82,7 +90,21 @@ class AnthropicMessagesTransport(BaseProvider):
         }
 
     def _build_request_body(self, request: Any) -> dict:
-        """Build a native Anthropic request body."""
+        """Build a native Anthropic request body.
+
+        For a model in ``sampling_fixed_models`` the sampling fields are
+        left out: the upstream answers 400 to any value of them (measured
+        on api.anthropic.com, see
+        :data:`repoach.llm_proxy.providers.catalog.ANTHROPIC_FIXED_SAMPLING_MODELS`),
+        while the callers' temperature is a preference, not a requirement.
+
+        Args:
+            request: The Anthropic Messages request, its ``model`` already
+                resolved to the upstream id.
+
+        Returns:
+            The JSON body posted to ``/messages``.
+        """
         thinking_enabled = self._is_thinking_enabled(request)
         body = request.model_dump(exclude_none=True)
 
@@ -101,6 +123,17 @@ class AnthropicMessagesTransport(BaseProvider):
 
         if "max_tokens" not in body:
             body["max_tokens"] = ANTHROPIC_DEFAULT_MAX_TOKENS
+
+        if body.get("model") in self._sampling_fixed_models:
+            dropped = [name for name in SAMPLING_PARAMS if body.pop(name, None) is not None]
+            if dropped:
+                logger.info(
+                    "{}_SAMPLING_OMITTED: model={} rejects {}; omitted {}",
+                    self._provider_name,
+                    body["model"],
+                    ", ".join(SAMPLING_PARAMS),
+                    ", ".join(dropped),
+                )
 
         return body
 

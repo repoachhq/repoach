@@ -69,6 +69,8 @@ def _build_generic_anthropic(
     ``empty_completion`` and the provider was breaker-tripped. Streaming
     whole events lets the peek see the reply as content. The mode is a
     constructor argument so the instance is never observable in line mode.
+    The descriptor's ``sampling_fixed_models`` reach the transport here, so
+    the gateway omits the sampling fields those models reject.
 
     Args:
         config: Provider configuration carrying the API key and base URL.
@@ -86,6 +88,7 @@ def _build_generic_anthropic(
         provider_name=descriptor.provider_id,
         default_base_url=descriptor.default_base_url or "",
         stream_chunk_mode="event",
+        sampling_fixed_models=descriptor.sampling_fixed_models,
     )
     return provider
 

@@ -53,6 +53,7 @@ from ..core.paths import project_root
 from ..llm.capability import CapabilityTier
 from ..llm_proxy.providers.anthropic_messages import AnthropicMessagesTransport
 from ..llm_proxy.providers.base import BaseProvider, ProviderConfig
+from ..llm_proxy.providers.catalog import PROVIDER_DESCRIPTORS
 from ..llm_proxy.providers.claude_code import ClaudeCodeProvider
 from ..llm_proxy.providers.defaults import (
     ANTHROPIC_DEFAULT_BASE,
@@ -650,6 +651,7 @@ def build_direct_provider(route: ProviderRoute, *, timeout_s: float) -> DirectPr
                 ),
                 provider_name="anthropic",
                 default_base_url=ANTHROPIC_DEFAULT_BASE,
+                sampling_fixed_models=PROVIDER_DESCRIPTORS["anthropic"].sampling_fixed_models,
             )
 
         return DirectProvider(
