@@ -11,6 +11,7 @@ from loguru import logger
 
 from repoach.llm_proxy.providers.base import BaseProvider, ProviderConfig
 from repoach.llm_proxy.providers.error_mapping import map_error, provider_error_message
+from repoach.llm_proxy.providers.exceptions import ProviderError
 
 ANTHROPIC_DEFAULT_MAX_TOKENS = 81920
 ANTHROPIC_MESSAGES_API_VERSION = "2023-06-01"
@@ -201,6 +202,7 @@ class AnthropicMessagesTransport(BaseProvider):
         error_message: str,
         sent_any_event: bool,
         status_code: int | None = None,
+        error_type: str | None = None,
     ) -> Iterator[str]:
         """Emit a native Anthropic error event.
 
@@ -209,8 +211,18 @@ class AnthropicMessagesTransport(BaseProvider):
         (SP-BREAKER-LIVE-REASONS); included in the error payload only
         when recovered so a caller unable to derive it sees the exact
         same shape as before this field existed.
+
+        ``error_type`` is the Anthropic error type of the mapped upstream
+        failure, e.g. ``invalid_request_error`` for a 400. It replaces the
+        generic ``api_error`` so the failover peek can name the cause and
+        the dispatcher can tell a rejected request from a provider outage
+        (SP-REVIEW-SURVIVES-TRANSPORT-FAILURES D12). A failure that maps to
+        no provider error, such as a transport error, keeps ``api_error``.
         """
-        error_payload: dict[str, Any] = {"type": "api_error", "message": error_message}
+        error_payload: dict[str, Any] = {
+            "type": error_type or "api_error",
+            "message": error_message,
+        }
         if status_code is not None:
             error_payload["status_code"] = status_code
         error_event = {"type": "error", "error": error_payload}
@@ -284,16 +296,14 @@ class AnthropicMessagesTransport(BaseProvider):
             except Exception as error:
                 logger.error("{}_ERROR:{} {}: {}", tag, req_tag, type(error).__name__, error)
                 error_message = self._get_error_message(error, request_id)
-                status_code = getattr(
-                    map_error(
-                        error,
-                        rate_limiter=self._global_rate_limiter,
-                        rate_limit_block_default_s=self._config.rate_limit_block_default_s,
-                        rate_limit_block_max_s=self._config.rate_limit_block_max_s,
-                    ),
-                    "status_code",
-                    None,
+                mapped = map_error(
+                    error,
+                    rate_limiter=self._global_rate_limiter,
+                    rate_limit_block_default_s=self._config.rate_limit_block_default_s,
+                    rate_limit_block_max_s=self._config.rate_limit_block_max_s,
                 )
+                status_code = getattr(mapped, "status_code", None)
+                error_type = mapped.error_type if isinstance(mapped, ProviderError) else None
 
                 if response is not None and not response.is_closed:
                     await response.aclose()
@@ -310,6 +320,7 @@ class AnthropicMessagesTransport(BaseProvider):
                     error_message=error_message,
                     sent_any_event=sent_any_event,
                     status_code=status_code,
+                    error_type=error_type,
                 ):
                     yield event
                 return

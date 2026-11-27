@@ -25,6 +25,7 @@ from repoach.llm_proxy.core.anthropic import (
 )
 from repoach.llm_proxy.providers.base import BaseProvider, ProviderConfig
 from repoach.llm_proxy.providers.error_mapping import map_error, provider_error_message
+from repoach.llm_proxy.providers.exceptions import ProviderError
 
 
 def _extract_reasoning_tokens(usage_info: Any, tag: str) -> int:
@@ -253,6 +254,7 @@ class OpenAIChatTransport(BaseProvider):
         error_occurred = False
         error_message = ""
         error_status_code: int | None = None
+        error_type: str | None = None
 
         async with self._global_rate_limiter.concurrency_slot():
             try:
@@ -345,16 +347,14 @@ class OpenAIChatTransport(BaseProvider):
                 logger.error("{}_ERROR:{} {}: {}", tag, req_tag, type(e).__name__, e)
                 error_occurred = True
                 finish_reason = "error"
-                error_status_code = getattr(
-                    map_error(
-                        e,
-                        rate_limiter=self._global_rate_limiter,
-                        rate_limit_block_default_s=self._config.rate_limit_block_default_s,
-                        rate_limit_block_max_s=self._config.rate_limit_block_max_s,
-                    ),
-                    "status_code",
-                    None,
+                mapped = map_error(
+                    e,
+                    rate_limiter=self._global_rate_limiter,
+                    rate_limit_block_default_s=self._config.rate_limit_block_default_s,
+                    rate_limit_block_max_s=self._config.rate_limit_block_max_s,
                 )
+                error_status_code = getattr(mapped, "status_code", None)
+                error_type = mapped.error_type if isinstance(mapped, ProviderError) else None
                 base_message = provider_error_message(
                     e,
                     provider_name=tag,
@@ -448,5 +448,6 @@ class OpenAIChatTransport(BaseProvider):
             output_tokens,
             reasoning_tokens=reasoning_tokens_value,
             error_status_code=error_status_code,
+            error_type=error_type,
         )
         yield sse.message_stop()

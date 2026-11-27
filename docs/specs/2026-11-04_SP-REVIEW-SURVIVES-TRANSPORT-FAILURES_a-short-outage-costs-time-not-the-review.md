@@ -5,13 +5,13 @@ version: 0.1
 status: approved
 author: agent
 created: 2026-11-04
-updated: 2026-11-04
+updated: 2026-11-27
 
 owns:
-  code: [src/repoach/agent_engine/transport_window.py, src/repoach/review/review_retry.py, tests/unit/test_review_survives_transport_failures.py, tests/unit/test_auto_review_replies_do_not_review.py, tests/unit/test_proxy_output_cap_is_not_transport.py, tests/integration/test_review_survives_transport_failures_end_to_end.py, tests/fixtures/claude_code/max_output_tokens.json]
+  code: [src/repoach/agent_engine/transport_window.py, src/repoach/review/review_retry.py, tests/unit/test_review_survives_transport_failures.py, tests/unit/test_auto_review_replies_do_not_review.py, tests/unit/test_proxy_output_cap_is_not_transport.py, tests/unit/test_proxy_request_errors_spare_breaker.py, tests/integration/test_review_survives_transport_failures_end_to_end.py, tests/fixtures/claude_code/max_output_tokens.json]
   resources: []
 
-depends_on: [SP-PROXY-FIRST-BYTE-DEADLINE, SP-PROVIDER-INIT-DEDUP, SP-BUDGET-RETRY-FIXES, SP-PROVIDER-DIRECT-ANTHROPIC, SP-STREAM-EXHAUST-ERROR, SP-BREAKER-LIVE-REASONS, SP-PROXY-STATE-PERSIST, SP-AGENT-THINKING-CONTROL, SP-UNIVERSAL-PROVIDERS, SP-UNIVERSAL-PROJECT-CONFIG, SP-RETRY-BACKOFF-DEDUP, SP-REVIEW-TRANSPORT-ERROR-VERDICT, SP-JUDGE-FAILURE-IS-RETRIED, SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-USAGE-LEDGER, SP-CLI-STDOUT-ONE-JSON, SP-ORCH-DOCSTRING, SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF, SP-OPEN-THREADS-BLOCK-THE-MERGE, SP-OWNER-SETTLES-A-FINDING, SP-UNIVERSAL-FORGE]
+depends_on: [SP-PROXY-FIRST-BYTE-DEADLINE, SP-PROVIDER-INIT-DEDUP, SP-BUDGET-RETRY-FIXES, SP-PROVIDER-DIRECT-ANTHROPIC, SP-STREAM-EXHAUST-ERROR, SP-BREAKER-LIVE-REASONS, SP-PROXY-STATE-PERSIST, SP-AGENT-THINKING-CONTROL, SP-UNIVERSAL-PROVIDERS, SP-UNIVERSAL-PROJECT-CONFIG, SP-RETRY-BACKOFF-DEDUP, SP-REVIEW-TRANSPORT-ERROR-VERDICT, SP-JUDGE-FAILURE-IS-RETRIED, SP-REFUTER-JUDGES-WHAT-IT-CAN, SP-USAGE-LEDGER, SP-CLI-STDOUT-ONE-JSON, SP-ORCH-DOCSTRING, SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF, SP-OPEN-THREADS-BLOCK-THE-MERGE, SP-OWNER-SETTLES-A-FINDING, SP-UNIVERSAL-FORGE, SP-CHAINS-THINKING-CLASS, SP-PROVIDER-TRANSPORT-SPI]
 provides_to: []
 
 constraints:
@@ -67,6 +67,7 @@ Measured 2026-11-04, `origin/develop` `b8f7b3a`.
 | F17 | `RoutingTable.from_settings` builds `Tier.DEFAULT` from the single `MODEL` setting (`nvidia_nim/z-ai/glm-5.2` in CI) with no `claude_code` tail, and `chain_for` returns a one-entry chain for a literal `provider/model`; the tier chains of `chains.env` end with `claude_code/<tier>`. Every review role sends a tier (`AgentRequest.capability`; the judge is `CapabilityTier.OPUS`, alias `claude-opus-4-7`, classified `OPUS`), never a literal or an unclassified name. Appending the tail to the DEFAULT and literal chains breaks 25 tests of six specs that pin today's chain shapes | `src/repoach/llm_proxy/routing/table.py`; `tests/unit/test_proxy_output_cap_is_not_transport.py::test_the_judge_asks_the_opus_tier_and_288s_chain_was_its_tripped_tail` |
 | F18 | `Breaker seeded from probe history: 0 tier head(s) tripped` while every tier head errs: the seed reads `nim_health_probe` from the breaker ledger the job proxy uses (F16), which holds 0 probe rows; the `monitor-chains` sweep writes its 31 353 rows (the newest at 23:27:53, all three heads `error http=410`) to the operator checkout's `data/repoach.db`. The seed's own rule (trip a tier head whose newest probe is degraded) is not what failed | `sqlite3` on both files, 2026-11-05 |
 | F19 | `repoach chain-status` computes head-per-tier error rates from the probe table and OpenRouter credits (`remaining=-0.2076 floor=2.0 LOW` on 2026-11-05); nothing in `review pr` or `review gate` reads it, and the credits gate (`compute_credits_gate_skip_models`) covers `open_router` only. In the CI review job the probe table is empty (F18) and the CLI holds no provider key, so such a line would read `no probes` and `credits: skipped` there | `src/repoach/cli/chain_status.py`, `src/repoach/llm_proxy/api/model_router.py` |
+| F20 | CI run 45986316427 (2026-11-27): every reviewer call sends `temperature` (0.0 or 0.1: `agent_engine/agent_loop.py`, `review/refuter.py`, `planner.py`); `claude-opus-5-5`, `claude-sonnet-5-5` and `claude-haiku-5-5` answer HTTP 400 `invalid_request_error` "`temperature` is deprecated for this model." (same for `top_p`, `top_k`; 200 without them). The native Anthropic transport degraded each 400 to an SSE `error` event typed `api_error`; the peek read only `message_delta`, so it logged `PEEK_DECISION got_content=False reason=output_tokens_zero`; the dispatcher recorded `empty_completion`, struck the breaker, and the third strike logged `breaker_quarantined`: Anthropic was benched for the job, the chains fell back to providers without credits, four reviewers ended `ERROR` | job proxy log of run 45986316427; `providers/anthropic_messages.py` (`stream_response`, `_emit_error_events`), `api/_failover.py` (`peek_for_content`), `api/services.py` (`_classify_empty_peek`, `_stream_with_failover`, `_trip_breaker`) |
 
 ## Decisions (2026-11-04)
 
@@ -139,6 +140,23 @@ Measured 2026-11-04, `origin/develop` `b8f7b3a`.
   when a tier head is dead and its tail unavailable (F19: the CI job
   has neither the probes nor the keys, and no check says whether the
   `claude` CLI can serve).
+- D12 (2026-11-27). A request the provider rejects is the request's
+  fault, like D6 (F20). A recovered 400 or 422, or a raised
+  `InvalidRequestError`, is classified `invalid_request` and strikes no
+  breaker: no trip, no consecutive-failure count, no quarantine. The
+  chain still fails over, since the next candidate may be another model
+  that accepts the request. The native Anthropic transport types its
+  error event with the mapped error type (`invalid_request_error` for a
+  400) beside its status, the OpenAI-compatible transports put both on
+  the terminal `message_delta`, the peek reads a native `error` event as
+  `upstream_error` and keeps its status and type, and
+  `proxy_chain_failover_fired` carries `upstream_status_code`,
+  `upstream_error_type` and `breaker_strike`. A 404 stays a
+  per-candidate quarantine (a model id the provider does not serve,
+  SP-CHAIN-DEAD-HOP-QUARANTINE); 401/403, 402, 429, 5xx and transport
+  errors strike as before, now with their real reason on the native
+  Anthropic transport instead of `empty_completion`. Not in this change:
+  removing `temperature` from the callers.
 - D5. A submitted review never starts a bot review: it moves no head
   (F7). It runs the `rearm` job only (60 s coalesce, its own group), so
   the run concludes `success` and merge-on-ci re-judges the merge (F8).
@@ -158,6 +176,7 @@ Measured 2026-11-04, `origin/develop` `b8f7b3a`.
 - G8: a preflight-refused chain answers 502 with `Retry-After`; `GatewayTransportError.retry_after_s` carries it; the window waits it out or gives up (D7).
 - G9: both job proxies of `auto-review.yml` keep their breaker in `runner.temp` (D8); `report_configured_models_gone` names each configured `provider_410` entry at start (D9).
 - G10: `review pr` prints `providers: …` on stderr after its usage line (D10).
+- G11: a 400 or 422 from a provider fails over without a breaker strike and is logged with its status and error type; 401, 402, 429 and 503 still strike (D12).
 - G6: `docs/merge_gate.md` states the window, the one automatic retry, what starts a review and what re-arms a merge; `docs/tech_debt.md` carries the #288 measurement as a row, closed by this PR.
 
 ## Non-Goals
@@ -257,6 +276,7 @@ cannot be selected or refuses the dispatch. `review pr` JSON gains
 - Adds dependency: SP-REVIEW-SURVIVES-TRANSPORT-FAILURES -> SP-USAGE-LEDGER, SP-CLI-STDOUT-ONE-JSON, SP-ORCH-DOCSTRING, SP-UNIVERSAL-FORGE (usage rows, the one JSON object, `TeamOutcome`, `Forge.dispatch_workflow`)
 - Adds dependency: SP-REVIEW-SURVIVES-TRANSPORT-FAILURES -> SP-BUDGET-RETRY-FIXES, SP-STREAM-EXHAUST-ERROR, SP-BREAKER-LIVE-REASONS, SP-PROXY-STATE-PERSIST (the failover's classification, its terminal error event, the preflight refusal and the persisted breaker it scopes)
 - Adds dependency: SP-REVIEW-SURVIVES-TRANSPORT-FAILURES -> SP-AGENT-THINKING-CONTROL, SP-PROVIDER-DIRECT-ANTHROPIC (the gateway dispatcher and the direct providers' error mapping)
+- Adds dependency: SP-REVIEW-SURVIVES-TRANSPORT-FAILURES -> SP-CHAINS-THINKING-CLASS, SP-PROVIDER-TRANSPORT-SPI (D12's test builds the direct Anthropic transport from the provider catalog through the registry, as the proxy does)
 - `agent_loop.py` and `retry_backoff.py` import `transport_window.py`; it imports only `providers.errors`. `review_cmds.py` imports `review_retry.py`, which imports `merge_wait.py`, `refuter.py` and `reviewer.py` and none of the CLI.
 
 ## Diagram
@@ -279,6 +299,7 @@ flowchart TD
 - [ ] AC6: `pytest -q tests/unit/test_proxy_output_cap_is_not_transport.py tests/unit/test_claude_code_output_cap.py` → green: the recorded `max_output_tokens` JSON raises `OutputCapExceededError` whose message is the CLI's `result`, not its usage counts; through the proxy app it trips nothing and reaches the gateway client as `GatewayOutputCapError`; the Sentinel spawns the CLI once and its review is `incomplete_cause: other`; a chain tripped for 120 s answers `Retry-After: 120` and the window waits 120 s, one tripped for 7 days is given up at once; a configured 410 entry is named at start; both job proxies keep their breaker in `runner.temp`; the CLI's cap is `max_tokens + 32000`. Today (`b8f7b3a`): the first file does not exist; in the second, the cap equals `max_tokens`.
 - [ ] AC7: `pytest -q tests/integration/test_review_survives_transport_failures_end_to_end.py` → green: #288's 220 s of 502s inside the window, four reviewers approve and `review pr` does not exit 3; past the window it exits 3 with `incomplete_cause: transport` and today's summary line. Today: the file does not exist.
 - [ ] AC8: `pytest -q tests/unit/test_review_survives_transport_failures.py -k served` → green: a run whose Sentinel never answered and whose judge answered after one failure reports `providers: Sentinel none served, <n> failed (GatewayTransportError); Refuter fake/opus, 1 failed (GatewayTransportError)`. Today: no such line.
+- [ ] AC9: `pytest -q tests/unit/test_proxy_request_errors_spare_breaker.py` → green: `test_invalid_request_400_fails_over_without_breaker_strike` (direct Anthropic and OpenRouter: four 400 `invalid_request_error` dispatches, no trip, no consecutive-failure count, no `breaker_quarantined`, each `proxy_chain_failover_fired` with `primary_reason=invalid_request`, `upstream_status_code=400`, `upstream_error_type=invalid_request_error`, `breaker_strike=False`), `test_invalid_request_400_still_fails_over_to_next_candidate`, `test_outage_statuses_still_strike` (401, 402, 429, 503 on both transports: one strike with the real reason) and `test_request_rejection_statuses_classify_as_invalid_request`. Today (`dfe3d67`): 12 failed; the direct Anthropic 400 is tripped as `empty_completion` after `PEEK_DECISION reason=output_tokens_zero`.
 - [ ] AC4: `repoach arch check --base develop` → ok.
 - [ ] AC5: `docs/merge_gate.md` names the transport window, the one automatic retry, what starts a review and what re-arms a merge.
 

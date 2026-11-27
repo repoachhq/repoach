@@ -48,13 +48,34 @@ __all__ = ["ClaudeProxyService", "compute_credits_gate_skip_models"]
 OUTPUT_CAP_REASON = "output_cap_exceeded"
 """The failover reason of a reply that outgrew its output cap (SP-REVIEW-SURVIVES-TRANSPORT-FAILURES D6)."""
 
-NO_TRIP_REASONS: frozenset[str] = frozenset({OUTPUT_CAP_REASON})
+INVALID_REQUEST_REASON = "invalid_request"
+"""The failover reason of a request the provider rejected as malformed (SP-REVIEW-SURVIVES-TRANSPORT-FAILURES D12)."""
+
+REQUEST_REJECTION_STATUSES: frozenset[int] = frozenset({400, 422})
+"""Upstream statuses that reject the request itself, never the provider serving it.
+
+A 400 (Anthropic ``invalid_request_error``) and a 422 (unprocessable
+request) say the request's shape is wrong. A 404 is deliberately left out:
+it names a model id the provider does not serve, a per-candidate dead hop
+SP-CHAIN-DEAD-HOP-QUARANTINE quarantines. 401/403 (auth), 402 (billing),
+429 (rate) and 5xx keep their own reasons and keep striking the breaker."""
+
+NO_TRIP_REASONS: frozenset[str] = frozenset({OUTPUT_CAP_REASON, INVALID_REQUEST_REASON})
 """Failover reasons that never trip the breaker: the request's shape failed, not the candidate.
 
 On 2026-11-04 the Sentinel's ``max_output_tokens`` failure on #288 tripped
 ``claude_code/opus``; with every other opus candidate already tripped, the
 refuter's judge calls that followed found no candidate and each deferred
-its finding (``All 1 provider candidate(s) are currently breaker-tripped``)."""
+its finding (``All 1 provider candidate(s) are currently breaker-tripped``).
+
+On 2026-11-27 (CI run 45986316427) every reviewer call to the direct
+``anthropic`` provider carried ``temperature``, which the 5.5 models reject
+with a 400 ``invalid_request_error``; each rejection struck the breaker as
+``empty_completion`` until Anthropic was quarantined for the whole job and
+the chains fell back to providers without credits. A rejected request
+still fails over, since the next candidate may accept the same request,
+but it strikes nothing: the same request would be rejected again, and
+the provider is healthy."""
 
 TokenCounter = Callable[[list[Any], str | list[Any] | None, list[Any] | None], int]
 
@@ -71,7 +92,9 @@ def _classify_failover_reason(exc: BaseException) -> str:
 
     The vocabulary mirrors SP-LLM-PROXY-FAILOVER-LOG so operator
     dashboards can group fallbacks by upstream symptom regardless of
-    which provider raised them. ``FirstByteTimeoutError`` is checked
+    which provider raised them. A 400 or 422 is ``invalid_request``
+    whichever way it arrives (:data:``REQUEST_REJECTION_STATUSES``), so it
+    never strikes the breaker. ``FirstByteTimeoutError`` is checked
     BEFORE the generic ``"timeout"`` substring test — per
     SP-PROXY-FIRST-BYTE-DEADLINE its class name itself contains
     "Timeout", so testing the substring first would silently collapse
@@ -87,6 +110,8 @@ def _classify_failover_reason(exc: BaseException) -> str:
         return OUTPUT_CAP_REASON
     if isinstance(exc, UpstreamStatusError):
         status = exc.status_code
+        if status in REQUEST_REJECTION_STATUSES:
+            return INVALID_REQUEST_REASON
         if status in (401, 403):
             return "auth_failed"
         if status == 429:
@@ -107,9 +132,11 @@ def _classify_failover_reason(exc: BaseException) -> str:
     if isinstance(exc, AuthenticationError):
         return "auth_failed"
     if isinstance(exc, InvalidRequestError):
-        return "invalid_request"
+        return INVALID_REQUEST_REASON
     if isinstance(exc, APIError):
         status = getattr(exc, "status_code", None)
+        if status in REQUEST_REJECTION_STATUSES:
+            return INVALID_REQUEST_REASON
         if isinstance(status, int):
             if 500 <= status < 600:
                 return "provider_5xx"
@@ -804,6 +831,7 @@ class ClaudeProxyService:
                     primary_error_type=type(exc).__name__,
                     primary_error=str(exc)[:200],
                     latency_s=attempt_latency_s,
+                    breaker_strike=True,
                 )
                 self._trip_breaker(candidate, reason, chain=chain)
                 continue
@@ -811,6 +839,7 @@ class ClaudeProxyService:
                 attempt_latency_s = round(time.monotonic() - attempt_started, 3)
                 last_error = exc
                 primary_reason = _classify_failover_reason(exc)
+                strikes = primary_reason not in NO_TRIP_REASONS
                 prior_failures.append((candidate.provider_model_ref, primary_reason))
                 hop_breakdown.append(
                     {
@@ -831,8 +860,9 @@ class ClaudeProxyService:
                     primary_error_type=type(exc).__name__,
                     primary_error=str(exc)[:200],
                     latency_s=attempt_latency_s,
+                    breaker_strike=strikes,
                 )
-                if primary_reason not in NO_TRIP_REASONS:
+                if strikes:
                     self._trip_breaker(candidate, primary_reason, chain=chain)
                 continue
 
@@ -885,6 +915,7 @@ class ClaudeProxyService:
                     return
 
             empty_reason = _classify_empty_peek(peek)
+            strikes = empty_reason not in NO_TRIP_REASONS
             prior_failures.append((candidate.provider_model_ref, empty_reason))
             hop_breakdown.append(
                 {
@@ -902,11 +933,15 @@ class ClaudeProxyService:
                 chain_remaining=len(chain) - attempt_index - 1,
                 primary=candidate.provider_model_ref,
                 primary_reason=empty_reason,
+                upstream_status_code=peek.upstream_status_code,
+                upstream_error_type=peek.upstream_error_type,
                 stream_done=peek.stream_done,
                 buffered_events=len(peek.buffered),
                 latency_s=attempt_latency_s,
+                breaker_strike=strikes,
             )
-            self._trip_breaker(candidate, empty_reason, chain=chain)
+            if strikes:
+                self._trip_breaker(candidate, empty_reason, chain=chain)
 
         logger.error(
             "proxy_chain_exhausted",
