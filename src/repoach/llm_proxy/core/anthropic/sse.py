@@ -216,6 +216,7 @@ class SSEBuilder:
         reasoning_tokens: int = 0,
         *,
         error_status_code: int | None = None,
+        error_type: str | None = None,
     ) -> str:
         """Build the terminal ``message_delta`` event.
 
@@ -224,7 +225,10 @@ class SSEBuilder:
         error-shaped delta (SP-BREAKER-LIVE-REASONS); it is omitted from
         the payload entirely when ``None`` (every success-path call),
         so well-behaved clients see the exact same shape as before this
-        field existed.  The prompt-cache counts (``cache_read_tokens``,
+        field existed. ``error_type`` is the Anthropic error type of that
+        same mapped failure (e.g. ``invalid_request_error``), likewise
+        omitted when ``None``; the failover dispatcher logs it as the cause
+        (SP-REVIEW-SURVIVES-TRANSPORT-FAILURES D12).  The prompt-cache counts (``cache_read_tokens``,
         ``cache_write_tokens``) are likewise emitted only when a transport
         read them from its upstream.
         """
@@ -243,6 +247,8 @@ class SSEBuilder:
             payload["usage"]["cache_creation_input_tokens"] = self.cache_write_tokens
         if error_status_code is not None:
             payload["error_status_code"] = error_status_code
+        if error_type is not None:
+            payload["error_type"] = error_type
         return self._format_event("message_delta", payload)
 
     def message_stop(self) -> str:

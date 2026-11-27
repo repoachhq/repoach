@@ -9,6 +9,7 @@ from .base import BaseProvider, ProviderConfig
 from .exceptions import (
     APIError,
     AuthenticationError,
+    BillingError,
     InvalidRequestError,
     OverloadedError,
     ProviderError,
@@ -20,6 +21,7 @@ __all__ = [
     "APIError",
     "AuthenticationError",
     "BaseProvider",
+    "BillingError",
     "InvalidRequestError",
     "OverloadedError",
     "ProviderConfig",

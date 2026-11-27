@@ -21,6 +21,12 @@ Failure modes considered transient and triggering failover:
   saw is a synthetic placeholder, not real model output.
 - A non-zero ``stop_reason`` of ``"error"`` reported by any
   ``message_delta``.
+- A native Anthropic ``error`` event, the shape the Anthropic Messages
+  transport degrades a caught upstream failure to.  Its ``status_code``
+  and ``type`` are kept on the :class:``PeekResult`` so the dispatcher can
+  name the cause and tell a rejected request from a provider outage
+  (SP-REVIEW-SURVIVES-TRANSPORT-FAILURES D12).  Before this rule the event
+  was ignored and the stream was misread as ``output_tokens_zero``.
 - A completed stream whose accumulated ``text_delta`` content is
   empty or whitespace-only **even when** ``output_tokens > 0``
   (SP-PROXY-FAILOVER-WHITESPACE — observed live 2026-05-21 17:09
@@ -108,7 +114,12 @@ class PeekResult:
             content-less, non-errored stream, or when the transport could
             not recover a status — callers must fall back to the generic
             ``empty_completion`` reason in that case, never worse than
-            before this field existed.
+            before this field existed.  Also read from a native Anthropic
+            ``error`` event's ``error.status_code``.
+        upstream_error_type: The Anthropic error type of the upstream
+            failure (e.g. ``invalid_request_error``), read from a native
+            ``error`` event's ``error.type`` or a terminal ``message_delta``'s
+            ``error_type``.  ``None`` when the stream carried neither.
     """
 
     buffered: list[str]
@@ -117,6 +128,7 @@ class PeekResult:
     looks_budget_starved: bool = False
     final_output_tokens: int | None = None
     upstream_status_code: int | None = None
+    upstream_error_type: str | None = None
 
 
 _EVENT_TYPE_PATTERN = re.compile(r"^event:\s*(\S+)", re.MULTILINE)
@@ -162,6 +174,25 @@ def _message_delta_error_status(event_type: str | None, data: dict | None) -> in
         return None
     status = data.get("error_status_code")
     return status if isinstance(status, int) else None
+
+
+def _message_delta_error_type(event_type: str | None, data: dict | None) -> str | None:
+    if event_type != "message_delta" or data is None:
+        return None
+    error_type = data.get("error_type")
+    return error_type if isinstance(error_type, str) else None
+
+
+def _error_event_payload(event_type: str | None, data: dict | None) -> dict | None:
+    """Return the ``error`` object of a native Anthropic ``error`` event.
+
+    ``None`` for any other event type, an unparseable chunk, or an
+    ``error`` event whose ``error`` field is not an object.
+    """
+    if event_type != "error" or data is None:
+        return None
+    payload = data.get("error")
+    return payload if isinstance(payload, dict) else None
 
 
 def _message_delta_stop_reason(event_type: str | None, data: dict | None) -> str | None:
@@ -286,7 +317,9 @@ async def peek_for_content(
     1. If any ``message_delta`` carried ``stop_reason == "error"``,
        the stream is a failure regardless of any prior content. This
        signal is checked per-chunk and breaks the drain the instant it
-       fires, without waiting for ``message_stop``.
+       fires, without waiting for ``message_stop``.  A native Anthropic
+       ``error`` event is the same terminal signal, reported as
+       ``upstream_error`` with its status and error type.
     2. If the accumulated ``text_delta`` content matches
        :func:`text_is_disguised_error`, the stream is a failure. Also
        checked per-chunk and breaks the drain immediately — this is
@@ -352,12 +385,26 @@ async def peek_for_content(
     accumulated_text: list[str] = []
     stream_done = False
     upstream_status_code: int | None = None
+    upstream_error_type: str | None = None
+    saw_error_event = False
 
     def _absorb(chunk: str) -> bool:
         nonlocal saw_tool_use, final_output_tokens, saw_error_stop_reason
         nonlocal saw_disguised_error_text, exited_on_terminal_error, upstream_status_code
+        nonlocal upstream_error_type, saw_error_event
         buffered.append(chunk)
         event_type, data = _parse_event(chunk)
+        error_payload = _error_event_payload(event_type, data)
+        if error_payload is not None:
+            status = error_payload.get("status_code")
+            if isinstance(status, int):
+                upstream_status_code = status
+            error_type = error_payload.get("type")
+            if isinstance(error_type, str):
+                upstream_error_type = error_type
+            saw_error_event = True
+            exited_on_terminal_error = True
+            return False
         if _is_tool_use_start(event_type, data):
             saw_tool_use = True
         usage = _message_delta_usage(event_type, data)
@@ -368,6 +415,9 @@ async def peek_for_content(
         error_status = _message_delta_error_status(event_type, data)
         if error_status is not None:
             upstream_status_code = error_status
+        delta_error_type = _message_delta_error_type(event_type, data)
+        if delta_error_type is not None:
+            upstream_error_type = delta_error_type
         stop_reason = _message_delta_stop_reason(event_type, data)
         if stop_reason == "error":
             saw_error_stop_reason = True
@@ -418,6 +468,9 @@ async def peek_for_content(
     if saw_error_stop_reason:
         got_content = False
         decision_reason = "stop_reason_error"
+    elif saw_error_event:
+        got_content = False
+        decision_reason = "upstream_error"
     elif saw_disguised_error_text:
         got_content = False
         decision_reason = "disguised_error_text"
@@ -441,10 +494,12 @@ async def peek_for_content(
     )
 
     logger.info(
-        "PEEK_DECISION: got_content={} reason={} budget_starved={} output_tokens={} "
-        "text_chars={} text_strip_chars={} text_preview={!r}",
+        "PEEK_DECISION: got_content={} reason={} upstream_status={} upstream_error_type={} "
+        "budget_starved={} output_tokens={} text_chars={} text_strip_chars={} text_preview={!r}",
         got_content,
         decision_reason,
+        upstream_status_code,
+        upstream_error_type,
         looks_budget_starved,
         final_output_tokens,
         text_chars,
@@ -458,4 +513,5 @@ async def peek_for_content(
         looks_budget_starved=looks_budget_starved,
         final_output_tokens=final_output_tokens,
         upstream_status_code=upstream_status_code,
+        upstream_error_type=upstream_error_type,
     )
