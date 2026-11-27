@@ -44,6 +44,22 @@ THINKING_CLASSIFICATION: dict[str, ThinkingClass] = {
 
 TransportType = Literal["openai_chat", "anthropic_messages"]
 
+ANTHROPIC_FIXED_SAMPLING_MODELS: frozenset[str] = frozenset(
+    {"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"}
+)
+"""Anthropic models that reject ``temperature``, ``top_p`` and ``top_k``.
+
+Measured 2026-11-27 on api.anthropic.com: each of these models answers
+HTTP 400 ``invalid_request_error`` "`temperature` is deprecated for
+this model." for any ``temperature`` value, and the same for ``top_p`` and
+``top_k``; the same request without them answers 200. Every reviewer
+sends a temperature, so in CI run 45986316427 the proxy turned each
+anthropic call into an SSE error event, the failover peek classified it
+``output_tokens_zero`` and the breaker quarantined Anthropic for the whole
+job. Only measured ids are listed: an unlisted model keeps its sampling
+fields, and a new model that rejects them shows up as that same 400.
+"""
+
 
 @dataclass(frozen=True, slots=True)
 class ProviderDescriptor:
@@ -72,6 +88,11 @@ class ProviderDescriptor:
             :class:`Settings` attribute instead of the default.
         proxy_attr: When set, the HTTP proxy URL is read from this
             :class:`Settings` attribute.
+        sampling_fixed_models: Upstream model ids, exact, that reject the
+            sampling fields ``temperature``, ``top_p`` and ``top_k``; the
+            transport omits those fields from their requests and sends
+            every other model's unchanged. Empty for a provider with no
+            such model.
     """
 
     provider_id: str
@@ -84,6 +105,7 @@ class ProviderDescriptor:
     default_base_url: str | None = None
     base_url_attr: str | None = None
     proxy_attr: str | None = None
+    sampling_fixed_models: frozenset[str] = frozenset()
 
 
 PROVIDER_DESCRIPTORS: dict[str, ProviderDescriptor] = {
@@ -166,6 +188,7 @@ PROVIDER_DESCRIPTORS: dict[str, ProviderDescriptor] = {
         credential_attr="anthropic_api_key",
         default_base_url=ANTHROPIC_DEFAULT_BASE,
         capabilities=("chat", "streaming", "tools", "native_anthropic"),
+        sampling_fixed_models=ANTHROPIC_FIXED_SAMPLING_MODELS,
     ),
     "openai_compatible": ProviderDescriptor(
         provider_id="openai_compatible",
