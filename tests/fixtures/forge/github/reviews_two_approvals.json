@@ -15,7 +15,7 @@
       "returncode": 0,
       "stderr": "",
       "stdin": null,
-      "stdout": "[[{\"id\": 80, \"user\": {\"login\": \"alice\"}, \"body\": \"lgtm\", \"state\": \"APPROVED\", \"commit_id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"submitted_at\": \"2026-10-19T10:00:00Z\"}, {\"id\": 81, \"user\": {\"login\": \"bob\"}, \"body\": \"\", \"state\": \"APPROVED\", \"commit_id\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"submitted_at\": \"2026-10-19T10:05:00Z\"}]]"
+      "stdout": "[[{\"id\": 80, \"user\": {\"login\": \"author-2\"}, \"body\": \"lgtm\", \"state\": \"APPROVED\"}, {\"id\": 81, \"user\": {\"login\": \"author-3\"}, \"body\": \"\", \"state\": \"APPROVED\"}]]"
     }
   ],
   "case": "reviews_two_approvals",
@@ -25,20 +25,20 @@
   "raises": null,
   "result": [
     {
-      "author": "alice",
+      "author": "author-2",
       "body": "lgtm",
       "comments": [],
       "id": 80,
       "state": "APPROVED"
     },
     {
-      "author": "bob",
+      "author": "author-3",
       "body": "",
       "comments": [],
       "id": 81,
       "state": "APPROVED"
     }
   ],
-  "source": "synthetic: two approvals in GitHub's documented list-reviews shape (https://docs.github.com/en/rest/pulls/reviews#list-reviews-for-a-pull-request)",
+  "source": "synthetic: two approvals in GitHub's documented list-reviews shape (GitHub REST API documentation, Pull request reviews: List reviews for a pull request)",
   "trimmed": null
 }

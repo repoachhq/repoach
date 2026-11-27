@@ -63,7 +63,7 @@ def _fake_binaries(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *present: st
 
 def test_gitlab_scp_url_selects_gitlab(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _fake_binaries(monkeypatch, tmp_path, "gh", "glab")
-    root = _repo(tmp_path, "git@gitlab.com:maintainer/yoob_2.git")
+    root = _repo(tmp_path, "git@gitlab.com:group/project.git")
     assert isinstance(select_forge(cwd=root), GitLabForge)
 
 
@@ -75,7 +75,7 @@ def test_github_https_url_selects_github(tmp_path: Path, monkeypatch: pytest.Mon
 
 def test_missing_binary_raises_naming_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _fake_binaries(monkeypatch, tmp_path, "gh")
-    root = _repo(tmp_path, "git@gitlab.com:maintainer/yoob_2.git")
+    root = _repo(tmp_path, "git@gitlab.com:group/project.git")
     with pytest.raises(ForgeUnavailableError) as info:
         select_forge(cwd=root)
     assert info.value.binary == "glab"
@@ -125,6 +125,17 @@ def test_bot_username_defaults_per_forge(tmp_path: Path, monkeypatch: pytest.Mon
     assert select_forge(override="gitlab", cwd=root).bot_username == ""
 
 
+def test_an_explicit_bot_username_overrides_the_configured_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fixture recorder replays under the recording's class word through the constructor."""
+    _fake_binaries(monkeypatch, tmp_path, "gh", "glab")
+    root = _repo(tmp_path, "https://github.com/o/r.git")
+    assert select_forge(cwd=root, bot_username="bot").bot_username == "bot"
+    assert select_forge(override="gitlab", cwd=root, bot_username="bot").bot_username == "bot"
+    assert select_forge(cwd=root, bot_username=None).bot_username == "github-actions[bot]"
+
+
 def test_bot_username_from_toml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _fake_binaries(monkeypatch, tmp_path, "gh", "glab")
     root = _repo(
@@ -151,8 +162,8 @@ def test_explicit_env_bot_login_applies_to_gitlab(
 @pytest.mark.parametrize(
     ("url", "expected"),
     [
-        ("git@gitlab.com:maintainer/yoob_2.git", "gitlab"),
-        ("https://gitlab.com/maintainer/yoob_2.git", "gitlab"),
+        ("git@gitlab.com:group/project.git", "gitlab"),
+        ("https://gitlab.com/group/project.git", "gitlab"),
         ("ssh://git@gitlab.example.com:2222/o/r.git", "gitlab"),
         ("https://github.com/repoachhq/repoach.git", "github"),
         ("git@github.com:repoachhq/repoach.git", "github"),

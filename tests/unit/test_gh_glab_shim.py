@@ -35,7 +35,7 @@ _MR = {
     "sha": "a9f7001cd82170b482a534d94b7bc0fede20f272",
     "author": {"username": "maintainer"},
     "state": "merged",
-    "web_url": "https://gitlab.com/maintainer/yoob_2/-/merge_requests/283",
+    "web_url": "https://gitlab.com/group/project/-/merge_requests/283",
 }
 
 _DISCUSSIONS_PAGE_1 = [

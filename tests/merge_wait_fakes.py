@@ -298,7 +298,7 @@ class MergeWaitFixtureForge:
             "baseRefName": pr.base,
             "author": {"login": MAINTAINER},
             "state": pr.state,
-            "url": f"https://github.com/{REPOSITORY}/pull/{pr.number}",
+            "url": f"https://forge.example.com/org/{REPOSITORY.split('/')[1]}/pull/{pr.number}",
             "headRefOid": pr.head_sha,
             "isDraft": pr.draft,
             "mergeable": "MERGEABLE",

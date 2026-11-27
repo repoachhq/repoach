@@ -16,7 +16,7 @@
       "returncode": 0,
       "stderr": "",
       "stdin": null,
-      "stdout": "[{\"bucket\": \"skipping\", \"link\": \"https://github.com/repoachhq/repoach/actions/runs/30676856870/job/91308427779\", \"name\": \"Auto-merge to develop\", \"state\": \"SKIPPED\", \"workflow\": \"Auto Review (review bots)\"}, {\"bucket\": \"fail\", \"link\": \"https://github.com/repoachhq/repoach/actions/runs/30676856870/job/91307476613\", \"name\": \"Coder auto-fix loop\", \"state\": \"FAILURE\", \"workflow\": \"Auto Review (review bots)\"}, {\"bucket\": \"pass\", \"link\": \"https://github.com/repoachhq/repoach/actions/runs/30676856870/job/91305829550\", \"name\": \"Architect / Sentinel / Tester / Scribe\", \"state\": \"SUCCESS\", \"workflow\": \"Auto Review (review bots)\"}, {\"bucket\": \"pass\", \"link\": \"https://github.com/repoachhq/repoach/actions/runs/30676856865/job/91305829539\", \"name\": \"ShellCheck (warning-level)\", \"state\": \"SUCCESS\", \"workflow\": \"ShellCheck\"}, {\"bucket\": \"pass\", \"link\": \"https://github.com/repoachhq/repoach/actions/runs/30676856852/job/91305829439\", \"name\": \"Test suite (Python 3.11)\", \"state\": \"SUCCESS\", \"workflow\": \"CI\"}, {\"bucket\": \"pass\", \"link\": \"https://github.com/repoachhq/repoach/actions/runs/30676856852/job/91305829449\", \"name\": \"Test suite (Python 3.13)\", \"state\": \"SUCCESS\", \"workflow\": \"CI\"}]"
+      "stdout": "[{\"bucket\": \"skipping\", \"link\": \"https://forge.example.com/org/project/actions/runs/30676856870/job/91308427779\", \"name\": \"Auto-merge to develop\", \"state\": \"SKIPPED\", \"workflow\": \"Auto Review (review bots)\"}, {\"bucket\": \"fail\", \"link\": \"https://forge.example.com/org/project/actions/runs/30676856870/job/91307476613\", \"name\": \"Coder auto-fix loop\", \"state\": \"FAILURE\", \"workflow\": \"Auto Review (review bots)\"}, {\"bucket\": \"pass\", \"link\": \"https://forge.example.com/org/project/actions/runs/30676856870/job/91305829550\", \"name\": \"Architect / Sentinel / Tester / Scribe\", \"state\": \"SUCCESS\", \"workflow\": \"Auto Review (review bots)\"}, {\"bucket\": \"pass\", \"link\": \"https://forge.example.com/org/project/actions/runs/30676856865/job/91305829539\", \"name\": \"ShellCheck (warning-level)\", \"state\": \"SUCCESS\", \"workflow\": \"ShellCheck\"}, {\"bucket\": \"pass\", \"link\": \"https://forge.example.com/org/project/actions/runs/30676856852/job/91305829439\", \"name\": \"Test suite (Python 3.11)\", \"state\": \"SUCCESS\", \"workflow\": \"CI\"}, {\"bucket\": \"pass\", \"link\": \"https://forge.example.com/org/project/actions/runs/30676856852/job/91305829449\", \"name\": \"Test suite (Python 3.13)\", \"state\": \"SUCCESS\", \"workflow\": \"CI\"}]"
     }
   ],
   "case": "checks",
@@ -30,7 +30,7 @@
       "completed_at": "",
       "conclusion": "",
       "head_sha": "",
-      "link": "https://github.com/repoachhq/repoach/actions/runs/30676856870/job/91308427779",
+      "link": "https://forge.example.com/org/project/actions/runs/30676856870/job/91308427779",
       "name": "Auto-merge to develop",
       "started_at": "",
       "status": "SKIPPED",
@@ -41,7 +41,7 @@
       "completed_at": "",
       "conclusion": "",
       "head_sha": "",
-      "link": "https://github.com/repoachhq/repoach/actions/runs/30676856870/job/91307476613",
+      "link": "https://forge.example.com/org/project/actions/runs/30676856870/job/91307476613",
       "name": "Coder auto-fix loop",
       "started_at": "",
       "status": "FAILURE",
@@ -52,7 +52,7 @@
       "completed_at": "",
       "conclusion": "",
       "head_sha": "",
-      "link": "https://github.com/repoachhq/repoach/actions/runs/30676856870/job/91305829550",
+      "link": "https://forge.example.com/org/project/actions/runs/30676856870/job/91305829550",
       "name": "Architect / Sentinel / Tester / Scribe",
       "started_at": "",
       "status": "SUCCESS",
@@ -63,7 +63,7 @@
       "completed_at": "",
       "conclusion": "",
       "head_sha": "",
-      "link": "https://github.com/repoachhq/repoach/actions/runs/30676856865/job/91305829539",
+      "link": "https://forge.example.com/org/project/actions/runs/30676856865/job/91305829539",
       "name": "ShellCheck (warning-level)",
       "started_at": "",
       "status": "SUCCESS",
@@ -74,7 +74,7 @@
       "completed_at": "",
       "conclusion": "",
       "head_sha": "",
-      "link": "https://github.com/repoachhq/repoach/actions/runs/30676856852/job/91305829439",
+      "link": "https://forge.example.com/org/project/actions/runs/30676856852/job/91305829439",
       "name": "Test suite (Python 3.11)",
       "started_at": "",
       "status": "SUCCESS",
@@ -85,13 +85,13 @@
       "completed_at": "",
       "conclusion": "",
       "head_sha": "",
-      "link": "https://github.com/repoachhq/repoach/actions/runs/30676856852/job/91305829449",
+      "link": "https://forge.example.com/org/project/actions/runs/30676856852/job/91305829449",
       "name": "Test suite (Python 3.13)",
       "started_at": "",
       "status": "SUCCESS",
       "workflow": "CI"
     }
   ],
-  "source": "recorded 2026-10-19 from m3; result amended 2026-10-26 (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF): CheckRun gained completed_at/head_sha, serialized empty because the recorded payload carries neither",
+  "source": "recorded 2026-10-19 from a live github change request; result amended 2026-10-26 (SP-AUTO-MERGE-WAITS-FOR-CHECKS-NOT-ITSELF): CheckRun gained completed_at/head_sha, serialized empty because the recorded payload carries neither",
   "trimmed": null
 }

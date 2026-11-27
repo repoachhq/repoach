@@ -13,7 +13,7 @@
       "returncode": 0,
       "stderr": "",
       "stdin": null,
-      "stdout": "{\"iid\": 7, \"title\": \"feat: x\", \"description\": \"body\", \"state\": \"opened\", \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"source_branch\": \"feat/x\", \"target_branch\": \"develop\", \"web_url\": \"https://gitlab.com/o/r/-/merge_requests/7\", \"author\": {\"username\": \"dev\"}, \"draft\": false, \"diff_refs\": {\"base_sha\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"start_sha\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"head_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}, \"head_pipeline\": {\"id\": 99, \"status\": \"success\", \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"web_url\": \"https://gitlab.com/o/r/-/pipelines/99\"}}"
+      "stdout": "{\"iid\": 7, \"title\": \"feat: x\", \"description\": \"body\", \"state\": \"opened\", \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"source_branch\": \"feat/x\", \"target_branch\": \"develop\", \"web_url\": \"https://forge.example.com/org/project/-/merge_requests/7\", \"author\": {\"username\": \"author-2\"}, \"draft\": false, \"diff_refs\": {\"base_sha\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"start_sha\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"head_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}, \"head_pipeline\": {\"id\": 99, \"status\": \"success\", \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"web_url\": \"https://forge.example.com/org/project/-/pipelines/99\"}}"
     },
     {
       "args": [
@@ -24,7 +24,7 @@
       "returncode": 0,
       "stderr": "",
       "stdin": null,
-      "stdout": "{\"iid\": 7, \"title\": \"feat: x\", \"description\": \"body\", \"state\": \"opened\", \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"source_branch\": \"feat/x\", \"target_branch\": \"develop\", \"web_url\": \"https://gitlab.com/o/r/-/merge_requests/7\", \"author\": {\"username\": \"dev\"}, \"draft\": false, \"diff_refs\": {\"base_sha\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"start_sha\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"head_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}, \"head_pipeline\": {\"id\": 99, \"status\": \"success\", \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"web_url\": \"https://gitlab.com/o/r/-/pipelines/99\"}, \"detailed_merge_status\": \"mergeable\"}"
+      "stdout": "{\"iid\": 7, \"title\": \"feat: x\", \"description\": \"body\", \"state\": \"opened\", \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"source_branch\": \"feat/x\", \"target_branch\": \"develop\", \"web_url\": \"https://forge.example.com/org/project/-/merge_requests/7\", \"author\": {\"username\": \"author-2\"}, \"draft\": false, \"diff_refs\": {\"base_sha\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"start_sha\": \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"head_sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}, \"head_pipeline\": {\"id\": 99, \"status\": \"success\", \"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"web_url\": \"https://forge.example.com/org/project/-/pipelines/99\"}, \"detailed_merge_status\": \"mergeable\"}"
     },
     {
       "args": [
@@ -38,7 +38,7 @@
       ],
       "program": "glab",
       "returncode": 1,
-      "stderr": "PUT https://gitlab.com/api/v4/projects/o%2Fr/merge_requests/7/merge: 405 {message: 405 Method Not Allowed}",
+      "stderr": "PUT https://forge.example.com/api/v4/projects/org%2Fproject/merge_requests/7/merge: 405 {message: 405 Method Not Allowed}",
       "stdin": null,
       "stdout": ""
     }
@@ -53,6 +53,6 @@
   "method": "merge",
   "raises": "ForgeMergeRefusedError",
   "result": null,
-  "source": "synthetic: merge call: never executed against a live forge; the MR reads mergeable, then the accept endpoint answers the documented bare 405 body {\"message\":\"405 Method Not Allowed\"} (https://docs.gitlab.com/ee/api/merge_requests.html#merge-a-merge-request), rendered on stderr the way go-gitlab renders an ErrorResponse; glab's exact wrapping was not observed live; the write barrier reads the state first",
+  "source": "synthetic: merge call: never executed against a live forge; the MR reads mergeable, then the accept endpoint answers the documented bare 405 body {\"message\":\"405 Method Not Allowed\"} (GitLab REST API documentation, Merge requests: Merge a merge request), rendered on stderr the way go-gitlab renders an ErrorResponse; glab's exact wrapping was not observed live; the write barrier reads the state first",
   "trimmed": null
 }

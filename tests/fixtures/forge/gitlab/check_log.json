@@ -1,6 +1,6 @@
 {
   "args": [
-    "https://gitlab.com/o/r/-/jobs/100"
+    "https://forge.example.com/org/project/-/jobs/100"
   ],
   "bot_username": "repoach-bot",
   "calls": [

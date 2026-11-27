@@ -13,7 +13,7 @@
       "returncode": 0,
       "stderr": "",
       "stdin": null,
-      "stdout": "{\"id\": 5, \"iid\": 7, \"project_id\": 1, \"title\": \"feat: x\", \"description\": \"\", \"state\": \"opened\", \"created_at\": \"2026-10-19T09:00:00Z\", \"updated_at\": \"2026-10-19T10:05:00Z\", \"merge_status\": \"can_be_merged\", \"approved\": true, \"approvals_required\": 2, \"approvals_left\": 0, \"approved_by\": [{\"user\": {\"username\": \"alice\", \"id\": 11, \"state\": \"active\", \"avatar_url\": \"\", \"web_url\": \"https://gitlab.com/alice\"}}, {\"user\": {\"username\": \"bob\", \"id\": 12, \"state\": \"active\", \"avatar_url\": \"\", \"web_url\": \"https://gitlab.com/bob\"}}]}"
+      "stdout": "{\"id\": 5, \"iid\": 7, \"title\": \"feat: x\", \"description\": \"\", \"state\": \"opened\", \"created_at\": \"2026-10-19T09:00:00Z\", \"updated_at\": \"2026-10-19T10:05:00Z\", \"approved_by\": [{\"user\": {\"username\": \"author-2\", \"id\": 1009, \"state\": \"active\"}}, {\"user\": {\"username\": \"author-3\", \"id\": 1010, \"state\": \"active\"}}]}"
     }
   ],
   "case": "reviews_two_approvals",
@@ -23,20 +23,24 @@
   "raises": null,
   "result": [
     {
-      "author": "alice",
+      "author": "author-2",
       "body": "",
       "comments": [],
-      "id": 11,
+      "id": 1009,
       "state": "APPROVED"
     },
     {
-      "author": "bob",
+      "author": "author-3",
       "body": "",
       "comments": [],
-      "id": 12,
+      "id": 1010,
       "state": "APPROVED"
     }
   ],
-  "source": "synthetic: two approvals in GitLab's documented approvals shape (https://docs.gitlab.com/ee/api/merge_request_approvals.html#get-configuration-1, GET /projects/:id/merge_requests/:iid/approvals); no Yoob MR carries an approval",
+  "source": "synthetic: two approvals in GitLab's documented approvals shape (GitLab REST API documentation, Merge request approvals: Get configuration, GET /projects/:id/merge_requests/:iid/approvals); no Acme MR carries an approval",
+  "synthetic_user_ids": [
+    1009,
+    1010
+  ],
   "trimmed": null
 }
