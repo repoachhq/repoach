@@ -55,6 +55,19 @@ def _repo(path: Path) -> Path:
     return path
 
 
+@pytest.fixture(autouse=True)
+def no_enclosing_repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stop git repository discovery at ``tmp_path``.
+
+    "Outside a repository" means ``tmp_path`` and its subdirectories, but
+    the base temporary directory can itself sit inside a git working tree
+    (a ``TMPDIR`` under a checkout), and git would then report that tree's
+    toplevel. ``GIT_CEILING_DIRECTORIES`` keeps discovery below
+    ``tmp_path``, so repositories created under it are still found.
+    """
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+
+
 @pytest.fixture
 def xdg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg_config"))
